@@ -1,0 +1,8 @@
+data/
+database/
+venv/
+__pycache__
+*.csv
+*.joblib
+.DS_Store
+*.pth
