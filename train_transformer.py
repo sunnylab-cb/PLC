@@ -25,6 +25,7 @@ def train():
     parser.add_argument("--focal", action="store_true", help="Use Focal Loss")
     parser.add_argument("--lite", action="store_true", help="Use lighter transformer model")
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
+    parser.add_argument("--no_position", action="store_true", help="Disable relative position feature")
     args = parser.parse_args()
 
     # Configuration
@@ -36,20 +37,25 @@ def train():
     # Load Data
     print("Loading data...")
     limit_files = 1 if args.debug else None
+    add_position = not args.no_position
+    input_dim = 467 if add_position else 466
+    print(f"Relative position: {'enabled' if add_position else 'disabled'}, input_dim={input_dim}")
+    
     train_loader, val_loader, test_loader = get_dataloaders(
         DATA_DIR, 
         batch_size=args.batch_size, 
-        limit_files=limit_files
+        limit_files=limit_files,
+        add_relative_position=add_position
     )
     
     # Model
     if args.lite:
         print("Using BindingTransformerLite")
-        model = BindingTransformerLite().to(DEVICE)
+        model = BindingTransformerLite(input_dim=input_dim).to(DEVICE)
         model_save_path = "best_transformer_lite.pth"
     else:
         print("Using BindingTransformer")
-        model = BindingTransformer().to(DEVICE)
+        model = BindingTransformer(input_dim=input_dim).to(DEVICE)
         model_save_path = "best_transformer.pth"
     
     num_params = sum(p.numel() for p in model.parameters())

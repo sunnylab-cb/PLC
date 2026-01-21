@@ -2,7 +2,7 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
-from Bio.PDB import Polypeptide
+import pypropel.fpsite as fpsite
 import utils
 import features
 
@@ -60,7 +60,7 @@ def process_complex(pdb_id, pdbbind_dir):
     for model in structure:
         for chain in model:
             for residue in chain:
-                if not Polypeptide.is_aa(residue, standard=True):
+                if not fpsite.is_standard_aa(residue):
                     continue
                 
                 res_name = residue.get_resname()

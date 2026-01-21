@@ -1,0 +1,357 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+% Page setup
+\geometry{margin=1in}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Protein-Ligand Binding Prediction}
+\lhead{Progress Summary}
+\rfoot{Page \thepage}
+
+% Colors
+\definecolor{darkblue}{RGB}{0,51,102}
+\definecolor{lightgray}{RGB}{240,240,240}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkblue,
+    urlcolor=darkblue,
+}
+
+% Title formatting
+\titleformat{\section}{\Large\bfseries\color{darkblue}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+
+\title{\textbf{Protein-Ligand Binding Site Prediction}\\[0.5em]\Large Progress Summary}
+\author{Project Collaboration Report}
+\date{January 12, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document summarizes the progress made in developing machine learning models for protein-ligand binding site prediction using the PDBbind database. The project explored multiple approaches, including Random Forest, Fully Connected Neural Networks (FCNN), Transformer classifiers, and Context-Aware Transformers, each with varying levels of success in predicting amino acid-level binding sites.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%------------------------------------------------------------------------------
+\section{Project Overview}
+
+\subsection{Objective}
+The main goal of this project is to develop computational methods for predicting protein-ligand binding sites at the residue (amino acid) level. Given a protein sequence and ligand properties, the models predict which amino acids are likely to be involved in binding interactions.
+
+\subsection{Data Source}
+The project uses the \textbf{PDBbind database}, a comprehensive collection of protein-ligand complexes with experimentally determined structures and binding affinities.
+
+\subsection{Problem Formulation}
+\begin{itemize}
+    \item \textbf{Input}: Amino acid features + global protein features + ligand properties
+    \item \textbf{Output}: Binary classification (binding / non-binding) per residue
+    \item \textbf{Challenge}: Highly imbalanced data (binding sites are rare)
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Feature Engineering}
+
+\subsection{Baseline Feature Set (46 Dimensions)}
+The initial feature extraction pipeline generates 46-dimensional feature vectors:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Index Range} & \textbf{Feature Group} & \textbf{Description} & \textbf{Dims} \\ \midrule
+0--19 & Residue Identity & One-Hot Encoding (20 amino acids) & 20 \\
+20--21 & Residue PhysChem & Charge and Hydrophobicity & 2 \\
+22--41 & Global Protein & Amino Acid Composition (AAC) & 20 \\
+42--45 & Ligand Features & LogP, MW, H-Donors, H-Acceptors & 4 \\ \bottomrule
+\end{tabular}
+\caption{Baseline 46-dimensional feature vector composition}
+\end{table}
+
+\subsection{Enhanced Feature Set (466 Dimensions)}
+The enhanced pipeline adds sophisticated protein sequence descriptors:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Index Range} & \textbf{Feature Group} & \textbf{Description} & \textbf{Dims} & \textbf{Source} \\ \midrule
+0--19 & Residue Identity & One-Hot Encoding & 20 & Custom \\
+20--21 & Residue PhysChem & Charge, Hydrophobicity & 2 & Custom \\
+22--41 & AAC & Amino Acid Composition & 20 & pypropel \\
+42--441 & DAC & Dipeptide Composition & 400 & pypropel \\
+442--461 & AVEANF & Amphiphilic Pseudo-AA & 20 & pypropel \\
+462--465 & Ligand Features & LogP, MW, H-Donors, H-Acceptors & 4 & RDKit \\ \bottomrule
+\end{tabular}
+\caption{Enhanced 466-dimensional feature vector composition}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{Model Development}
+
+\subsection{Random Forest Classifier}
+
+\subsubsection{Approach}
+The first model implemented was a Random Forest classifier, chosen for its:
+\begin{itemize}
+    \item Robustness to feature scaling
+    \item Built-in feature importance
+    \item Ability to handle imbalanced data
+\end{itemize}
+
+\subsubsection{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lllllll@{}}
+\toprule
+\textbf{Configuration} & \textbf{Data Size} & \textbf{ROC-AUC} & \textbf{Accuracy} & \textbf{Recall} & \textbf{Precision} \\ \midrule
+Baseline (46 dims) & 5 Batches (~200k) & \textbf{0.8013} & 0.8330 & 0.54 & 0.20 \\
+Enhanced (466 dims) & 5 Batches (~227k) & 0.7248 & \textbf{0.8687} & 0.36 & 0.15 \\
+Enhanced (466 dims) & Full (~569k) & \textbf{0.7961} & 0.8387 & \textbf{0.55} & 0.19 \\ \bottomrule
+\end{tabular}
+\caption{Random Forest model comparison (December 27, 2025)}
+\end{table}
+
+\subsubsection{Key Findings}
+\begin{enumerate}
+    \item \textbf{Baseline Effectiveness}: The simple 46-dim feature set is robust (AUC $\sim$0.80) even with limited data.
+    \item \textbf{Curse of Dimensionality}: Enhanced features underperformed when data was limited (AUC 0.72 vs 0.80).
+    \item \textbf{Data Scale Matters}: Full dataset allowed enhanced features to recover performance.
+    \item \textbf{Performance Ceiling}: More features did not strictly outperform baseline, suggesting need for more complex models.
+\end{enumerate}
+
+%------------------------------------------------------------------------------
+\subsection{Fully Connected Neural Network (FCNN)}
+
+\subsubsection{Approach}
+A simple multi-layer perceptron was implemented to establish a neural network baseline, using the enhanced 466-dimensional features.
+
+\subsubsection{Training Configuration}
+\begin{itemize}
+    \item Focal Loss to handle class imbalance
+    \item Adam optimizer with learning rate scheduling
+    \item Early stopping based on validation AUC
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\subsection{Transformer Classifier}
+
+\subsubsection{Architecture}
+The Transformer-based classifier treats the 466-dimensional feature vector as a sequence of feature patches:
+
+\begin{enumerate}
+    \item \textbf{Input Projection}: Features divided into patches ($\sim$20 features each)
+    \item \textbf{Positional Encoding}: Sinusoidal encoding for patch positions
+    \item \textbf{CLS Token}: Learnable classification token prepended
+    \item \textbf{Transformer Encoder}: Self-attention layers learn feature interactions
+    \item \textbf{Classification Head}: MLP with sigmoid output
+\end{enumerate}
+
+\subsubsection{Variants}
+\begin{itemize}
+    \item \textbf{BindingTransformer}: Full architecture with patch-based input
+    \item \textbf{BindingTransformerLite}: Lighter version with direct projection
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\subsection{Context-Aware Transformer}
+
+\subsubsection{Motivation}
+To leverage sequence context for binding prediction, treating each prediction as dependent on neighboring amino acids.
+
+\subsubsection{Architecture}
+\begin{enumerate}
+    \item \textbf{Input}: Window of $2k+1$ amino acids (context size $k$)
+    \item \textbf{Learnable Positional Encoding}: For short sequences
+    \item \textbf{Self-Attention}: Learns inter-residue relationships
+    \item \textbf{Center Token Extraction}: Prediction for center residue
+    \item \textbf{Classification Head}: Binary binding probability
+\end{enumerate}
+
+\subsubsection{Key Components}
+\begin{verbatim}
+class ContextTransformer(nn.Module):
+    # context_size: Residues on each side of center
+    # d_model: Transformer dimension (256)
+    # nhead: Attention heads (8)
+    # num_layers: Encoder layers (4)
+\end{verbatim}
+
+\subsubsection{Alternative: CLS Token Architecture}
+Also implemented \texttt{ContextTransformerWithCLS} that uses a learnable CLS token for classification instead of the center token.
+
+%------------------------------------------------------------------------------
+\section{Regression Experiments}
+
+\subsection{Log-Transform Distance Regression}
+An alternative approach was explored: predicting the distance to the nearest ligand atom as a regression task.
+
+\subsubsection{Approach}
+\begin{itemize}
+    \item Target: Log-transformed distance to nearest ligand atom
+    \item Model: Transformer-based regression architecture
+    \item Loss: Mean Squared Error (MSE)
+\end{itemize}
+
+\subsubsection{Threshold-Based Classification}
+Post-hoc classification by applying distance thresholds to regression predictions.
+
+\subsubsection{Findings}
+\begin{itemize}
+    \item Model struggled to predict very short distances (actual binding sites)
+    \item MSE loss dominated by large distances
+    \item Direct classification remains more effective for this task
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Training Infrastructure}
+
+\subsection{Loss Functions}
+\begin{itemize}
+    \item \textbf{Focal Loss}: Addresses class imbalance by down-weighting easy examples
+    \item \textbf{Weighted BCE}: Class-weighted binary cross-entropy
+    \item \textbf{MSE}: For regression experiments
+\end{itemize}
+
+\subsection{Data Pipeline}
+\begin{itemize}
+    \item Batch processing of PDB structures
+    \item Protein-level train/val/test split (prevents leakage)
+    \item Context window generation for sequence models
+    \item On-the-fly data loading for memory efficiency
+\end{itemize}
+
+\subsection{Hardware}
+\begin{itemize}
+    \item Training on Apple Silicon (MPS) when available
+    \item CUDA support for GPU clusters
+    \item CPU fallback
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Saved Models}
+
+The following trained models are available:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Model File} & \textbf{Description} \\ \midrule
+\texttt{rf\_model.joblib} & Random Forest classifier \\
+\texttt{rf\_model\_enhanced.joblib} & RF with enhanced features \\
+\texttt{rf\_model\_enhanced\_full.joblib} & RF on full dataset \\
+\texttt{best\_fcnn\_focal.pth} & FCNN with Focal Loss \\
+\texttt{best\_transformer\_focal.pth} & Transformer classifier \\
+\texttt{best\_transformer\_lite\_focal.pth} & Lite Transformer \\
+\texttt{best\_context\_transformer\_focal.pth} & Context-Aware Transformer \\
+\texttt{best\_regression\_transformer\_mse.pth} & Distance regression model \\
+\texttt{best\_regression\_transformer\_mse\_log.pth} & Log-distance regression \\ \bottomrule
+\end{tabular}
+\caption{Saved model checkpoints}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{Code Organization}
+
+\subsection{Source Code Structure}
+\begin{verbatim}
+src/
+|-- dataset.py              # Base dataset loader
+|-- dataset_context.py      # Context window dataset
+|-- dataset_regression.py   # Regression target dataset
+|-- features.py             # Feature extraction
+|-- loss.py                 # Custom loss functions (Focal)
+|-- model.py                # Base model definitions
+|-- model_context_transformer.py   # Context-aware models
+|-- model_regression.py     # Regression models
+|-- model_rf.py             # Random Forest wrapper
+|-- model_transformer.py    # Transformer classifiers
+|-- pipeline.py             # Training pipeline
+|-- pipeline_regression.py  # Regression training
++-- utils.py                # Utility functions
+\end{verbatim}
+
+\subsection{Training Scripts}
+\begin{itemize}
+    \item \texttt{train\_fcnn.py} -- FCNN training
+    \item \texttt{train\_transformer.py} -- Transformer training
+    \item \texttt{train\_context\_transformer.py} -- Context-aware training
+    \item \texttt{train\_regression.py} -- Distance regression training
+\end{itemize}
+
+\subsection{Evaluation Scripts}
+\begin{itemize}
+    \item \texttt{evaluate\_fcnn.py}
+    \item \texttt{evaluate\_transformer.py}
+    \item \texttt{evaluate\_context\_transformer.py}
+    \item \texttt{evaluate\_regression.py}
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Conclusions and Future Directions}
+
+\subsection{What Worked}
+\begin{enumerate}
+    \item \textbf{Baseline features} (46 dims) provide strong performance with simple models
+    \item \textbf{Focal Loss} effectively handles class imbalance
+    \item \textbf{Protein-level data splitting} prevents data leakage
+    \item \textbf{Context-aware modeling} captures sequence dependencies
+\end{enumerate}
+
+\subsection{Challenges}
+\begin{enumerate}
+    \item \textbf{High-dimensional features} require more data to avoid overfitting
+    \item \textbf{Class imbalance} remains a fundamental challenge
+    \item \textbf{Precision-recall trade-off} difficult to optimize
+\end{enumerate}
+
+\subsection{Recommended Next Steps}
+\begin{enumerate}
+    \item \textbf{Feature Selection}: Apply feature selection on the 466-dim set to remove noise
+    \item \textbf{Gradient Boosting}: Explore XGBoost/LightGBM for high-dimensional features
+    \item \textbf{Structure Features}: Incorporate 3D structural information
+    \item \textbf{Pre-trained Embeddings}: Use protein language models (ESM, ProtTrans)
+    \item \textbf{Multi-task Learning}: Joint prediction of binding sites and affinity
+\end{enumerate}
+
+%------------------------------------------------------------------------------
+\section{Timeline}
+
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Date} & \textbf{Milestone} \\ \midrule
+Dec 27, 2025 & Feature extraction pipeline completed \\
+Dec 27, 2025 & Random Forest PoC with baseline \& enhanced features \\
+Dec 27, 2025 & FCNN implementation and training \\
+Dec 27, 2025 & Transformer classifier development \\
+Jan 5--6, 2026 & Log-transform regression experiments \\
+Jan 12, 2026 & Context-Aware Transformer implementation and evaluation \\ \bottomrule
+\end{tabular}
+
+\vspace{2em}
+\hrule
+\vspace{1em}
+\textit{Document generated on January 12, 2026}
+
+\end{document}

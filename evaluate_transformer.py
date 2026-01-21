@@ -90,6 +90,7 @@ def evaluate():
                         help="Path to model checkpoint")
     parser.add_argument("--lite", action="store_true", help="Use lighter transformer model")
     parser.add_argument("--plot", action="store_true", help="Generate evaluation plots")
+    parser.add_argument("--no_position", action="store_true", help="Disable relative position feature")
     args = parser.parse_args()
 
     # Configuration
@@ -101,16 +102,20 @@ def evaluate():
     # Load test data
     print("Loading test data...")
     limit_files = 1 if args.debug else None
-    _, _, test_loader = get_dataloaders(DATA_DIR, batch_size=BATCH_SIZE, limit_files=limit_files)
+    add_position = not args.no_position
+    input_dim = 467 if add_position else 466
+    print(f"Relative position: {'enabled' if add_position else 'disabled'}, input_dim={input_dim}")
+    
+    _, _, test_loader = get_dataloaders(DATA_DIR, batch_size=BATCH_SIZE, limit_files=limit_files, add_relative_position=add_position)
     
     # Load Model
     if args.lite:
-        model = BindingTransformerLite().to(DEVICE)
+        model = BindingTransformerLite(input_dim=input_dim).to(DEVICE)
     else:
-        model = BindingTransformer().to(DEVICE)
+        model = BindingTransformer(input_dim=input_dim).to(DEVICE)
     
     try:
-        checkpoint = torch.load(args.model_path, map_location=DEVICE)
+        checkpoint = torch.load(args.model_path, map_location=DEVICE, weights_only=False)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
             print(f"Loaded {args.model_path} (epoch {checkpoint.get('epoch', '?')}, val_auc={checkpoint.get('val_auc', '?'):.4f})")

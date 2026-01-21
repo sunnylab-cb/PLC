@@ -11,6 +11,7 @@ class BindingDataset(Dataset):
         """
         Args:
             data_frame (pd.DataFrame): DataFrame containing features and labels.
+                Optionally contains 'relative_position' column to append.
         """
         self.data = data_frame
         # Convert features from string/list to float32 tensor
@@ -44,6 +45,12 @@ class BindingDataset(Dataset):
         else:
             # Assume it's already a list or array
             self.features = np.stack(self.data['features'].values).astype(np.float32)
+        
+        # Append relative position if available (making 466 -> 467 dims)
+        if 'relative_position' in self.data.columns:
+            rel_pos = self.data['relative_position'].values.astype(np.float32).reshape(-1, 1)
+            self.features = np.concatenate([self.features, rel_pos], axis=1)
+            print(f"Appended relative_position feature. New shape: {self.features.shape}")
             
         self.labels = self.data['label'].values.astype(np.float32)
 
@@ -53,9 +60,10 @@ class BindingDataset(Dataset):
     def __getitem__(self, idx):
         return torch.tensor(self.features[idx]), torch.tensor(self.labels[idx])
 
-def load_data(data_dir, limit_files=None):
+def load_data(data_dir, limit_files=None, add_relative_position=True):
     """
     Loads all CSV files from the directory into a single DataFrame.
+    Optionally adds relative position feature (0=N-terminus, 1=C-terminus).
     """
     all_files = sorted(glob.glob(os.path.join(data_dir, "features_batch_*.csv")))
     if limit_files:
@@ -72,13 +80,44 @@ def load_data(data_dir, limit_files=None):
     
     full_df = pd.concat(df_list, axis=0, ignore_index=True)
     print(f"Total samples loaded: {len(full_df)}")
+    
+    if add_relative_position:
+        print("Computing relative position feature...")
+        full_df = _add_relative_position(full_df)
+    
     return full_df
 
-def get_dataloaders(data_dir, batch_size=64, val_ratio=0.1, test_ratio=0.1, seed=42, limit_files=None):
+
+def _add_relative_position(df):
+    """
+    Computes relative position for each residue within its protein.
+    Position is normalized: 0.0 = N-terminus, 1.0 = C-terminus.
+    
+    Uses res_id as the position indicator within each pdb_id group.
+    """
+    # Group by pdb_id and compute relative position
+    def compute_rel_pos(group):
+        res_ids = group['res_id'].values
+        min_id = res_ids.min()
+        max_id = res_ids.max()
+        
+        if max_id == min_id:
+            # Single residue protein - set to 0.5 (middle)
+            group['relative_position'] = 0.5
+        else:
+            group['relative_position'] = (res_ids - min_id) / (max_id - min_id)
+        
+        return group
+    
+    df = df.groupby('pdb_id', group_keys=False).apply(compute_rel_pos)
+    return df
+
+
+def get_dataloaders(data_dir, batch_size=64, val_ratio=0.1, test_ratio=0.1, seed=42, limit_files=None, add_relative_position=True):
     """
     Splits the data by PDB ID and returns train, val, test dataloaders.
     """
-    df = load_data(data_dir, limit_files=limit_files)
+    df = load_data(data_dir, limit_files=limit_files, add_relative_position=add_relative_position)
     
     # Groups
     groups = df['pdb_id'].values

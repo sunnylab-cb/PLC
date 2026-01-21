@@ -46,7 +46,7 @@ class BindingTransformer(nn.Module):
     
     def __init__(
         self,
-        input_dim: int = 466,
+        input_dim: int = 467,
         patch_size: int = 20,  # Each patch covers ~20 features
         d_model: int = 128,
         nhead: int = 4,
@@ -150,7 +150,7 @@ class BindingTransformerLite(nn.Module):
     
     def __init__(
         self,
-        input_dim: int = 466,
+        input_dim: int = 467,
         d_model: int = 128,
         nhead: int = 4,
         num_layers: int = 2,
