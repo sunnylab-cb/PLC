@@ -56,18 +56,21 @@ def load_module(name: str, path: str):
 SCRIPT_DIR = Path(__file__).parent
 PYPROPEL_DIR = SCRIPT_DIR.parent / 'pypropel_unibio' / 'pypropel'
 
-# Load modules (fpsite not needed - scalar features are self-contained)
+# Load modules
 gvp_module = None
+fpsite_module = None
 mol_module = None
 graph_module = None
 
 
 def init_modules():
-    """Initialize pypropel modules."""
-    global gvp_module, mol_module, graph_module
+    """Initialize pypropel modules (loaded standalone, not via package)."""
+    global gvp_module, fpsite_module, mol_module, graph_module
     
     if gvp_module is None:
         gvp_module = load_module('gvp', str(PYPROPEL_DIR / 'gvp.py'))
+    if fpsite_module is None:
+        fpsite_module = load_module('fpsite', str(PYPROPEL_DIR / 'fpsite.py'))
     if mol_module is None:
         mol_module = load_module('mol', str(PYPROPEL_DIR / 'mol.py'))
     if graph_module is None:
@@ -87,78 +90,6 @@ AA_3TO1 = {
 def three_to_one(res_name: str) -> str:
     """Convert 3-letter AA code to 1-letter."""
     return AA_3TO1.get(res_name.upper(), 'X')
-
-
-# ==================== Protein Scalar Features (Self-Contained) ====================
-
-AA_MAP = {
-    'ALA': 0, 'ARG': 1, 'ASN': 2, 'ASP': 3, 'CYS': 4,
-    'GLN': 5, 'GLU': 6, 'GLY': 7, 'HIS': 8, 'ILE': 9,
-    'LEU': 10, 'LYS': 11, 'MET': 12, 'PHE': 13, 'PRO': 14,
-    'SER': 15, 'THR': 16, 'TRP': 17, 'TYR': 18, 'VAL': 19
-}
-
-CHARGE_MAP = {'ARG': 1.0, 'LYS': 1.0, 'HIS': 0.5, 'ASP': -1.0, 'GLU': -1.0}
-
-KD_HYDRO = {
-    'ILE': 4.5, 'VAL': 4.2, 'LEU': 3.8, 'PHE': 2.8, 'CYS': 2.5,
-    'MET': 1.9, 'ALA': 1.8, 'GLY': -0.4, 'THR': -0.7, 'SER': -0.8,
-    'TRP': -0.9, 'TYR': -1.3, 'PRO': -1.6, 'HIS': -3.2, 'GLU': -3.5,
-    'GLN': -3.5, 'ASP': -3.5, 'ASN': -3.5, 'LYS': -3.9, 'ARG': -4.5
-}
-
-AROMATIC_AAS = {'PHE', 'TYR', 'TRP', 'HIS'}
-HBOND_DONOR = {'ARG': 3, 'ASN': 1, 'GLN': 1, 'HIS': 1, 'LYS': 1, 'SER': 1, 'THR': 1, 'TRP': 1, 'TYR': 1, 'CYS': 1}
-HBOND_ACCEPTOR = {'ASN': 1, 'ASP': 2, 'GLN': 1, 'GLU': 2, 'HIS': 1, 'SER': 1, 'THR': 1, 'TYR': 1}
-
-
-def compute_protein_scalar_features(structure, chain_id=None) -> np.ndarray:
-    """
-    Self-contained protein scalar feature extraction (d=35).
-    
-    [0-19] AA one-hot, [20-22] SS placeholder, [23] SASA placeholder,
-    [24] Charge, [25] Hydro, [26] Aromatic, [27] H-Donor, [28] H-Accept, [29-34] Reserved
-    """
-    from Bio.PDB import Polypeptide
-    
-    res_names = []
-    for model in structure:
-        for chain in model:
-            if chain_id is not None and chain.get_id() != chain_id:
-                continue
-            for residue in chain:
-                if Polypeptide.is_aa(residue, standard=True):
-                    res_names.append(residue.get_resname())
-    
-    n = len(res_names)
-    if n == 0:
-        return np.zeros((0, 35), dtype=np.float32)
-    
-    features = np.zeros((n, 35), dtype=np.float32)
-    
-    for i, res_name in enumerate(res_names):
-        # [0-19] AA one-hot
-        if res_name in AA_MAP:
-            features[i, AA_MAP[res_name]] = 1.0
-        
-        # [20-22] SS placeholder (zeros without DSSP)
-        # [23] SASA placeholder (zero without DSSP)
-        
-        # [24] Charge
-        features[i, 24] = CHARGE_MAP.get(res_name, 0.0)
-        
-        # [25] Hydrophobicity (normalized 0-1)
-        hydro = KD_HYDRO.get(res_name, 0.0)
-        features[i, 25] = (hydro + 4.5) / 9.0  # Normalize
-        
-        # [26] Aromatic
-        features[i, 26] = 1.0 if res_name in AROMATIC_AAS else 0.0
-        
-        # [27-28] H-bond
-        features[i, 27] = HBOND_DONOR.get(res_name, 0)
-        features[i, 28] = HBOND_ACCEPTOR.get(res_name, 0)
-    
-    return features
 
 
 # ==================== Feature Extraction Functions ====================
@@ -195,8 +126,8 @@ def extract_protein_features(
     if len(ca_coords) == 0:
         raise ValueError("No valid residues found in protein")
     
-    # Extract scalar features (d=35) - self-contained, no DSSP
-    scalar_features = compute_protein_scalar_features(structure)
+    # Extract scalar features (d=35) via pypropel.fpsite
+    scalar_features = fpsite_module.get_protein_scalar_features(structure, use_dssp=use_dssp)
     
     # Build k-NN edges
     edge_index, edge_distances = gvp_module.build_knn_edges(
