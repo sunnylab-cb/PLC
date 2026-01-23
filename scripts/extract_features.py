@@ -34,7 +34,18 @@ from tqdm import tqdm
 
 
 def setup_pypropel():
-    """Ensure pypropel is importable."""
+    """Ensure pypropel is importable and suppress RDKit warnings."""
+    # Suppress RDKit warnings
+    import warnings
+    warnings.filterwarnings('ignore', message='.*molecule is tagged as 2D.*')
+    warnings.filterwarnings('ignore', message='.*DEPRECATION WARNING.*')
+    
+    try:
+        from rdkit import RDLogger
+        RDLogger.DisableLog('rdApp.*')
+    except ImportError:
+        pass
+    
     try:
         import pypropel
         return True
@@ -44,21 +55,42 @@ def setup_pypropel():
         return False
 
 
-def find_complexes(data_dir: str) -> List[Tuple[str, str, str]]:
+def find_complexes(data_dir: str, recursive: bool = True) -> List[Tuple[str, str, str]]:
     """
     Find all protein-ligand complexes in the PDBbind directory.
     
-    Returns list of (pdb_id, protein_path, ligand_path) tuples.
+    Searches for pattern: {pdb_id}/{pdb_id}_protein.pdb + {pdb_id}_ligand.sdf/mol2
+    
+    Parameters
+    ----------
+    data_dir : str
+        Root directory to search.
+    recursive : bool
+        If True, search all subdirectories recursively.
+    
+    Returns
+    -------
+    List of (pdb_id, protein_path, ligand_path) tuples.
     """
     data_path = Path(data_dir)
     complexes = []
     
-    # PDBbind structure: /{pdb_id}/{pdb_id}_protein.pdb, /{pdb_id}/{pdb_id}_ligand.sdf
-    for subdir in data_path.iterdir():
-        if not subdir.is_dir():
-            continue
-            
+    # Get all subdirectories to check
+    if recursive:
+        # Use glob to find all directories that might contain complexes
+        subdirs = list(data_path.rglob('*'))
+        subdirs = [d for d in subdirs if d.is_dir()]
+        subdirs.append(data_path)  # Also check root
+    else:
+        subdirs = [d for d in data_path.iterdir() if d.is_dir()]
+    
+    for subdir in subdirs:
         pdb_id = subdir.name
+        
+        # Skip common non-PDB directories
+        if pdb_id in {'features', 'output', '__pycache__', '.git'}:
+            continue
+        
         protein_path = subdir / f"{pdb_id}_protein.pdb"
         ligand_sdf = subdir / f"{pdb_id}_ligand.sdf"
         ligand_mol2 = subdir / f"{pdb_id}_ligand.mol2"
