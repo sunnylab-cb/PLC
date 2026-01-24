@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=gvp_train
-#SBATCH --partition=gpu           # Adjust to your cluster's GPU partition
+#SBATCH --partition=i64m1tga40ue           # Adjust to your cluster's GPU partition
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8         # For data loading parallelism
 #SBATCH --gres=gpu:1              # Request 1 GPU
-#SBATCH --mem=32G                 # RAM
+#SBATCH --mem=40G                 # RAM
 #SBATCH --time=48:00:00           # Adjust based on dataset size
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
@@ -15,9 +15,9 @@
 # ============================================================
 
 # Configuration - MODIFY THESE PATHS
-PROJECT_DIR="/path/to/protein_ligand"
+PROJECT_DIR="/hpc2hdd/home/jzhao908/protein-ligand-PoC"
 CONFIG_FILE="configs/pocket_gvp_v2.yaml"
-CONDA_ENV="protein_ligand"  # Your conda environment name
+# CONDA_ENV="protein_ligand"  # Your conda environment name
 
 # Options
 RESUME_CHECKPOINT=""  # Set to path like "outputs/experiment/checkpoints/latest.pt" to resume
@@ -42,13 +42,14 @@ module load anaconda3  # Or your python module
 
 # Activate conda environment
 # Try standard conda init location
-if [ -f "$(conda info --base)/etc/profile.d/conda.sh" ]; then
-    source $(conda info --base)/etc/profile.d/conda.sh
-else
-    # Fallback to direct activation if source script not found
-    echo "Warning: conda.sh not found, trying explicit source..."
-fi
-conda activate ${CONDA_ENV} || echo "Conda activate failed, assuming environment already active"
+# if [ -f "$(conda info --base)/etc/profile.d/conda.sh" ]; then
+#     source $(conda info --base)/etc/profile.d/conda.sh
+# else
+#     # Fallback to direct activation if source script not found
+#     echo "Warning: conda.sh not found, trying explicit source..."
+# fi
+# conda activate ${CONDA_ENV} || echo "Conda activate failed, assuming environment already active"
+source venv/bin/activate
 
 # Verify GPU is available
 echo "GPU devices:"
