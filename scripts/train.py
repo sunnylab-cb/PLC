@@ -231,6 +231,18 @@ def compute_metrics(
     return metrics
 
 
+
+def check_tensor_nan(tensor: torch.Tensor, name: str, batch_idx: int = -1):
+    """Check if tensor contains NaN or Inf."""
+    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+        print(f"!! NaN/Inf detected in {name} at batch {batch_idx} !!")
+        print(f"  Shape: {tensor.shape}")
+        print(f"  Range: [{tensor.min()}, {tensor.max()}]")
+        print(f"  Mean: {tensor.mean()}")
+        return True
+    return False
+
+
 def train_one_epoch(
     model: nn.Module,
     dataloader,
@@ -241,7 +253,8 @@ def train_one_epoch(
     device: torch.device,
     epoch: int,
     writer: Optional[SummaryWriter],
-    log_every: int = 10
+    log_every: int = 10,
+    debug: bool = False
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -257,6 +270,13 @@ def train_one_epoch(
         inputs = prepare_model_inputs(batch, device)
         labels = batch['labels'].to(device)
         mask = batch['protein_mask'].to(device)
+        
+        # Debug: Check inputs
+        if debug:
+            for k, v in inputs.items():
+                if isinstance(v, torch.Tensor) and torch.is_floating_point(v):
+                    if check_tensor_nan(v, f"Input {k}", batch_idx):
+                        raise ValueError(f"NaN found in input {k}")
         
         # Forward pass
         outputs = model(
@@ -275,12 +295,43 @@ def train_one_epoch(
         
         logits = outputs['logits']
         
+        # Debug: Check outputs
+        if debug:
+             if check_tensor_nan(logits, "Logits", batch_idx):
+                 raise ValueError("NaN found in logits")
+        
         # Compute loss
         loss = compute_focal_loss(logits, labels, mask, class_weights, gamma)
+        
+        # Debug: Check loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"!! Loss is {loss.item()} at batch {batch_idx} !!")
+            print("Checking inputs again...")
+            for k, v in inputs.items():
+                if isinstance(v, torch.Tensor) and torch.is_floating_point(v):
+                    print(f"{k}: min={v.min()}, max={v.max()}, nan={torch.isnan(v).any()}")
+            print("Checking logits...")
+            print(f"Logits: min={logits.min()}, max={logits.max()}")
+            raise ValueError("Loss is NaN")
         
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
+        
+        # Gradient monitoring
+        if writer is not None and (batch_idx % log_every == 0 or debug):
+            total_norm = 0.0
+            for p in model.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+            
+            global_step = epoch * len(dataloader) + batch_idx
+            writer.add_scalar('Train/grad_norm', total_norm, global_step)
+            
+            if debug and total_norm > 10.0:
+                print(f"High gradient norm: {total_norm:.4f} at batch {batch_idx}")
         
         # Gradient clipping
         if gradient_clip > 0:
@@ -427,8 +478,14 @@ def main():
     parser.add_argument('--config', type=str, required=True, help='Path to config YAML')
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume')
     parser.add_argument('--device', type=str, default=None, help='Device override (cuda/cpu)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode (anomaly detection, nan checks)')
     args = parser.parse_args()
     
+    # Debug mode
+    if args.debug:
+        print("Debug mode enabled: torch.autograd.set_detect_anomaly(True)")
+        torch.autograd.set_detect_anomaly(True)
+
     # Load config
     config = load_config(args.config)
     
@@ -555,7 +612,8 @@ def main():
             device=device,
             epoch=epoch,
             writer=writer,
-            log_every=config['logging']['log_every']
+            log_every=config['logging']['log_every'],
+            debug=args.debug
         )
         
         # Step scheduler
