@@ -19,6 +19,55 @@ from .transformer_layers import ProteinContextEncoder, CrossAttentionBlock
 from .ligand_encoder import LigandEncoder
 
 
+class PairwiseBridge(nn.Module):
+    """
+    Pairwise dot product bridge for translation-invariant vector features.
+    
+    Computes Gram matrix of vector features and flattens the upper triangle.
+    """
+    def __init__(self, n_vec_channels: int, d_out: int):
+        super().__init__()
+        # Number of unique pairs in symmetric matrix: C * (C+1) / 2
+        self.n_pairs = (n_vec_channels * (n_vec_channels + 1)) // 2
+        self.proj = nn.Linear(self.n_pairs, d_out)
+
+    def forward(self, h_v: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            h_v: Vector features [Batch, N, C, 3]
+            
+        Returns:
+            Projected scalar features [Batch, N, d_out]
+        """
+        # 1. Compute Gram Matrix per residue (Batch, N, C, C)
+        # dot product over the spatial dimension (last dim)
+        gram = torch.einsum('bnci,bnji->bncj', h_v, h_v)
+        
+        # 2. Extract Upper Triangle (unique pairs only)
+        batch, n_res, c, _ = gram.shape
+        
+        # Create indices for upper triangle
+        indices = torch.triu_indices(c, c, device=gram.device)
+        
+        # Gather unique pairs: [Batch, N, N_Pairs]
+        # We need to expand indices to match batch and n_res dimensions
+        # Or simply permute and gather
+        
+        # Flatten batch and residue dims for efficient gathering
+        gram_flat = gram.view(batch * n_res, c, c)
+        
+        # Gather: [Batch*N, N_Pairs]
+        flat_pairs = gram_flat[:, indices[0], indices[1]]
+        
+        # Reshape back: [Batch, N, N_Pairs]
+        flat_pairs = flat_pairs.view(batch, n_res, self.n_pairs)
+        
+        # 3. Project back to reasonable dimension
+        return self.proj(flat_pairs)
+
+
 class PocketGVPFusion(nn.Module):
     """
     Pocket-GVP-Fusion v2 model for protein-ligand binding site prediction.
@@ -46,6 +95,7 @@ class PocketGVPFusion(nn.Module):
         'd_ligand_atom': 64,     # Ligand atom features
         'n_gvp_vectors': 4,      # Number of GVP vector features
         'n_gvp_vector_hidden': 16,  # GVP vector hidden dimension
+        'd_pairwise_bridge': 64,    # Output dim of pairwise bridge
         
         # Layers
         'n_gvp_layers': 3,
@@ -77,8 +127,8 @@ class PocketGVPFusion(nn.Module):
         # ============================================================
         # Module 2: Protein Geometric Encoder (GVP)
         # ============================================================
-        # Input: scalar (d_phys=35) + vector (4×3)
-        # Output: scalar (d_gvp_internal=256) + vector (16×3)
+        # Input: scalar (d_phys=35) + vector (4×3 or depends on feature extraction)
+        # Note: GVP input features exclude coordinates, coords only used for graph
         self.gvp_encoder = GVPEncoder(
             node_in_dim=(c['d_phys'], c['n_gvp_vectors']),
             node_h_dim=(c['d_gvp_internal'], c['n_gvp_vector_hidden']),
@@ -90,13 +140,20 @@ class PocketGVPFusion(nn.Module):
         # ============================================================
         # Module 3: Bridge & Early Injection
         # ============================================================
-        # h_geo = [h_s_gvp (256) + ||h_v_gvp|| (16)] = 272
-        # h_combined = [h_geo (272) + P_raw (35)] = 307
-        # Also need space for ESM: 1280
-        # Total input to bridge: 272 + 35 + 1280 = 1587
+        # Step A: Pairwise Bridge for vectors
+        self.pairwise_bridge = PairwiseBridge(
+            n_vec_channels=c['n_gvp_vector_hidden'], 
+            d_out=c['d_pairwise_bridge']
+        )
         
-        d_bridge_in = c['d_gvp_internal'] + c['n_gvp_vector_hidden'] + c['d_phys'] + c['d_esm']
+        # Construct h_geo = [h_s_gvp (256) + pairwise_out (64)] = 320
+        d_geo = c['d_gvp_internal'] + c['d_pairwise_bridge']
         
+        # Step B: Early injection
+        # h_combined = [h_geo (320) + P_raw (35) + ESM (1280)] = 1635
+        d_bridge_in = d_geo + c['d_phys'] + c['d_esm']
+        
+        # Step C: Projection
         self.bridge_proj = nn.Sequential(
             nn.Linear(d_bridge_in, c['d_model']),
             nn.LayerNorm(c['d_model']),
@@ -138,9 +195,9 @@ class PocketGVPFusion(nn.Module):
         # ============================================================
         # Module 7: Late Injection & Classifier
         # ============================================================
-        # ResNet skip: H_fused + H_prot_global (handled in forward)
-        # DenseNet skip: Concat with P_raw (35)
-        # Final dim: d_model + d_phys = 512 + 35 = 547
+        # Input: Concat(H_fused, P_raw)
+        # Size: d_model (512) + d_phys (35) = 547
+        # NO ResNet skip from Protein Encoder H_prot_global
         
         d_classifier_in = c['d_model'] + c['d_phys']
         
@@ -165,40 +222,36 @@ class PocketGVPFusion(nn.Module):
         ligand_edge_index: torch.Tensor,    # [2, E_total]
         ligand_edge_attr: torch.Tensor,     # [E_total, edge_dim]
         ligand_batch: torch.Tensor,         # [N_atoms_total]
-        ligand_to_protein: torch.Tensor,    # [B, max_atoms] padded ligand features
+        ligand_to_protein: torch.Tensor,    # [B, max_atoms, d_model] padded ligand features
         ligand_mask: torch.Tensor,          # [B, max_atoms]
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass.
         
         Args:
-            esm_embeddings: ESM-2 embeddings per residue
-            protein_scalar: Physicochemical features per residue  
-            protein_vectors: GVP vector features per residue
-            protein_coords: Cα coordinates per residue
-            protein_mask: Padding mask for protein (True = valid token)
-            ligand_x: Atom features for all ligands in batch
-            ligand_edge_index: Edge indices for ligand graph
-            ligand_edge_attr: Edge features for ligand graph
-            ligand_batch: Maps each atom to its batch index
-            ligand_to_protein: Padded ligand atom features [B, max_atoms, d_model]
-            ligand_mask: Padding mask for ligand atoms
+            esm_embeddings: ESM-2 embeddings
+            protein_scalar: Physicochemical features
+            protein_vectors: GVP vector features
+            protein_coords: Cα coordinates
+            protein_mask: Padding mask
+            ligand_x: Ligand atom features
+            ligand_edge_index: Ligand edge indices
+            ligand_edge_attr: Ligand edge features
+            ligand_batch: Ligand batch assignment
+            ligand_to_protein: Padded ligand features for cross-attn
+            ligand_mask: Ligand padding mask
             
         Returns:
-            Dict with:
-                'logits': [B, L, n_classes] - class logits per residue
-                'h_prot_global': [B, L, d_model] - protein context embeddings
-                'h_fused': [B, L, d_model] - fused embeddings
+            Dict with logits, h_prot_global, h_fused
         """
         B, L, _ = esm_embeddings.shape
         device = esm_embeddings.device
         c = self.config
         
         # ============================================================
-        # Module 2: GVP Encoder
+        # Module 2: GVP Encoder [Updated Flow]
         # ============================================================
-        # Process each protein in batch through GVP
-        # For efficiency, we flatten and rebuild
+        # Note: GVP input = phys + vectors. Coordinates ONLY used for graph building.
         
         h_s_gvp_list = []
         h_v_gvp_list = []
@@ -209,7 +262,6 @@ class PocketGVPFusion(nn.Module):
             n_valid = mask_b.sum().item()
             
             if n_valid == 0:
-                # Handle empty case
                 h_s_gvp_list.append(torch.zeros(L, c['d_gvp_internal'], device=device))
                 h_v_gvp_list.append(torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device))
                 continue
@@ -249,19 +301,21 @@ class PocketGVPFusion(nn.Module):
         h_v_gvp = torch.stack(h_v_gvp_list, dim=0)  # [B, L, 16, 3]
         
         # ============================================================
-        # Module 3: Bridge & Early Injection
+        # Module 3: Bridge & Early Injection [Updated Flow]
         # ============================================================
-        # Flatten vectors: ||h_v_gvp|| -> [B, L, 16]
-        v_norm = torch.norm(h_v_gvp, dim=-1)  # [B, L, 16]
         
-        # h_geo = [h_s_gvp, v_norm] -> [B, L, 272]
-        h_geo = torch.cat([h_s_gvp, v_norm], dim=-1)
+        # Step A: Pairwise Bridge
+        # [B, L, 16, 3] -> [B, L, 64]
+        v_inv = self.pairwise_bridge(h_v_gvp)
         
-        # Early injection: concat with physics features + ESM
-        # h_combined = [h_geo (272), P_raw (35), ESM (1280)] -> [B, L, 1587]
+        # h_geo = [h_s_gvp, v_inv] -> [B, L, 320]
+        h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
+        
+        # Step B: Early Injection
+        # Concat GVP out + Phys + ESM -> [B, L, 1635]
         h_combined = torch.cat([h_geo, protein_scalar, esm_embeddings], dim=-1)
         
-        # Project to d_model
+        # Step C: Projection
         h_seq = self.bridge_proj(h_combined)  # [B, L, 512]
         
         # ============================================================
@@ -272,18 +326,42 @@ class PocketGVPFusion(nn.Module):
         # ============================================================
         # Module 5: Ligand Encoder
         # ============================================================
-        # Encode all ligands in batch
         h_ligand_nodes = self.ligand_encoder(
             x=ligand_x,
             edge_index=ligand_edge_index,
             edge_attr=ligand_edge_attr,
             batch=ligand_batch
-        )  # [N_atoms_total, 512]
+        )
+        # Use padded ligand features from dataloader (assumes correct collation/batching)
+        # Ideally, we should scatter h_ligand_nodes back to [B, M, D]
+        # For now, leveraging the passed 'ligand_to_protein' if it contains encoded features
+        # BUT 'ligand_to_protein' arg currently holds raw features from collate. 
+        # We need to reshape h_ligand_nodes. 
+        # Since standard scattering is complex with variable sizes, and we are using GINEConv which is global,
+        # let's assume ligand_to_protein is a placeholder or we need to implementation proper scattering.
+        #
+        # FIX: The simplified current implementation in `collate.py` passes raw features in `ligand_to_protein`.
+        # We need to scatter the GNN output `h_ligand_nodes` into a [B, Max_M, D] tensor for CrossAttn.
         
-        # Reshape to padded batch format for cross-attention
-        # ligand_to_protein: [B, max_atoms] contains indices into h_ligand_nodes
-        # or we use pre-padded ligand features
-        h_ligand = ligand_to_protein  # [B, M, 512] (pre-padded in dataloader)
+        # Create zero tensor [B, Max_M, D]
+        B_dim, Max_M_dim, _ = ligand_to_protein.shape 
+        # ligand_to_protein passed in is currently raw features [B, M, 64] from inputs
+        
+        h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device)
+        
+        # Scatter node embeddings
+        # ligand_batch: [N_total] -> tells us which batch index
+        # We need per-batch atom indices.
+        
+        # Naive loop for scatter (can be optimized)
+        for b in range(B_dim):
+             mask_b = ligand_batch == b
+             if mask_b.any():
+                 nodes_b = h_ligand_nodes[mask_b]
+                 n_atoms = nodes_b.shape[0]
+                 # Safety clip
+                 n_atoms = min(n_atoms, Max_M_dim)
+                 h_ligand[b, :n_atoms] = nodes_b[:n_atoms]
         
         # ============================================================
         # Module 6: Cross-Attention Fusion
@@ -296,15 +374,13 @@ class PocketGVPFusion(nn.Module):
         )  # [B, L, 512]
         
         # ============================================================
-        # Module 7: Late Injection & Classifier
+        # Module 7: Late Injection & Classifier [Updated Flow]
         # ============================================================
-        # ResNet skip
-        x = h_fused + h_prot_global  # [B, L, 512]
+        # No ResNet skip from h_prot_global
+        # Input: Concat(H_fused, P_raw)
         
-        # DenseNet skip (Late injection)
-        x_final = torch.cat([x, protein_scalar], dim=-1)  # [B, L, 547]
+        x_final = torch.cat([h_fused, protein_scalar], dim=-1)  # [B, L, 512+35]
         
-        # Classification head
         logits = self.classifier(x_final)  # [B, L, 3]
         
         return {

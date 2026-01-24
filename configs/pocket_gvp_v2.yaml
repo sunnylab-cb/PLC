@@ -27,6 +27,7 @@ model:
   d_ligand_atom: 64                 # Ligand atom features
   n_gvp_vectors: 4                  # Number of GVP vector features
   n_gvp_vector_hidden: 16           # GVP vector hidden dimension
+  d_pairwise_bridge: 64             # Output dim of pairwise bridge
   
   # Layers
   n_gvp_layers: 3
