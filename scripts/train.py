@@ -75,9 +75,8 @@ def create_model(config: Dict, device: torch.device) -> nn.Module:
     """Create model from config."""
     model_config = config['model']
     
-    # Use simplified model for now (easier debugging)
-    # Switch to PocketGVPFusion when ready
-    model = PocketGVPFusionSimplified(model_config)
+    # Use full PocketGVPFusion model
+    model = PocketGVPFusion(model_config)
     
     model = model.to(device)
     
@@ -263,8 +262,14 @@ def train_one_epoch(
         outputs = model(
             esm_embeddings=inputs['esm_embeddings'],
             protein_scalar=inputs['protein_scalar'],
+            protein_vectors=inputs['protein_vectors'],
+            protein_coords=inputs['protein_coords'],
             protein_mask=inputs['protein_mask'],
-            ligand_features=inputs['ligand_to_protein'],
+            ligand_x=inputs['ligand_x'],
+            ligand_edge_index=inputs['ligand_edge_index'],
+            ligand_edge_attr=inputs['ligand_edge_attr'],
+            ligand_batch=inputs['ligand_batch'],
+            ligand_to_protein=inputs['ligand_to_protein'],
             ligand_mask=inputs['ligand_mask']
         )
         
@@ -340,8 +345,14 @@ def evaluate(
         outputs = model(
             esm_embeddings=inputs['esm_embeddings'],
             protein_scalar=inputs['protein_scalar'],
+            protein_vectors=inputs['protein_vectors'],
+            protein_coords=inputs['protein_coords'],
             protein_mask=inputs['protein_mask'],
-            ligand_features=inputs['ligand_to_protein'],
+            ligand_x=inputs['ligand_x'],
+            ligand_edge_index=inputs['ligand_edge_index'],
+            ligand_edge_attr=inputs['ligand_edge_attr'],
+            ligand_batch=inputs['ligand_batch'],
+            ligand_to_protein=inputs['ligand_to_protein'],
             ligand_mask=inputs['ligand_mask']
         )
         

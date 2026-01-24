@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=extract_features
-#SBATCH --partition=gpu           # Adjust to your cluster's GPU partition
+#SBATCH --partition=i64m1tga40ue           # Adjust to your cluster's GPU partition
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8         # For data loading parallelism
@@ -15,8 +15,8 @@
 # ============================================================
 
 # Configuration - MODIFY THESE PATHS
-PROJECT_DIR="/path/to/protein_ligand"
-DATA_DIR="/path/to/pdbbind"
+PROJECT_DIR="/hpc2hdd/home/jzhao908/protein-ligand-PoC"
+DATA_DIR="/hpc2hdd/home/jzhao908/protein-ligand-PoC/database/pdbbind/P-L/1981-2000"
 OUTPUT_DIR="${DATA_DIR}/features"
 CONDA_ENV="protein_ligand"  # Your conda environment name
 
@@ -46,8 +46,9 @@ module load cuda/11.8  # Or your CUDA version
 module load anaconda3  # Or your python module
 
 # Activate conda environment
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate ${CONDA_ENV}
+# source $(conda info --base)/etc/profile.d/conda.sh
+# conda activate ${CONDA_ENV}
+source venv/bin/activate
 
 # Verify GPU is available
 echo "GPU devices:"

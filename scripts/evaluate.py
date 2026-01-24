@@ -45,8 +45,8 @@ def load_model(config: Dict, checkpoint_path: str, device: torch.device):
     """Load trained model from checkpoint."""
     model_config = config['model']
     
-    # Use simplified model (match training)
-    model = PocketGVPFusionSimplified(model_config)
+    # Use full PocketGVPFusion model (match training)
+    model = PocketGVPFusion(model_config)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -216,8 +216,14 @@ def evaluate_model(
         outputs = model(
             esm_embeddings=inputs['esm_embeddings'],
             protein_scalar=inputs['protein_scalar'],
+            protein_vectors=inputs['protein_vectors'],
+            protein_coords=inputs['protein_coords'],
             protein_mask=inputs['protein_mask'],
-            ligand_features=inputs['ligand_to_protein'],
+            ligand_x=inputs['ligand_x'],
+            ligand_edge_index=inputs['ligand_edge_index'],
+            ligand_edge_attr=inputs['ligand_edge_attr'],
+            ligand_batch=inputs['ligand_batch'],
+            ligand_to_protein=inputs['ligand_to_protein'],
             ligand_mask=inputs['ligand_mask']
         )
         

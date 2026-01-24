@@ -6,3 +6,4 @@ __pycache__
 *.joblib
 .DS_Store
 *.pth
+outputs/

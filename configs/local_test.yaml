@@ -1,0 +1,67 @@
+# Pocket-GVP-Fusion v2 Configuration (Local Test)
+# ===============================================
+
+# Experiment settings
+experiment:
+  name: "local_test"
+  seed: 42
+  output_dir: "outputs"
+
+# Data settings
+data:
+  feature_dir: "database/features"
+  split_file: null
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 200     # Smaller for faster test
+  max_atoms: 50
+
+# Model architecture (Same as full config)
+model:
+  d_esm: 1280
+  d_phys: 35
+  d_gvp_internal: 128   # Smaller for test
+  d_model: 256          # Smaller for test
+  d_ligand_atom: 64
+  n_gvp_vectors: 4
+  n_gvp_vector_hidden: 8 # Smaller for test
+  d_pairwise_bridge: 32  # Smaller for test
+  n_gvp_layers: 2
+  n_transformer_layers: 2
+  n_ligand_layers: 2
+  n_heads: 4
+  dropout: 0.1
+  use_gated_attn: true
+  use_swiglu: true
+  gvp_radius: 10.0
+  gvp_k_neighbors: 10
+  n_classes: 3
+  edge_dim: 6
+
+# Training settings
+training:
+  batch_size: 2
+  num_epochs: 1
+  num_workers: 0  # 0 for safe local debugging
+  optimizer: "adamw"
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  scheduler: "cosine"
+  warmup_epochs: 0
+  min_lr: 1.0e-6
+  loss_type: "focal"
+  focal_gamma: 2.0
+  class_weights: [5.0, 3.0, 2.0]
+  gradient_clip: 1.0
+  save_every: 1
+  early_stopping_patience: 15
+  use_amp: false
+
+# Logging
+logging:
+  log_every: 1
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false
