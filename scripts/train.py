@@ -43,6 +43,8 @@ from src.data.pocket_dataset import (
 )
 from src.data.collate import pocket_collate_fn, prepare_model_inputs, compute_class_weights
 from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified
+from src.metrics.metrics import compute_all_publishable_metrics, compute_segmentation_metrics
+from src.metrics.diagnostics import collect_model_diagnostics, check_health_warnings
 
 
 def load_config(config_path: str) -> Dict:
@@ -361,6 +363,23 @@ def train_one_epoch(
                 global_step = epoch * len(dataloader) + batch_idx
                 writer.add_scalar('Train/batch_loss', loss.item(), global_step)
                 writer.add_scalar('Train/batch_acc', batch_metrics['accuracy'], global_step)
+                
+                # Training dynamics / module health diagnostics
+                diagnostics = collect_model_diagnostics(model)
+                if 'gvp_scalar_norm' in diagnostics:
+                    writer.add_scalar('Health/gvp_scalar_norm', diagnostics['gvp_scalar_norm'], global_step)
+                if 'gvp_vector_norm' in diagnostics:
+                    writer.add_scalar('Health/gvp_vector_norm', diagnostics['gvp_vector_norm'], global_step)
+                if 'gate_openness' in diagnostics:
+                    writer.add_scalar('Health/gate_openness', diagnostics['gate_openness'], global_step)
+                if 'attn_entropy' in diagnostics:
+                    writer.add_scalar('Health/attn_entropy', diagnostics['attn_entropy'], global_step)
+                
+                # Check for health warnings
+                if debug:
+                    warnings = check_health_warnings(diagnostics)
+                    for warning in warnings:
+                        print(f"  [HEALTH WARNING] {warning}")
     
     # Aggregate metrics
     avg_loss = total_loss / max(total_samples, 1)
@@ -381,12 +400,16 @@ def evaluate(
     gamma: float,
     device: torch.device
 ) -> Dict[str, float]:
-    """Evaluate model on a dataset."""
+    """Evaluate model on a dataset with publishable metrics."""
     model.eval()
     
     total_loss = 0.0
     total_samples = 0
     all_metrics = []
+    
+    # Accumulators for epoch-level segmentation metrics
+    all_preds = []
+    all_labels = []
     
     for batch in dataloader:
         inputs = prepare_model_inputs(batch, device)
@@ -416,6 +439,11 @@ def evaluate(
         
         batch_metrics = compute_metrics(logits, labels, mask)
         all_metrics.append(batch_metrics)
+        
+        # Accumulate predictions for epoch-level segmentation metrics
+        preds = logits.argmax(dim=-1)
+        all_preds.append(preds[mask].cpu())
+        all_labels.append(labels[mask].cpu())
     
     avg_loss = total_loss / max(total_samples, 1)
     avg_metrics = {
@@ -423,6 +451,18 @@ def evaluate(
         for k in all_metrics[0].keys()
     }
     avg_metrics['loss'] = avg_loss
+    
+    # Compute epoch-level segmentation metrics (DICE, IoU)
+    if all_preds and all_labels:
+        epoch_preds = torch.cat(all_preds)
+        epoch_labels = torch.cat(all_labels)
+        seg_metrics = compute_segmentation_metrics(
+            epoch_preds, epoch_labels, 
+            mask=torch.ones_like(epoch_preds, dtype=torch.bool),  # Already filtered
+            contact_class=0
+        )
+        avg_metrics['dice_c0'] = seg_metrics['dice']
+        avg_metrics['iou_c0'] = seg_metrics['iou']
     
     return avg_metrics
 
@@ -632,6 +672,10 @@ def main():
         # Log
         print(f"\nTrain - Loss: {train_metrics['loss']:.4f}, Acc: {train_metrics['accuracy']:.4f}")
         print(f"Val   - Loss: {val_metrics['loss']:.4f}, Acc: {val_metrics['accuracy']:.4f}")
+        
+        # Log publishable metrics
+        if 'dice_c0' in val_metrics:
+            print(f"Val   - DICE: {val_metrics['dice_c0']:.4f}, IoU: {val_metrics['iou_c0']:.4f}, F1_c0: {val_metrics.get('f1_c0', 0):.4f}")
         print(f"LR: {current_lr:.2e}")
         
         # TensorBoard epoch logging
@@ -646,6 +690,11 @@ def main():
             for k, v in val_metrics.items():
                 if k.startswith('f1_') or k.startswith('precision_') or k.startswith('recall_'):
                     writer.add_scalar(f'Val/{k}', v, epoch)
+            
+            # Publishable metrics (DICE, IoU)
+            if 'dice_c0' in val_metrics:
+                writer.add_scalar('Val/dice_c0', val_metrics['dice_c0'], epoch)
+                writer.add_scalar('Val/iou_c0', val_metrics['iou_c0'], epoch)
         
         # Checkpointing
         is_best = val_metrics['loss'] < best_val_loss

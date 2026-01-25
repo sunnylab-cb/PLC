@@ -283,6 +283,12 @@ class GVPEncoder(nn.Module):
         # Final normalization
         node_s = self.norm_s(node_s)
         
+        # Diagnostic tracking: cache norms for training monitoring
+        # These can be read by the diagnostics module after forward pass
+        with torch.no_grad():
+            self._last_scalar_norm = node_s.norm(dim=-1).mean()
+            self._last_vector_norm = node_v.norm(dim=-1).mean()
+        
         return node_s, node_v
 
 

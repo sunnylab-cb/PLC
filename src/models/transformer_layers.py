@@ -151,6 +151,16 @@ class GatedMultiHeadAttention(nn.Module):
         
         # Softmax and dropout
         attn = F.softmax(attn, dim=-1)
+        
+        # Diagnostic tracking: cache attention weights for entropy computation
+        # Store before dropout for accurate entropy calculation
+        with torch.no_grad():
+            self._last_attn_weights = attn.detach()
+            # Compute attention entropy: -sum(p * log(p))
+            eps = 1e-8
+            attn_clamped = attn.clamp(min=eps)
+            self._last_attn_entropy = -(attn_clamped * attn_clamped.log()).sum(dim=-1).mean()
+        
         attn = self.dropout(attn)
         
         # Apply attention to values
@@ -163,6 +173,9 @@ class GatedMultiHeadAttention(nn.Module):
         # Apply gating
         if self.use_gate:
             gate = torch.sigmoid(self.gate(x))
+            # Diagnostic tracking: cache gate openness
+            with torch.no_grad():
+                self._last_gate_openness = gate.mean()
             out = out * gate
         
         return out
