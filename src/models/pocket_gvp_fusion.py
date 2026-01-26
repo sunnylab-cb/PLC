@@ -101,6 +101,7 @@ class PocketGVPFusion(nn.Module):
         'n_gvp_layers': 3,
         'n_transformer_layers': 4,
         'n_ligand_layers': 3,
+        'n_cross_attention_layers': 1,  # NEW: Multi-layer cross-attention (default 1 for backward compat)
         'n_heads': 8,
         
         # Settings
@@ -184,13 +185,17 @@ class PocketGVPFusion(nn.Module):
         )
         
         # ============================================================
-        # Module 6: Cross-Attention Fusion
+        # Module 6: Cross-Attention Fusion (Multi-Layer)
         # ============================================================
-        self.cross_attention = CrossAttentionBlock(
-            d_model=c['d_model'],
-            n_heads=c['n_heads'],
-            dropout=c['dropout']
-        )
+        n_cross_layers = c.get('n_cross_attention_layers', 1)
+        self.cross_attention_layers = nn.ModuleList([
+            CrossAttentionBlock(
+                d_model=c['d_model'],
+                n_heads=c['n_heads'],
+                dropout=c['dropout']
+            )
+            for _ in range(n_cross_layers)
+        ])
         
         # ============================================================
         # Module 7: Late Injection & Classifier
@@ -207,6 +212,26 @@ class PocketGVPFusion(nn.Module):
             nn.Dropout(c['dropout']),
             nn.Linear(256, c['n_classes'])
         )
+    
+    @staticmethod
+    def convert_legacy_state_dict(state_dict: Dict) -> Dict:
+        """
+        Convert old checkpoint keys to new multi-layer format.
+        
+        Old format: cross_attention.norm_q.weight, etc.
+        New format: cross_attention_layers.0.norm_q.weight, etc.
+        
+        This ensures backward compatibility with old checkpoints.
+        """
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith('cross_attention.'):
+                # Convert to cross_attention_layers.0.*
+                new_key = key.replace('cross_attention.', 'cross_attention_layers.0.')
+                new_state_dict[new_key] = value
+            else:
+                new_state_dict[key] = value
+        return new_state_dict
         
     def forward(
         self,
@@ -364,14 +389,16 @@ class PocketGVPFusion(nn.Module):
                  h_ligand[b, :n_atoms] = nodes_b[:n_atoms]
         
         # ============================================================
-        # Module 6: Cross-Attention Fusion
+        # Module 6: Cross-Attention Fusion (Multi-Layer)
         # ============================================================
-        h_fused = self.cross_attention(
-            q=h_prot_global,
-            kv=h_ligand,
-            q_mask=protein_mask,
-            kv_mask=ligand_mask
-        )  # [B, L, 512]
+        h_fused = h_prot_global
+        for cross_attn_layer in self.cross_attention_layers:
+            h_fused = cross_attn_layer(
+                q=h_fused,
+                kv=h_ligand,
+                q_mask=protein_mask,
+                kv_mask=ligand_mask
+            )  # [B, L, 512]
         
         # ============================================================
         # Module 7: Late Injection & Classifier [Updated Flow]
@@ -496,11 +523,15 @@ class PocketGVPFusionSimplified(nn.Module):
             nn.LayerNorm(c['d_model'])
         )
         
-        self.cross_attention = CrossAttentionBlock(
-            d_model=c['d_model'],
-            n_heads=c['n_heads'],
-            dropout=c['dropout']
-        )
+        n_cross_layers = c.get('n_cross_attention_layers', 1)
+        self.cross_attention_layers = nn.ModuleList([
+            CrossAttentionBlock(
+                d_model=c['d_model'],
+                n_heads=c['n_heads'],
+                dropout=c['dropout']
+            )
+            for _ in range(n_cross_layers)
+        ])
         
         d_classifier_in = c['d_model'] + c['d_phys']
         self.classifier = nn.Sequential(
@@ -531,11 +562,13 @@ class PocketGVPFusionSimplified(nn.Module):
         # Ligand projection
         h_lig = self.ligand_proj(ligand_features)
         
-        # Cross-attention
-        h_fused = self.cross_attention(
-            q=h_prot, kv=h_lig,
-            q_mask=protein_mask, kv_mask=ligand_mask
-        )
+        # Cross-attention (multi-layer)
+        h_fused = h_prot
+        for cross_attn_layer in self.cross_attention_layers:
+            h_fused = cross_attn_layer(
+                q=h_fused, kv=h_lig,
+                q_mask=protein_mask, kv_mask=ligand_mask
+            )
         
         # Classifier with late injection
         x = h_fused + h_prot

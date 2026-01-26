@@ -48,7 +48,13 @@ def load_model(config: Dict, checkpoint_path: str, device: torch.device):
     model = PocketGVPFusion(model_config)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Convert legacy state dict for backward compatibility
+    state_dict = checkpoint['model_state_dict']
+    if hasattr(model, 'convert_legacy_state_dict'):
+        state_dict = model.convert_legacy_state_dict(state_dict)
+    
+    model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
     
@@ -76,8 +82,14 @@ def collect_attention_weights(model) -> Dict[str, List[torch.Tensor]]:
                 if w is not None:
                     weights['self_attention'].append(w.cpu())
     
-    # Cross-attention from Protein-Ligand Fusion
-    if hasattr(model, 'cross_attention'):
+    # Cross-attention from Protein-Ligand Fusion (support both old and new format)
+    if hasattr(model, 'cross_attention_layers'):
+        for layer in model.cross_attention_layers:
+            if hasattr(layer, 'cross_attn') and hasattr(layer.cross_attn, '_last_attn_weights'):
+                w = layer.cross_attn._last_attn_weights
+                if w is not None:
+                    weights['cross_attention'].append(w.cpu())
+    elif hasattr(model, 'cross_attention'):
         ca = model.cross_attention
         if hasattr(ca, 'cross_attn') and hasattr(ca.cross_attn, '_last_attn_weights'):
             w = ca.cross_attn._last_attn_weights

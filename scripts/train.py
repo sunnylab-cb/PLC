@@ -506,7 +506,12 @@ def load_checkpoint(
     """Load checkpoint and return starting epoch."""
     checkpoint = torch.load(checkpoint_path)
     
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # Convert legacy state dict for backward compatibility
+    state_dict = checkpoint['model_state_dict']
+    if hasattr(model, 'convert_legacy_state_dict'):
+        state_dict = model.convert_legacy_state_dict(state_dict)
+    
+    model.load_state_dict(state_dict)
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     

@@ -108,8 +108,11 @@ class DiagnosticsHook:
         if hasattr(model, 'protein_context_encoder'):
             self._register_transformer_hooks(model.protein_context_encoder)
             
-        # Find cross-attention
-        if hasattr(model, 'cross_attention'):
+        # Find cross-attention (support both old single layer and new multi-layer)
+        if hasattr(model, 'cross_attention_layers'):
+            for layer in model.cross_attention_layers:
+                self._register_cross_attn_hook(layer)
+        elif hasattr(model, 'cross_attention'):
             self._register_cross_attn_hook(model.cross_attention)
     
     def _register_gvp_hook(self, gvp_encoder):
