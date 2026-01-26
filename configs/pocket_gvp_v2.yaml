@@ -34,6 +34,7 @@ model:
   n_transformer_layers: 4
   n_ligand_layers: 3
   n_heads: 8
+  n_cross_attention_layers: 4
   
   # Settings
   dropout: 0.1
@@ -48,7 +49,7 @@ model:
 
 # Training settings
 training:
-  batch_size: 4                     # Batch size (may need adjustment based on VRAM)
+  batch_size: 32                     # Batch size (may need adjustment based on VRAM)
   num_epochs: 100
   num_workers: 4                    # DataLoader workers
   

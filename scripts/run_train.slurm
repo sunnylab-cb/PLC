@@ -20,6 +20,7 @@ CONFIG_FILE="configs/pocket_gvp_v2.yaml"
 # CONDA_ENV="protein_ligand"  # Your conda environment name
 
 # Options
+# RESUME_CHECKPOINT="outputs/pocket_gvp_fusion_v2_20260124_205624/checkpoints/latest.pt"  # Set to path like "outputs/experiment/checkpoints/latest.pt" to resume
 RESUME_CHECKPOINT=""  # Set to path like "outputs/experiment/checkpoints/latest.pt" to resume
 
 # ============================================================
@@ -79,7 +80,7 @@ fi
 echo ""
 
 # Build command
-CMD="python scripts/train.py --config ${CONFIG_FILE} --device cuda"
+CMD="python scripts/train.py --config ${CONFIG_FILE} --device cuda --debug"
 
 # Add resume flag if set
 if [ -n "${RESUME_CHECKPOINT}" ]; then
