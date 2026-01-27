@@ -42,7 +42,7 @@ from src.data.pocket_dataset import (
     create_dataloader
 )
 from src.data.collate import pocket_collate_fn, prepare_model_inputs, compute_class_weights
-from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified
+from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified, PocketGVPFusionNoGVP
 from src.metrics.metrics import compute_all_publishable_metrics, compute_segmentation_metrics
 from src.metrics.diagnostics import collect_model_diagnostics, check_health_warnings
 
@@ -77,8 +77,15 @@ def create_model(config: Dict, device: torch.device) -> nn.Module:
     """Create model from config."""
     model_config = config['model']
     
-    # Use full PocketGVPFusion model
-    model = PocketGVPFusion(model_config)
+    # Check if GVP should be used (default True for backward compatibility)
+    use_gvp = model_config.get('use_gvp', True)
+    
+    if use_gvp:
+        print("Using PocketGVPFusion (with GVP encoder)")
+        model = PocketGVPFusion(model_config)
+    else:
+        print("Using PocketGVPFusionNoGVP (ablation: no GVP encoder)")
+        model = PocketGVPFusionNoGVP(model_config)
     
     model = model.to(device)
     

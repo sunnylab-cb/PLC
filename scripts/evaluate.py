@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.pocket_dataset import PocketDataset, load_splits, set_seed, create_dataloader
 from src.data.collate import prepare_model_inputs
-from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified
+from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified, PocketGVPFusionNoGVP
 
 
 def load_config(config_path: str) -> Dict:
@@ -45,8 +45,15 @@ def load_model(config: Dict, checkpoint_path: str, device: torch.device):
     """Load trained model from checkpoint."""
     model_config = config['model']
     
-    # Use full PocketGVPFusion model (match training)
-    model = PocketGVPFusion(model_config)
+    # Check if GVP should be used (default True for backward compatibility)
+    use_gvp = model_config.get('use_gvp', True)
+    
+    if use_gvp:
+        print("Loading PocketGVPFusion (with GVP encoder)")
+        model = PocketGVPFusion(model_config)
+    else:
+        print("Loading PocketGVPFusionNoGVP (ablation: no GVP encoder)")
+        model = PocketGVPFusionNoGVP(model_config)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     

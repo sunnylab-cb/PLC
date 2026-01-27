@@ -489,6 +489,177 @@ class PocketGVPFusion(nn.Module):
         return loss
 
 
+class PocketGVPFusionNoGVP(nn.Module):
+    """
+    Ablation variant: No GVP encoder.
+    
+    Uses ESM + physicochemical features directly without 3D geometry encoding.
+    Maintains the SAME forward interface as PocketGVPFusion for drop-in replacement.
+    """
+    
+    def __init__(self, config: Optional[Dict] = None):
+        super().__init__()
+        
+        # Merge with defaults
+        self.config = {**PocketGVPFusion.DEFAULT_CONFIG, **(config or {})}
+        c = self.config
+        
+        # ============================================================
+        # NO GVP Encoder - Skip Module 2 entirely
+        # ============================================================
+        
+        # ============================================================
+        # Module 3 (Modified): Direct Bridge without GVP
+        # ============================================================
+        # Input: ESM (1280) + P_raw (35) = 1315 (instead of 1635 with GVP)
+        d_bridge_in = c['d_esm'] + c['d_phys']
+        
+        self.bridge_proj = nn.Sequential(
+            nn.Linear(d_bridge_in, c['d_model']),
+            nn.LayerNorm(c['d_model']),
+            nn.Dropout(c['dropout'])
+        )
+        
+        # ============================================================
+        # Module 4: Protein Context Encoder (Gated Transformer)
+        # ============================================================
+        self.protein_context_encoder = ProteinContextEncoder(
+            d_model=c['d_model'],
+            n_layers=c['n_transformer_layers'],
+            n_heads=c['n_heads'],
+            dropout=c['dropout'],
+            pe_type='sinusoidal'
+        )
+        
+        # ============================================================
+        # Module 5: Ligand Encoder
+        # ============================================================
+        self.ligand_encoder = LigandEncoder(
+            node_in_dim=c['d_ligand_atom'],
+            edge_in_dim=c['edge_dim'],
+            hidden_dim=c['d_gvp_internal'],
+            out_dim=c['d_model'],
+            n_layers=c['n_ligand_layers'],
+            dropout=c['dropout']
+        )
+        
+        # ============================================================
+        # Module 6: Cross-Attention Fusion (Multi-Layer)
+        # ============================================================
+        n_cross_layers = c.get('n_cross_attention_layers', 1)
+        self.cross_attention_layers = nn.ModuleList([
+            CrossAttentionBlock(
+                d_model=c['d_model'],
+                n_heads=c['n_heads'],
+                dropout=c['dropout']
+            )
+            for _ in range(n_cross_layers)
+        ])
+        
+        # ============================================================
+        # Module 7: Late Injection & Classifier
+        # ============================================================
+        d_classifier_in = c['d_model'] + c['d_phys']
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(d_classifier_in, 256),
+            nn.ReLU(),
+            nn.Dropout(c['dropout']),
+            nn.Linear(256, c['n_classes'])
+        )
+    
+    def forward(
+        self,
+        # Protein features - SAME interface as PocketGVPFusion
+        esm_embeddings: torch.Tensor,       # [B, L, 1280]
+        protein_scalar: torch.Tensor,       # [B, L, 35]
+        protein_vectors: torch.Tensor,      # [B, L, 4, 3] - IGNORED
+        protein_coords: torch.Tensor,       # [B, L, 3] - IGNORED
+        protein_mask: torch.Tensor,         # [B, L]
+        
+        # Ligand features (batched graph)
+        ligand_x: torch.Tensor,             # [N_atoms_total, 64]
+        ligand_edge_index: torch.Tensor,    # [2, E_total]
+        ligand_edge_attr: torch.Tensor,     # [E_total, edge_dim]
+        ligand_batch: torch.Tensor,         # [N_atoms_total]
+        ligand_to_protein: torch.Tensor,    # [B, max_atoms, d_model]
+        ligand_mask: torch.Tensor,          # [B, max_atoms]
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass WITHOUT GVP encoding.
+        
+        protein_vectors and protein_coords are accepted but IGNORED.
+        """
+        B, L, _ = esm_embeddings.shape
+        device = esm_embeddings.device
+        c = self.config
+        
+        # ============================================================
+        # NO Module 2: Skip GVP entirely
+        # ============================================================
+        
+        # ============================================================
+        # Module 3 (Modified): Direct Projection
+        # ============================================================
+        # Concat ESM + Phys only (no GVP output)
+        h_combined = torch.cat([esm_embeddings, protein_scalar], dim=-1)  # [B, L, 1315]
+        h_seq = self.bridge_proj(h_combined)  # [B, L, 512]
+        
+        # ============================================================
+        # Module 4: Protein Context Encoder
+        # ============================================================
+        h_prot_global = self.protein_context_encoder(h_seq, mask=protein_mask)  # [B, L, 512]
+        
+        # ============================================================
+        # Module 5: Ligand Encoder
+        # ============================================================
+        h_ligand_nodes = self.ligand_encoder(
+            x=ligand_x,
+            edge_index=ligand_edge_index,
+            edge_attr=ligand_edge_attr,
+            batch=ligand_batch
+        )
+        
+        B_dim, Max_M_dim, _ = ligand_to_protein.shape
+        h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device)
+        
+        for b in range(B_dim):
+            mask_b = ligand_batch == b
+            if mask_b.any():
+                nodes_b = h_ligand_nodes[mask_b]
+                n_atoms = min(nodes_b.shape[0], Max_M_dim)
+                h_ligand[b, :n_atoms] = nodes_b[:n_atoms]
+        
+        # ============================================================
+        # Module 6: Cross-Attention Fusion (Multi-Layer)
+        # ============================================================
+        h_fused = h_prot_global
+        for cross_attn_layer in self.cross_attention_layers:
+            h_fused = cross_attn_layer(
+                q=h_fused,
+                kv=h_ligand,
+                q_mask=protein_mask,
+                kv_mask=ligand_mask
+            )
+        
+        # ============================================================
+        # Module 7: Late Injection & Classifier
+        # ============================================================
+        x_final = torch.cat([h_fused, protein_scalar], dim=-1)  # [B, L, 512+35]
+        logits = self.classifier(x_final)  # [B, L, 3]
+        
+        return {
+            'logits': logits,
+            'h_prot_global': h_prot_global,
+            'h_fused': h_fused
+        }
+    
+    def predict(self, **kwargs) -> torch.Tensor:
+        """Convenience method for inference."""
+        outputs = self.forward(**kwargs)
+        return outputs['logits'].argmax(dim=-1)
+
+
 class PocketGVPFusionSimplified(nn.Module):
     """
     Simplified version of Pocket-GVP-Fusion for testing/debugging.

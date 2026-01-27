@@ -1,0 +1,84 @@
+# Ablation Study: No GVP Configuration
+# =====================================
+# Tests model performance WITHOUT GVP encoder
+
+# Experiment settings
+experiment:
+  name: "ablation_no_gvp"
+  seed: 42
+  output_dir: "outputs"
+
+# Data settings (same as full model)
+data:
+  feature_dir: "database/features"
+  split_file: null
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1000
+  max_atoms: 100
+
+# Model architecture
+model:
+  # ABLATION: Disable GVP encoder
+  use_gvp: false
+  
+  # Dimensions (same as full model)
+  d_esm: 1280
+  d_phys: 35
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 64
+  n_gvp_vectors: 4
+  n_gvp_vector_hidden: 16
+  d_pairwise_bridge: 64
+  
+  # Layers
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4
+  
+  # Settings
+  dropout: 0.1
+  use_gated_attn: true
+  use_swiglu: true
+  gvp_radius: 10.0
+  gvp_k_neighbors: 20
+  
+  # Output
+  n_classes: 3
+  edge_dim: 6
+
+# Training settings (same as full model for fair comparison)
+training:
+  batch_size: 32
+  num_epochs: 100
+  num_workers: 4
+  
+  optimizer: "adamw"
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  
+  scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+  
+  loss_type: "focal"
+  focal_gamma: 2.0
+  class_weights: [5.0, 3.0, 2.0]
+  
+  gradient_clip: 1.0
+  save_every: 5
+  early_stopping_patience: 15
+  
+  use_amp: false
+
+# Logging
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false
