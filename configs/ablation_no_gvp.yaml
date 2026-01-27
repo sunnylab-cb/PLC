@@ -22,6 +22,9 @@ data:
 model:
   # ABLATION: Disable GVP encoder
   use_gvp: false
+  use_esm: true
+  use_physchem_early: true
+  use_physchem_late: true
   
   # Dimensions (same as full model)
   d_esm: 1280

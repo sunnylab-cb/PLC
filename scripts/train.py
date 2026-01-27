@@ -42,7 +42,7 @@ from src.data.pocket_dataset import (
     create_dataloader
 )
 from src.data.collate import pocket_collate_fn, prepare_model_inputs, compute_class_weights
-from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified, PocketGVPFusionNoGVP
+from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified, PocketGVPFusionAblation
 from src.metrics.metrics import compute_all_publishable_metrics, compute_segmentation_metrics
 from src.metrics.diagnostics import collect_model_diagnostics, check_health_warnings
 
@@ -77,15 +77,21 @@ def create_model(config: Dict, device: torch.device) -> nn.Module:
     """Create model from config."""
     model_config = config['model']
     
-    # Check if GVP should be used (default True for backward compatibility)
+    # Check if any ablation flag is set (default all True = full model)
     use_gvp = model_config.get('use_gvp', True)
+    use_esm = model_config.get('use_esm', True)
+    use_physchem_early = model_config.get('use_physchem_early', True)
+    use_physchem_late = model_config.get('use_physchem_late', True)
     
-    if use_gvp:
-        print("Using PocketGVPFusion (with GVP encoder)")
-        model = PocketGVPFusion(model_config)
+    # Use ablation model if any component is disabled
+    is_ablation = not (use_gvp and use_esm and use_physchem_early and use_physchem_late)
+    
+    if is_ablation:
+        print("Using PocketGVPFusionAblation (ablation mode)")
+        model = PocketGVPFusionAblation(model_config)
     else:
-        print("Using PocketGVPFusionNoGVP (ablation: no GVP encoder)")
-        model = PocketGVPFusionNoGVP(model_config)
+        print("Using PocketGVPFusion (full model)")
+        model = PocketGVPFusion(model_config)
     
     model = model.to(device)
     

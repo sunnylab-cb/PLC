@@ -489,11 +489,16 @@ class PocketGVPFusion(nn.Module):
         return loss
 
 
-class PocketGVPFusionNoGVP(nn.Module):
+class PocketGVPFusionAblation(nn.Module):
     """
-    Ablation variant: No GVP encoder.
+    Unified ablation model for component contribution analysis.
     
-    Uses ESM + physicochemical features directly without 3D geometry encoding.
+    Supports selective disabling of model components via config flags:
+    - use_gvp: Enable/disable GVP encoder (default: True)
+    - use_esm: Enable/disable ESM embeddings (default: True)
+    - use_physchem_early: Enable/disable physchem in early injection (default: True)
+    - use_physchem_late: Enable/disable physchem in late injection/classifier (default: True)
+    
     Maintains the SAME forward interface as PocketGVPFusion for drop-in replacement.
     """
     
@@ -504,15 +509,50 @@ class PocketGVPFusionNoGVP(nn.Module):
         self.config = {**PocketGVPFusion.DEFAULT_CONFIG, **(config or {})}
         c = self.config
         
-        # ============================================================
-        # NO GVP Encoder - Skip Module 2 entirely
-        # ============================================================
+        # Ablation flags (default all True = full model)
+        self.use_gvp = c.get('use_gvp', True)
+        self.use_esm = c.get('use_esm', True)
+        self.use_physchem_early = c.get('use_physchem_early', True)
+        self.use_physchem_late = c.get('use_physchem_late', True)
+        
+        # Log ablation configuration
+        print(f"[Ablation Config] use_gvp={self.use_gvp}, use_esm={self.use_esm}, "
+              f"use_physchem_early={self.use_physchem_early}, use_physchem_late={self.use_physchem_late}")
         
         # ============================================================
-        # Module 3 (Modified): Direct Bridge without GVP
+        # Module 2: GVP Encoder (conditional)
         # ============================================================
-        # Input: ESM (1280) + P_raw (35) = 1315 (instead of 1635 with GVP)
-        d_bridge_in = c['d_esm'] + c['d_phys']
+        if self.use_gvp:
+            self.gvp_encoder = GVPEncoder(
+                node_in_dim=(c['d_phys'], c['n_gvp_vectors']),
+                node_h_dim=(c['d_gvp_internal'], c['n_gvp_vector_hidden']),
+                edge_in_dim=(1, 1),
+                n_layers=c['n_gvp_layers'],
+                drop_rate=c['dropout']
+            )
+            self.pairwise_bridge = PairwiseBridge(
+                n_vec_channels=c['n_gvp_vector_hidden'],
+                d_out=c['d_pairwise_bridge']
+            )
+            d_geo = c['d_gvp_internal'] + c['d_pairwise_bridge']  # 320
+        else:
+            self.gvp_encoder = None
+            self.pairwise_bridge = None
+            d_geo = 0
+        
+        # ============================================================
+        # Module 3: Bridge & Early Injection
+        # ============================================================
+        # Compute bridge input dimension based on enabled components
+        d_bridge_in = d_geo
+        if self.use_esm:
+            d_bridge_in += c['d_esm']  # +1280
+        if self.use_physchem_early:
+            d_bridge_in += c['d_phys']  # +35
+        
+        # If nothing is enabled, use a minimum dimension (shouldn't happen in practice)
+        if d_bridge_in == 0:
+            raise ValueError("At least one of GVP, ESM, or early physchem must be enabled")
         
         self.bridge_proj = nn.Sequential(
             nn.Linear(d_bridge_in, c['d_model']),
@@ -559,7 +599,9 @@ class PocketGVPFusionNoGVP(nn.Module):
         # ============================================================
         # Module 7: Late Injection & Classifier
         # ============================================================
-        d_classifier_in = c['d_model'] + c['d_phys']
+        d_classifier_in = c['d_model']
+        if self.use_physchem_late:
+            d_classifier_in += c['d_phys']  # +35
         
         self.classifier = nn.Sequential(
             nn.Linear(d_classifier_in, 256),
@@ -573,8 +615,8 @@ class PocketGVPFusionNoGVP(nn.Module):
         # Protein features - SAME interface as PocketGVPFusion
         esm_embeddings: torch.Tensor,       # [B, L, 1280]
         protein_scalar: torch.Tensor,       # [B, L, 35]
-        protein_vectors: torch.Tensor,      # [B, L, 4, 3] - IGNORED
-        protein_coords: torch.Tensor,       # [B, L, 3] - IGNORED
+        protein_vectors: torch.Tensor,      # [B, L, 4, 3]
+        protein_coords: torch.Tensor,       # [B, L, 3]
         protein_mask: torch.Tensor,         # [B, L]
         
         # Ligand features (batched graph)
@@ -586,38 +628,84 @@ class PocketGVPFusionNoGVP(nn.Module):
         ligand_mask: torch.Tensor,          # [B, max_atoms]
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass WITHOUT GVP encoding.
+        Forward pass with configurable ablation.
         
-        protein_vectors and protein_coords are accepted but IGNORED.
+        Components are conditionally used based on ablation flags set in __init__.
         """
         B, L, _ = esm_embeddings.shape
         device = esm_embeddings.device
         c = self.config
         
         # ============================================================
-        # NO Module 2: Skip GVP entirely
+        # Module 2: GVP Encoder (conditional)
         # ============================================================
+        if self.use_gvp:
+            h_s_gvp_list = []
+            h_v_gvp_list = []
+            
+            for b in range(B):
+                mask_b = protein_mask[b]
+                n_valid = mask_b.sum().item()
+                
+                if n_valid == 0:
+                    h_s_gvp_list.append(torch.zeros(L, c['d_gvp_internal'], device=device))
+                    h_v_gvp_list.append(torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device))
+                    continue
+                
+                scalar_b = protein_scalar[b, mask_b]
+                vectors_b = protein_vectors[b, mask_b]
+                coords_b = protein_coords[b, mask_b]
+                
+                edge_index, edge_dist, edge_dir = build_knn_graph(
+                    coords_b, k=c['gvp_k_neighbors'], radius=c['gvp_radius']
+                )
+                
+                h_s, h_v = self.gvp_encoder(
+                    node_s=scalar_b, node_v=vectors_b,
+                    edge_index=edge_index, edge_s=edge_dist, edge_v=edge_dir
+                )
+                
+                h_s_full = torch.zeros(L, c['d_gvp_internal'], device=device)
+                h_v_full = torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device)
+                h_s_full[mask_b] = h_s
+                h_v_full[mask_b] = h_v
+                
+                h_s_gvp_list.append(h_s_full)
+                h_v_gvp_list.append(h_v_full)
+            
+            h_s_gvp = torch.stack(h_s_gvp_list, dim=0)
+            h_v_gvp = torch.stack(h_v_gvp_list, dim=0)
+            
+            v_inv = self.pairwise_bridge(h_v_gvp)
+            h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
+        else:
+            h_geo = None
         
         # ============================================================
-        # Module 3 (Modified): Direct Projection
+        # Module 3: Bridge & Early Injection
         # ============================================================
-        # Concat ESM + Phys only (no GVP output)
-        h_combined = torch.cat([esm_embeddings, protein_scalar], dim=-1)  # [B, L, 1315]
-        h_seq = self.bridge_proj(h_combined)  # [B, L, 512]
+        components = []
+        if h_geo is not None:
+            components.append(h_geo)
+        if self.use_esm:
+            components.append(esm_embeddings)
+        if self.use_physchem_early:
+            components.append(protein_scalar)
+        
+        h_combined = torch.cat(components, dim=-1)
+        h_seq = self.bridge_proj(h_combined)
         
         # ============================================================
         # Module 4: Protein Context Encoder
         # ============================================================
-        h_prot_global = self.protein_context_encoder(h_seq, mask=protein_mask)  # [B, L, 512]
+        h_prot_global = self.protein_context_encoder(h_seq, mask=protein_mask)
         
         # ============================================================
         # Module 5: Ligand Encoder
         # ============================================================
         h_ligand_nodes = self.ligand_encoder(
-            x=ligand_x,
-            edge_index=ligand_edge_index,
-            edge_attr=ligand_edge_attr,
-            batch=ligand_batch
+            x=ligand_x, edge_index=ligand_edge_index,
+            edge_attr=ligand_edge_attr, batch=ligand_batch
         )
         
         B_dim, Max_M_dim, _ = ligand_to_protein.shape
@@ -636,17 +724,19 @@ class PocketGVPFusionNoGVP(nn.Module):
         h_fused = h_prot_global
         for cross_attn_layer in self.cross_attention_layers:
             h_fused = cross_attn_layer(
-                q=h_fused,
-                kv=h_ligand,
-                q_mask=protein_mask,
-                kv_mask=ligand_mask
+                q=h_fused, kv=h_ligand,
+                q_mask=protein_mask, kv_mask=ligand_mask
             )
         
         # ============================================================
         # Module 7: Late Injection & Classifier
         # ============================================================
-        x_final = torch.cat([h_fused, protein_scalar], dim=-1)  # [B, L, 512+35]
-        logits = self.classifier(x_final)  # [B, L, 3]
+        if self.use_physchem_late:
+            x_final = torch.cat([h_fused, protein_scalar], dim=-1)
+        else:
+            x_final = h_fused
+        
+        logits = self.classifier(x_final)
         
         return {
             'logits': logits,
@@ -658,6 +748,10 @@ class PocketGVPFusionNoGVP(nn.Module):
         """Convenience method for inference."""
         outputs = self.forward(**kwargs)
         return outputs['logits'].argmax(dim=-1)
+
+
+# Backward compatibility alias
+PocketGVPFusionNoGVP = PocketGVPFusionAblation
 
 
 class PocketGVPFusionSimplified(nn.Module):

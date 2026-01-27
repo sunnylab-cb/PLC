@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.pocket_dataset import PocketDataset, load_splits, set_seed, create_dataloader
 from src.data.collate import prepare_model_inputs
-from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified, PocketGVPFusionNoGVP
+from src.models.pocket_gvp_fusion import PocketGVPFusion, PocketGVPFusionSimplified, PocketGVPFusionAblation
 
 
 def load_config(config_path: str) -> Dict:
@@ -45,15 +45,21 @@ def load_model(config: Dict, checkpoint_path: str, device: torch.device):
     """Load trained model from checkpoint."""
     model_config = config['model']
     
-    # Check if GVP should be used (default True for backward compatibility)
+    # Check if any ablation flag is set (default all True = full model)
     use_gvp = model_config.get('use_gvp', True)
+    use_esm = model_config.get('use_esm', True)
+    use_physchem_early = model_config.get('use_physchem_early', True)
+    use_physchem_late = model_config.get('use_physchem_late', True)
     
-    if use_gvp:
-        print("Loading PocketGVPFusion (with GVP encoder)")
-        model = PocketGVPFusion(model_config)
+    # Use ablation model if any component is disabled
+    is_ablation = not (use_gvp and use_esm and use_physchem_early and use_physchem_late)
+    
+    if is_ablation:
+        print("Loading PocketGVPFusionAblation (ablation mode)")
+        model = PocketGVPFusionAblation(model_config)
     else:
-        print("Loading PocketGVPFusionNoGVP (ablation: no GVP encoder)")
-        model = PocketGVPFusionNoGVP(model_config)
+        print("Loading PocketGVPFusion (full model)")
+        model = PocketGVPFusion(model_config)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     
