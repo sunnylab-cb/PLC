@@ -473,7 +473,8 @@ def train_one_epoch(
                         mask=mask,
                         esm_mask=model._cached_esm_mask if hasattr(model, '_cached_esm_mask') else None,
                         gvp_vector=model._cached_gvp_vector if hasattr(model, '_cached_gvp_vector') else None,
-                        h_geo=model._cached_h_geo if hasattr(model, '_cached_h_geo') else None
+                        h_geo=model._cached_h_geo if hasattr(model, '_cached_h_geo') else None,
+                        raw_esm_embeddings=inputs['esm_embeddings']  # Raw ESM before dropout
                     )
                     
                     for key, value in feature_stats.items():
