@@ -24,12 +24,13 @@ class PairwiseBridge(nn.Module):
     Pairwise dot product bridge for translation-invariant vector features.
     
     Computes Gram matrix of vector features and flattens the upper triangle.
+    No projection layer - raw pairwise inner products are returned to be
+    concatenated with scalar features before a unified projection.
     """
-    def __init__(self, n_vec_channels: int, d_out: int):
+    def __init__(self, n_vec_channels: int):
         super().__init__()
         # Number of unique pairs in symmetric matrix: C * (C+1) / 2
         self.n_pairs = (n_vec_channels * (n_vec_channels + 1)) // 2
-        self.proj = nn.Linear(self.n_pairs, d_out)
 
     def forward(self, h_v: torch.Tensor) -> torch.Tensor:
         """
@@ -39,7 +40,7 @@ class PairwiseBridge(nn.Module):
             h_v: Vector features [Batch, N, C, 3]
             
         Returns:
-            Projected scalar features [Batch, N, d_out]
+            Flattened pairwise inner products [Batch, N, n_pairs]
         """
         # 1. Compute Gram Matrix per residue (Batch, N, C, C)
         # dot product over the spatial dimension (last dim)
@@ -51,10 +52,6 @@ class PairwiseBridge(nn.Module):
         # Create indices for upper triangle
         indices = torch.triu_indices(c, c, device=gram.device)
         
-        # Gather unique pairs: [Batch, N, N_Pairs]
-        # We need to expand indices to match batch and n_res dimensions
-        # Or simply permute and gather
-        
         # Flatten batch and residue dims for efficient gathering
         gram_flat = gram.view(batch * n_res, c, c)
         
@@ -64,8 +61,8 @@ class PairwiseBridge(nn.Module):
         # Reshape back: [Batch, N, N_Pairs]
         flat_pairs = flat_pairs.view(batch, n_res, self.n_pairs)
         
-        # 3. Project back to reasonable dimension
-        return self.proj(flat_pairs)
+        # Return raw pairwise inner products (no projection)
+        return flat_pairs
 
 
 class PocketGVPFusion(nn.Module):
@@ -91,17 +88,17 @@ class PocketGVPFusion(nn.Module):
         'd_esm': 1280,           # ESM-2 embedding size
         'd_phys': 35,            # Physicochemical features
         'd_gvp_internal': 256,   # GVP hidden dimension
-        'd_model': 512,          # Transformer dimension
+        'd_model': 512,          # Transformer dimension (d_model/2 per projection path)
         'd_ligand_atom': 64,     # Ligand atom features
         'n_gvp_vectors': 4,      # Number of GVP vector features
         'n_gvp_vector_hidden': 16,  # GVP vector hidden dimension
-        'd_pairwise_bridge': 64,    # Output dim of pairwise bridge
+        # Note: d_pairwise_bridge removed - pairwise bridge returns raw inner products (136 dims)
         
         # Layers
         'n_gvp_layers': 3,
         'n_transformer_layers': 4,
         'n_ligand_layers': 3,
-        'n_cross_attention_layers': 1,  # NEW: Multi-layer cross-attention (default 1 for backward compat)
+        'n_cross_attention_layers': 1,  # Multi-layer cross-attention (default 1 for backward compat)
         'n_heads': 8,
         
         # Settings
@@ -110,7 +107,7 @@ class PocketGVPFusion(nn.Module):
         'use_swiglu': True,
         'gvp_radius': 10.0,
         'gvp_k_neighbors': 20,
-        'esm_dropout_prob': 0.5,  # Modality dropout: probability of dropping ESM during training
+        'esm_dropout_prob': 0.3,  # Modality dropout: probability of dropping ESM during training
         
         # Output
         'n_classes': 3,
@@ -140,25 +137,35 @@ class PocketGVPFusion(nn.Module):
         )
         
         # ============================================================
-        # Module 3: Bridge & Early Injection
+        # Module 3: Bridge & Early Injection (Separate Projections)
         # ============================================================
-        # Step A: Pairwise Bridge for vectors
+        # Step A: Pairwise Bridge for vectors (no projection - raw inner products)
         self.pairwise_bridge = PairwiseBridge(
-            n_vec_channels=c['n_gvp_vector_hidden'], 
-            d_out=c['d_pairwise_bridge']
+            n_vec_channels=c['n_gvp_vector_hidden']
         )
         
-        # Construct h_geo = [h_s_gvp (256) + pairwise_out (64)] = 320
-        d_geo = c['d_gvp_internal'] + c['d_pairwise_bridge']
+        # Number of pairwise inner products: C * (C+1) / 2 = 16 * 17 / 2 = 136
+        n_pairwise = (c['n_gvp_vector_hidden'] * (c['n_gvp_vector_hidden'] + 1)) // 2
         
-        # Step B: Early injection
-        # h_combined = [h_geo (320) + P_raw (35) + ESM (1280)] = 1635
-        d_bridge_in = d_geo + c['d_phys'] + c['d_esm']
+        # Construct d_geo = [h_s_gvp (256) + pairwise_out (136) + P_raw (35)] = 427
+        # Note: Physchem is included in GVP projection since it's geometric/structural
+        d_geo = c['d_gvp_internal'] + n_pairwise + c['d_phys']
         
-        # Step C: Projection
-        self.bridge_proj = nn.Sequential(
-            nn.Linear(d_bridge_in, c['d_model']),
-            nn.LayerNorm(c['d_model']),
+        # Step B: SEPARATE projection paths for GVP and ESM
+        # This prevents ESM from dominating early training when GVP weights are random
+        d_half = c['d_model'] // 2  # 256 each
+        
+        # GVP path: (GVP scalar + pairwise + physchem) -> d_half
+        self.gvp_proj = nn.Sequential(
+            nn.Linear(d_geo, d_half),
+            nn.LayerNorm(d_half),
+            nn.Dropout(c['dropout'])
+        )
+        
+        # ESM path: ESM embeddings -> d_half
+        self.esm_proj = nn.Sequential(
+            nn.Linear(c['d_esm'], d_half),
+            nn.LayerNorm(d_half),
             nn.Dropout(c['dropout'])
         )
         
@@ -331,20 +338,20 @@ class PocketGVPFusion(nn.Module):
         self._cached_gvp_vector = h_v_gvp
         
         # ============================================================
-        # Module 3: Bridge & Early Injection [Updated Flow]
+        # Module 3: Bridge & Early Injection [Separate Projections]
         # ============================================================
         
-        # Step A: Pairwise Bridge
-        # [B, L, 16, 3] -> [B, L, 64]
+        # Step A: Pairwise Bridge (no projection - raw inner products)
+        # [B, L, 16, 3] -> [B, L, 136]
         v_inv = self.pairwise_bridge(h_v_gvp)
         
-        # h_geo = [h_s_gvp, v_inv] -> [B, L, 320]
-        h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
+        # h_geo = [h_s_gvp, v_inv, P_raw] -> [B, L, 256 + 136 + 35 = 427]
+        h_geo = torch.cat([h_s_gvp, v_inv, protein_scalar], dim=-1)
         
         # Cache final geometric embedding for diagnostics
         self._cached_h_geo = h_geo
         
-        # --- Modality Dropout: Applied BEFORE concatenation ---
+        # --- Modality Dropout: Applied BEFORE projection ---
         # This forces the model to leverage GVP features during training
         current_esm = esm_embeddings
         esm_dropout_mask = None
@@ -367,13 +374,20 @@ class PocketGVPFusion(nn.Module):
         self._cached_esm_mask = esm_dropout_mask
         self._cached_current_esm = current_esm
         
-        # Step B: Early Injection
-        # Concat GVP out + Phys + ESM -> [B, L, 1635]
-        # If masked, the ESM channels are zeroed out
-        h_combined = torch.cat([h_geo, protein_scalar, current_esm], dim=-1)
+        # Step B: SEPARATE projection paths
+        # GVP path: [B, L, 427] -> [B, L, 256]
+        h_gvp_proj = self.gvp_proj(h_geo)
         
-        # Step C: Projection
-        h_seq = self.bridge_proj(h_combined)  # [B, L, 512]
+        # ESM path: [B, L, 1280] -> [B, L, 256]
+        h_esm_proj = self.esm_proj(current_esm)
+        
+        # Cache projected features for diagnostics
+        self._cached_h_gvp_proj = h_gvp_proj
+        self._cached_h_esm_proj = h_esm_proj
+        
+        # Step C: Concatenate projections for self-attention
+        # [B, L, 256] + [B, L, 256] -> [B, L, 512]
+        h_seq = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
         
         # ============================================================
         # Module 4: Protein Context Encoder
@@ -554,6 +568,9 @@ class PocketGVPFusionAblation(nn.Module):
         # ============================================================
         # Module 2: GVP Encoder (conditional)
         # ============================================================
+        # Compute pairwise dimension: C * (C+1) / 2
+        n_pairwise = (c['n_gvp_vector_hidden'] * (c['n_gvp_vector_hidden'] + 1)) // 2
+        
         if self.use_gvp:
             self.gvp_encoder = GVPEncoder(
                 node_in_dim=(c['d_phys'], c['n_gvp_vectors']),
@@ -563,34 +580,64 @@ class PocketGVPFusionAblation(nn.Module):
                 drop_rate=c['dropout']
             )
             self.pairwise_bridge = PairwiseBridge(
-                n_vec_channels=c['n_gvp_vector_hidden'],
-                d_out=c['d_pairwise_bridge']
+                n_vec_channels=c['n_gvp_vector_hidden']
             )
-            d_geo = c['d_gvp_internal'] + c['d_pairwise_bridge']  # 320
+            # d_geo = GVP scalar + pairwise + (optionally physchem)
+            d_geo = c['d_gvp_internal'] + n_pairwise
+            if self.use_physchem_early:
+                d_geo += c['d_phys']  # Include physchem in GVP projection
         else:
             self.gvp_encoder = None
             self.pairwise_bridge = None
             d_geo = 0
+            # If no GVP but physchem_early is enabled, it goes to ESM path or standalone
+            if self.use_physchem_early and not self.use_esm:
+                d_geo = c['d_phys']
         
         # ============================================================
-        # Module 3: Bridge & Early Injection
+        # Module 3: Bridge & Early Injection (Separate Projections)
         # ============================================================
-        # Compute bridge input dimension based on enabled components
-        d_bridge_in = d_geo
+        d_half = c['d_model'] // 2  # 256 each
+        
+        # GVP path (if enabled)
+        if self.use_gvp or (self.use_physchem_early and not self.use_esm):
+            self.gvp_proj = nn.Sequential(
+                nn.Linear(d_geo, d_half),
+                nn.LayerNorm(d_half),
+                nn.Dropout(c['dropout'])
+            )
+        else:
+            self.gvp_proj = None
+        
+        # ESM path (if enabled)
         if self.use_esm:
-            d_bridge_in += c['d_esm']  # +1280
-        if self.use_physchem_early:
-            d_bridge_in += c['d_phys']  # +35
+            d_esm_in = c['d_esm']
+            # If no GVP but physchem_early, add physchem to ESM path
+            if not self.use_gvp and self.use_physchem_early:
+                d_esm_in += c['d_phys']
+            self.esm_proj = nn.Sequential(
+                nn.Linear(d_esm_in, d_half),
+                nn.LayerNorm(d_half),
+                nn.Dropout(c['dropout'])
+            )
+        else:
+            self.esm_proj = None
         
-        # If nothing is enabled, use a minimum dimension (shouldn't happen in practice)
-        if d_bridge_in == 0:
-            raise ValueError("At least one of GVP, ESM, or early physchem must be enabled")
+        # Validate at least one projection exists
+        if self.gvp_proj is None and self.esm_proj is None:
+            raise ValueError("At least one of GVP or ESM must be enabled")
         
-        self.bridge_proj = nn.Sequential(
-            nn.Linear(d_bridge_in, c['d_model']),
-            nn.LayerNorm(c['d_model']),
-            nn.Dropout(c['dropout'])
-        )
+        # Compute final model dimension based on active projections
+        if self.gvp_proj is not None and self.esm_proj is not None:
+            d_proj_out = c['d_model']  # d_half + d_half = 512
+        else:
+            d_proj_out = d_half  # Only one active = 256
+        
+        # If only one projection, need to scale up to d_model
+        if d_proj_out != c['d_model']:
+            self.proj_scale = nn.Linear(d_proj_out, c['d_model'])
+        else:
+            self.proj_scale = None
         
         # ============================================================
         # Module 4: Protein Context Encoder (Gated Transformer)
@@ -709,23 +756,44 @@ class PocketGVPFusionAblation(nn.Module):
             h_v_gvp = torch.stack(h_v_gvp_list, dim=0)
             
             v_inv = self.pairwise_bridge(h_v_gvp)
-            h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
+            # Concatenate GVP scalar + pairwise + (optionally physchem)
+            if self.use_physchem_early:
+                h_geo = torch.cat([h_s_gvp, v_inv, protein_scalar], dim=-1)
+            else:
+                h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
         else:
             h_geo = None
         
         # ============================================================
-        # Module 3: Bridge & Early Injection
+        # Module 3: Bridge & Early Injection (Separate Projections)
         # ============================================================
-        components = []
-        if h_geo is not None:
-            components.append(h_geo)
-        if self.use_esm:
-            components.append(esm_embeddings)
-        if self.use_physchem_early:
-            components.append(protein_scalar)
+        projections = []
         
-        h_combined = torch.cat(components, dim=-1)
-        h_seq = self.bridge_proj(h_combined)
+        # GVP path
+        if self.gvp_proj is not None:
+            if h_geo is not None:
+                h_gvp_proj = self.gvp_proj(h_geo)
+            else:
+                # Fallback: physchem only (no GVP)
+                h_gvp_proj = self.gvp_proj(protein_scalar)
+            projections.append(h_gvp_proj)
+        
+        # ESM path
+        if self.esm_proj is not None:
+            if not self.use_gvp and self.use_physchem_early:
+                # Physchem goes with ESM when no GVP
+                esm_input = torch.cat([esm_embeddings, protein_scalar], dim=-1)
+            else:
+                esm_input = esm_embeddings
+            h_esm_proj = self.esm_proj(esm_input)
+            projections.append(h_esm_proj)
+        
+        # Concatenate projections
+        h_seq = torch.cat(projections, dim=-1)
+        
+        # Scale to d_model if needed
+        if self.proj_scale is not None:
+            h_seq = self.proj_scale(h_seq)
         
         # ============================================================
         # Module 4: Protein Context Encoder

@@ -23,11 +23,11 @@ model:
   d_esm: 1280                       # ESM-2 embedding size
   d_phys: 35                        # Physicochemical features
   d_gvp_internal: 256               # GVP hidden dimension
-  d_model: 512                      # Transformer dimension
+  d_model: 512                      # Transformer dimension (d_model/2 for each projection path)
   d_ligand_atom: 64                 # Ligand atom features
   n_gvp_vectors: 4                  # Number of GVP vector features
   n_gvp_vector_hidden: 16           # GVP vector hidden dimension
-  d_pairwise_bridge: 64             # Output dim of pairwise bridge
+  # Note: d_pairwise_bridge removed - pairwise bridge now returns raw inner products (136 dims)
   
   # Layers
   n_gvp_layers: 3
@@ -42,6 +42,7 @@ model:
   use_swiglu: true                  # LLaMA-style SwiGLU FFN
   gvp_radius: 10.0                  # GVP neighbor radius (Angstroms)
   gvp_k_neighbors: 20               # GVP k-nearest neighbors
+  esm_dropout_prob: 0.5             # Probability of dropping ESM during training (modality dropout)
   
   # Output
   n_classes: 3                      # Contact, Near, Far

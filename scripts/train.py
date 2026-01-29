@@ -276,13 +276,22 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     
     # GVP encoder (structure pathway)
     if hasattr(model, 'gvp_encoder') and model.gvp_encoder is not None:
-        stats['grad_norm_gvp'] = get_grad_norm(model.gvp_encoder)
+        stats['grad_norm_gvp_encoder'] = get_grad_norm(model.gvp_encoder)
     
-    # Pairwise bridge (vector -> scalar invariant)
+    # Pairwise bridge (vector -> scalar invariant, no learnable params now)
     if hasattr(model, 'pairwise_bridge') and model.pairwise_bridge is not None:
-        stats['grad_norm_bridge'] = get_grad_norm(model.pairwise_bridge)
+        bridge_norm = get_grad_norm(model.pairwise_bridge)
+        if bridge_norm > 0:  # Only log if has learnable params
+            stats['grad_norm_pairwise_bridge'] = bridge_norm
     
-    # Bridge projection (early fusion layer)
+    # Separate projection paths (new architecture)
+    if hasattr(model, 'gvp_proj'):
+        stats['grad_norm_gvp_proj'] = get_grad_norm(model.gvp_proj)
+    
+    if hasattr(model, 'esm_proj'):
+        stats['grad_norm_esm_proj'] = get_grad_norm(model.esm_proj)
+    
+    # Legacy: Bridge projection (old architecture fallback)
     if hasattr(model, 'bridge_proj'):
         stats['grad_norm_bridge_proj'] = get_grad_norm(model.bridge_proj)
     
@@ -307,10 +316,22 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     if hasattr(model, 'classifier'):
         stats['grad_norm_classifier'] = get_grad_norm(model.classifier)
     
-    # Compute ratio: GVP gradient / total gradient (to see if GVP is being trained)
-    total_grad = sum(v for v in stats.values())
-    if total_grad > 0 and 'grad_norm_gvp' in stats:
-        stats['grad_ratio_gvp'] = stats['grad_norm_gvp'] / total_grad
+    # Compute modality gradient balance ratios
+    # GVP pathway: gvp_encoder + gvp_proj
+    gvp_total = stats.get('grad_norm_gvp_encoder', 0) + stats.get('grad_norm_gvp_proj', 0)
+    # ESM pathway: esm_proj
+    esm_total = stats.get('grad_norm_esm_proj', 0)
+    
+    # Combined modality ratio
+    modality_total = gvp_total + esm_total
+    if modality_total > 0:
+        stats['grad_ratio_gvp_pathway'] = gvp_total / modality_total
+        stats['grad_ratio_esm_pathway'] = esm_total / modality_total
+    
+    # Overall GVP ratio (encoder only, for backward compat)
+    total_grad = sum(v for v in stats.values() if not v.__class__.__name__.startswith('str'))
+    if total_grad > 0 and 'grad_norm_gvp_encoder' in stats:
+        stats['grad_ratio_gvp'] = stats['grad_norm_gvp_encoder'] / total_grad
     
     return stats
 
@@ -474,7 +495,9 @@ def train_one_epoch(
                         esm_mask=model._cached_esm_mask if hasattr(model, '_cached_esm_mask') else None,
                         gvp_vector=model._cached_gvp_vector if hasattr(model, '_cached_gvp_vector') else None,
                         h_geo=model._cached_h_geo if hasattr(model, '_cached_h_geo') else None,
-                        raw_esm_embeddings=inputs['esm_embeddings']  # Raw ESM before dropout
+                        raw_esm_embeddings=inputs['esm_embeddings'],  # Raw ESM before dropout
+                        h_gvp_proj=model._cached_h_gvp_proj if hasattr(model, '_cached_h_gvp_proj') else None,
+                        h_esm_proj=model._cached_h_esm_proj if hasattr(model, '_cached_h_esm_proj') else None
                     )
                     
                     for key, value in feature_stats.items():

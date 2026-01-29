@@ -303,7 +303,9 @@ def compute_feature_statistics(
     esm_mask: Optional[torch.Tensor] = None,
     gvp_vector: Optional[torch.Tensor] = None,
     h_geo: Optional[torch.Tensor] = None,
-    raw_esm_embeddings: Optional[torch.Tensor] = None
+    raw_esm_embeddings: Optional[torch.Tensor] = None,
+    h_gvp_proj: Optional[torch.Tensor] = None,
+    h_esm_proj: Optional[torch.Tensor] = None
 ) -> Dict[str, float]:
     """
     Compute statistics about ESM and GVP features.
@@ -313,6 +315,7 @@ def compute_feature_statistics(
     - GVP scalar feature norm
     - GVP vector feature norm (if provided)
     - h_geo feature norm (final geometric embedding, if provided)
+    - Projected feature norms (h_gvp_proj, h_esm_proj) for balance tracking
     - Relative contribution ratio (h_geo vs ESM, excluding dropped samples)
     - Modality dropout rate (if esm_mask provided)
     
@@ -324,6 +327,8 @@ def compute_feature_statistics(
         gvp_vector: [B, L, 16, 3] GVP vector features (optional)
         h_geo: [B, L, 320] Final geometric embedding after bridge (optional)
         raw_esm_embeddings: [B, L, 1280] ESM features BEFORE dropout (optional)
+        h_gvp_proj: [B, L, d_half] Projected GVP features (optional)
+        h_esm_proj: [B, L, d_half] Projected ESM features (optional)
         
     Returns:
         Dict of feature statistics
@@ -348,6 +353,33 @@ def compute_feature_statistics(
         valid_h_geo = h_geo[mask]  # [N_valid, 320]
         h_geo_norm = valid_h_geo.norm(dim=-1).mean().item()
         stats['h_geo_feature_norm'] = h_geo_norm
+    
+    # Projected feature norms (IMPORTANT for balance tracking)
+    if h_gvp_proj is not None:
+        valid_gvp_proj = h_gvp_proj[mask]
+        gvp_proj_norm = valid_gvp_proj.norm(dim=-1).mean().item()
+        stats['h_gvp_proj_norm'] = gvp_proj_norm
+    
+    if h_esm_proj is not None:
+        # For ESM proj, we might want to consider modality dropout
+        if esm_mask is not None:
+            esm_batch_mask = esm_mask.squeeze(-1).squeeze(-1)
+            esm_valid_mask = mask & esm_batch_mask.unsqueeze(1).bool()
+            if esm_valid_mask.sum() > 0:
+                valid_esm_proj = h_esm_proj[esm_valid_mask]
+                esm_proj_norm = valid_esm_proj.norm(dim=-1).mean().item()
+            else:
+                esm_proj_norm = 0.0
+        else:
+            valid_esm_proj = h_esm_proj[mask]
+            esm_proj_norm = valid_esm_proj.norm(dim=-1).mean().item()
+        stats['h_esm_proj_norm'] = esm_proj_norm
+        
+        # Compute projected feature balance ratio
+        if h_gvp_proj is not None and (gvp_proj_norm + esm_proj_norm) > 0:
+            total_proj_norm = gvp_proj_norm + esm_proj_norm
+            stats['proj_gvp_ratio'] = gvp_proj_norm / total_proj_norm
+            stats['proj_esm_ratio'] = esm_proj_norm / total_proj_norm
     
     # ESM norm handling - need to account for modality dropout
     if esm_mask is not None:
