@@ -326,6 +326,10 @@ class PocketGVPFusion(nn.Module):
         h_s_gvp = torch.stack(h_s_gvp_list, dim=0)  # [B, L, 256]
         h_v_gvp = torch.stack(h_v_gvp_list, dim=0)  # [B, L, 16, 3]
         
+        # Cache for diagnostics
+        self._cached_gvp_scalar = h_s_gvp
+        self._cached_gvp_vector = h_v_gvp
+        
         # ============================================================
         # Module 3: Bridge & Early Injection [Updated Flow]
         # ============================================================
@@ -337,9 +341,13 @@ class PocketGVPFusion(nn.Module):
         # h_geo = [h_s_gvp, v_inv] -> [B, L, 320]
         h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
         
+        # Cache final geometric embedding for diagnostics
+        self._cached_h_geo = h_geo
+        
         # --- Modality Dropout: Applied BEFORE concatenation ---
         # This forces the model to leverage GVP features during training
         current_esm = esm_embeddings
+        esm_dropout_mask = None
         
         if self.training:
             # Dropout probability from config (default: 0.5)
@@ -348,12 +356,16 @@ class PocketGVPFusion(nn.Module):
             # Create Bernoulli mask: [B, 1, 1]
             # Same decision for all residues in a protein, independent per protein
             # 1 = Keep, 0 = Drop
-            esm_mask = torch.bernoulli(
+            esm_dropout_mask = torch.bernoulli(
                 torch.full((B, 1, 1), 1 - p_drop_esm, device=device)
             )
             
             # Apply mask (no scaling - LayerNorm will handle variance)
-            current_esm = current_esm * esm_mask
+            current_esm = current_esm * esm_dropout_mask
+        
+        # Cache for diagnostics
+        self._cached_esm_mask = esm_dropout_mask
+        self._cached_current_esm = current_esm
         
         # Step B: Early Injection
         # Concat GVP out + Phys + ESM -> [B, L, 1635]

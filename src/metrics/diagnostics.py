@@ -294,3 +294,88 @@ def check_health_warnings(diagnostics: Dict[str, float]) -> List[str]:
             warnings.append(f"Attention entropy high (too diffuse?): {entropy:.4f}")
     
     return warnings
+
+
+def compute_feature_statistics(
+    esm_embeddings: torch.Tensor,
+    gvp_scalar: torch.Tensor,
+    mask: torch.Tensor,
+    esm_mask: Optional[torch.Tensor] = None,
+    gvp_vector: Optional[torch.Tensor] = None,
+    h_geo: Optional[torch.Tensor] = None
+) -> Dict[str, float]:
+    """
+    Compute statistics about ESM and GVP features.
+    
+    Tracks:
+    - ESM feature norm
+    - GVP scalar feature norm
+    - GVP vector feature norm (if provided)
+    - h_geo feature norm (final geometric embedding, if provided)
+    - Relative contribution ratio (h_geo vs ESM)
+    - Modality dropout rate (if esm_mask provided)
+    
+    Args:
+        esm_embeddings: [B, L, 1280] ESM features (possibly masked)
+        gvp_scalar: [B, L, 256] GVP scalar features
+        mask: [B, L] padding mask
+        esm_mask: [B, 1, 1] modality dropout mask (1=keep, 0=drop)
+        gvp_vector: [B, L, 16, 3] GVP vector features (optional)
+        h_geo: [B, L, 320] Final geometric embedding after bridge (optional)
+        
+    Returns:
+        Dict of feature statistics
+    """
+    stats = {}
+    
+    # Get valid features only
+    valid_esm = esm_embeddings[mask]  # [N_valid, 1280]
+    valid_gvp_scalar = gvp_scalar[mask]  # [N_valid, 256]
+    
+    # Feature norms
+    esm_norm = valid_esm.norm(dim=-1).mean().item()
+    gvp_scalar_norm = valid_gvp_scalar.norm(dim=-1).mean().item()
+    
+    stats['esm_feature_norm'] = esm_norm
+    stats['gvp_scalar_feature_norm'] = gvp_scalar_norm
+    
+    # Vector norm (if provided)
+    if gvp_vector is not None:
+        valid_gvp_vector = gvp_vector[mask]  # [N_valid, 16, 3]
+        # Compute norm per vector, then average over vectors and residues
+        gvp_vector_norm = valid_gvp_vector.norm(dim=-1).mean().item()
+        stats['gvp_vector_feature_norm'] = gvp_vector_norm
+    
+    # h_geo norm (final geometric embedding, if provided)
+    if h_geo is not None:
+        valid_h_geo = h_geo[mask]  # [N_valid, 320]
+        h_geo_norm = valid_h_geo.norm(dim=-1).mean().item()
+        stats['h_geo_feature_norm'] = h_geo_norm
+        
+        # Contribution ratio using h_geo (full structural pathway) vs ESM
+        # Normalize by dimension
+        h_geo_norm_normalized = h_geo_norm / (320 ** 0.5)
+        esm_norm_normalized = esm_norm / (1280 ** 0.5)
+        
+        total_norm = h_geo_norm_normalized + esm_norm_normalized
+        if total_norm > 0:
+            stats['h_geo_contribution_ratio'] = h_geo_norm_normalized / total_norm
+            stats['esm_contribution_ratio'] = esm_norm_normalized / total_norm
+    else:
+        # Fallback: use just scalar if h_geo not available
+        gvp_norm_normalized = gvp_scalar_norm / (256 ** 0.5)
+        esm_norm_normalized = esm_norm / (1280 ** 0.5)
+        
+        total_norm = gvp_norm_normalized + esm_norm_normalized
+        if total_norm > 0:
+            stats['gvp_contribution_ratio'] = gvp_norm_normalized / total_norm
+            stats['esm_contribution_ratio'] = esm_norm_normalized / total_norm
+    
+    # Modality dropout statistics
+    if esm_mask is not None:
+        # esm_mask is [B, 1, 1], compute fraction of batches with ESM enabled
+        dropout_rate = 1.0 - esm_mask.float().mean().item()
+        stats['esm_dropout_rate'] = dropout_rate
+    
+    return stats
+

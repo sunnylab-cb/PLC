@@ -246,6 +246,75 @@ def compute_metrics(
     return metrics
 
 
+def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
+    """
+    Compute gradient statistics for different model components.
+    
+    Tracks gradient norms for:
+    - GVP encoder (structure pathway)
+    - Bridge projection (integration layer)
+    - Protein context encoder (transformer)
+    - Ligand encoder
+    - Cross-attention layers
+    - Classifier head
+    
+    Returns:
+        Dict with gradient norms for each component
+    """
+    stats = {}
+    
+    # Helper to compute gradient norm for a module
+    def get_grad_norm(module):
+        total_norm = 0.0
+        n_params = 0
+        for p in module.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                n_params += 1
+        return (total_norm ** 0.5) if n_params > 0 else 0.0
+    
+    # GVP encoder (structure pathway)
+    if hasattr(model, 'gvp_encoder') and model.gvp_encoder is not None:
+        stats['grad_norm_gvp'] = get_grad_norm(model.gvp_encoder)
+    
+    # Pairwise bridge (vector -> scalar invariant)
+    if hasattr(model, 'pairwise_bridge') and model.pairwise_bridge is not None:
+        stats['grad_norm_bridge'] = get_grad_norm(model.pairwise_bridge)
+    
+    # Bridge projection (early fusion layer)
+    if hasattr(model, 'bridge_proj'):
+        stats['grad_norm_bridge_proj'] = get_grad_norm(model.bridge_proj)
+    
+    # Protein context encoder (transformer)
+    if hasattr(model, 'protein_context_encoder'):
+        stats['grad_norm_protein_encoder'] = get_grad_norm(model.protein_context_encoder)
+    
+    # Ligand encoder
+    if hasattr(model, 'ligand_encoder'):
+        stats['grad_norm_ligand_encoder'] = get_grad_norm(model.ligand_encoder)
+    
+    # Cross-attention (support both old and new multi-layer format)
+    cross_attn_norm = 0.0
+    if hasattr(model, 'cross_attention_layers'):
+        for layer in model.cross_attention_layers:
+            cross_attn_norm += get_grad_norm(layer) ** 2
+        stats['grad_norm_cross_attn'] = cross_attn_norm ** 0.5
+    elif hasattr(model, 'cross_attention'):
+        stats['grad_norm_cross_attn'] = get_grad_norm(model.cross_attention)
+    
+    # Classifier head
+    if hasattr(model, 'classifier'):
+        stats['grad_norm_classifier'] = get_grad_norm(model.classifier)
+    
+    # Compute ratio: GVP gradient / total gradient (to see if GVP is being trained)
+    total_grad = sum(v for v in stats.values())
+    if total_grad > 0 and 'grad_norm_gvp' in stats:
+        stats['grad_ratio_gvp'] = stats['grad_norm_gvp'] / total_grad
+    
+    return stats
+
+
 
 def check_tensor_nan(tensor: torch.Tensor, name: str, batch_idx: int = -1):
     """Check if tensor contains NaN or Inf."""
@@ -335,6 +404,7 @@ def train_one_epoch(
         
         # Gradient monitoring
         if writer is not None and (batch_idx % log_every == 0 or debug):
+            # Overall gradient norm
             total_norm = 0.0
             for p in model.parameters():
                 if p.grad is not None:
@@ -344,6 +414,11 @@ def train_one_epoch(
             
             global_step = epoch * len(dataloader) + batch_idx
             writer.add_scalar('Train/grad_norm', total_norm, global_step)
+            
+            # Component-specific gradient statistics
+            grad_stats = compute_gradient_stats(model)
+            for key, value in grad_stats.items():
+                writer.add_scalar(f'Gradients/{key}', value, global_step)
             
             if debug and total_norm > 10.0:
                 print(f"High gradient norm: {total_norm:.4f} at batch {batch_idx}")
@@ -387,6 +462,22 @@ def train_one_epoch(
                     writer.add_scalar('Health/gate_openness', diagnostics['gate_openness'], global_step)
                 if 'attn_entropy' in diagnostics:
                     writer.add_scalar('Health/attn_entropy', diagnostics['attn_entropy'], global_step)
+                
+                # Feature statistics (ESM vs GVP contribution)
+                if hasattr(model, '_cached_gvp_scalar') and hasattr(model, '_cached_current_esm'):
+                    from src.metrics.diagnostics import compute_feature_statistics
+                    
+                    feature_stats = compute_feature_statistics(
+                        esm_embeddings=model._cached_current_esm,
+                        gvp_scalar=model._cached_gvp_scalar,
+                        mask=mask,
+                        esm_mask=model._cached_esm_mask if hasattr(model, '_cached_esm_mask') else None,
+                        gvp_vector=model._cached_gvp_vector if hasattr(model, '_cached_gvp_vector') else None,
+                        h_geo=model._cached_h_geo if hasattr(model, '_cached_h_geo') else None
+                    )
+                    
+                    for key, value in feature_stats.items():
+                        writer.add_scalar(f'Health/{key}', value, global_step)
                 
                 # Check for health warnings
                 if debug:
