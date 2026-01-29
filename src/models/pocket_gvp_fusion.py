@@ -110,6 +110,7 @@ class PocketGVPFusion(nn.Module):
         'use_swiglu': True,
         'gvp_radius': 10.0,
         'gvp_k_neighbors': 20,
+        'esm_dropout_prob': 0.5,  # Modality dropout: probability of dropping ESM during training
         
         # Output
         'n_classes': 3,
@@ -336,9 +337,28 @@ class PocketGVPFusion(nn.Module):
         # h_geo = [h_s_gvp, v_inv] -> [B, L, 320]
         h_geo = torch.cat([h_s_gvp, v_inv], dim=-1)
         
+        # --- Modality Dropout: Applied BEFORE concatenation ---
+        # This forces the model to leverage GVP features during training
+        current_esm = esm_embeddings
+        
+        if self.training:
+            # Dropout probability from config (default: 0.5)
+            p_drop_esm = c.get('esm_dropout_prob', 0.5)
+            
+            # Create Bernoulli mask: [B, 1, 1]
+            # Same decision for all residues in a protein, independent per protein
+            # 1 = Keep, 0 = Drop
+            esm_mask = torch.bernoulli(
+                torch.full((B, 1, 1), 1 - p_drop_esm, device=device)
+            )
+            
+            # Apply mask (no scaling - LayerNorm will handle variance)
+            current_esm = current_esm * esm_mask
+        
         # Step B: Early Injection
         # Concat GVP out + Phys + ESM -> [B, L, 1635]
-        h_combined = torch.cat([h_geo, protein_scalar, esm_embeddings], dim=-1)
+        # If masked, the ESM channels are zeroed out
+        h_combined = torch.cat([h_geo, protein_scalar, current_esm], dim=-1)
         
         # Step C: Projection
         h_seq = self.bridge_proj(h_combined)  # [B, L, 512]
