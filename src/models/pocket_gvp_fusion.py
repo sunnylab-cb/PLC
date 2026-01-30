@@ -544,6 +544,7 @@ class PocketGVPFusionAblation(nn.Module):
     - use_esm: Enable/disable ESM embeddings (default: True)
     - use_physchem_early: Enable/disable physchem in early injection (default: True)
     - use_physchem_late: Enable/disable physchem in late injection/classifier (default: True)
+    - use_self_attention: Enable/disable protein self-attention before cross-attention (default: True)
     
     Maintains the SAME forward interface as PocketGVPFusion for drop-in replacement.
     """
@@ -560,10 +561,12 @@ class PocketGVPFusionAblation(nn.Module):
         self.use_esm = c.get('use_esm', True)
         self.use_physchem_early = c.get('use_physchem_early', True)
         self.use_physchem_late = c.get('use_physchem_late', True)
+        self.use_self_attention = c.get('use_self_attention', True)
         
         # Log ablation configuration
         print(f"[Ablation Config] use_gvp={self.use_gvp}, use_esm={self.use_esm}, "
-              f"use_physchem_early={self.use_physchem_early}, use_physchem_late={self.use_physchem_late}")
+              f"use_physchem_early={self.use_physchem_early}, use_physchem_late={self.use_physchem_late}, "
+              f"use_self_attention={self.use_self_attention}")
         
         # ============================================================
         # Module 2: GVP Encoder (conditional)
@@ -610,14 +613,23 @@ class PocketGVPFusionAblation(nn.Module):
             self.gvp_proj = None
         
         # ESM path (if enabled)
+        # When self-attention is disabled and only ESM is active, project to full d_model
         if self.use_esm:
             d_esm_in = c['d_esm']
             # If no GVP but physchem_early, add physchem to ESM path
             if not self.use_gvp and self.use_physchem_early:
                 d_esm_in += c['d_phys']
+            
+            # Determine output dimension for ESM projection
+            # If no GVP and no self-attention, project directly to d_model
+            if not self.use_gvp and not self.use_self_attention:
+                d_esm_out = c['d_model']  # Full model dim for direct cross-attn
+            else:
+                d_esm_out = d_half
+            
             self.esm_proj = nn.Sequential(
-                nn.Linear(d_esm_in, d_half),
-                nn.LayerNorm(d_half),
+                nn.Linear(d_esm_in, d_esm_out),
+                nn.LayerNorm(d_esm_out),
                 nn.Dropout(c['dropout'])
             )
         else:
@@ -630,6 +642,8 @@ class PocketGVPFusionAblation(nn.Module):
         # Compute final model dimension based on active projections
         if self.gvp_proj is not None and self.esm_proj is not None:
             d_proj_out = c['d_model']  # d_half + d_half = 512
+        elif not self.use_gvp and not self.use_self_attention:
+            d_proj_out = c['d_model']  # ESM already projected to full d_model
         else:
             d_proj_out = d_half  # Only one active = 256
         
@@ -640,15 +654,18 @@ class PocketGVPFusionAblation(nn.Module):
             self.proj_scale = None
         
         # ============================================================
-        # Module 4: Protein Context Encoder (Gated Transformer)
+        # Module 4: Protein Context Encoder (Gated Transformer) - Optional
         # ============================================================
-        self.protein_context_encoder = ProteinContextEncoder(
-            d_model=c['d_model'],
-            n_layers=c['n_transformer_layers'],
-            n_heads=c['n_heads'],
-            dropout=c['dropout'],
-            pe_type='sinusoidal'
-        )
+        if self.use_self_attention:
+            self.protein_context_encoder = ProteinContextEncoder(
+                d_model=c['d_model'],
+                n_layers=c['n_transformer_layers'],
+                n_heads=c['n_heads'],
+                dropout=c['dropout'],
+                pe_type='sinusoidal'
+            )
+        else:
+            self.protein_context_encoder = None
         
         # ============================================================
         # Module 5: Ligand Encoder
@@ -796,9 +813,13 @@ class PocketGVPFusionAblation(nn.Module):
             h_seq = self.proj_scale(h_seq)
         
         # ============================================================
-        # Module 4: Protein Context Encoder
+        # Module 4: Protein Context Encoder (conditional)
         # ============================================================
-        h_prot_global = self.protein_context_encoder(h_seq, mask=protein_mask)
+        if self.use_self_attention and self.protein_context_encoder is not None:
+            h_prot_global = self.protein_context_encoder(h_seq, mask=protein_mask)
+        else:
+            # Skip self-attention: use projected features directly
+            h_prot_global = h_seq
         
         # ============================================================
         # Module 5: Ligand Encoder

@@ -82,9 +82,10 @@ def create_model(config: Dict, device: torch.device) -> nn.Module:
     use_esm = model_config.get('use_esm', True)
     use_physchem_early = model_config.get('use_physchem_early', True)
     use_physchem_late = model_config.get('use_physchem_late', True)
+    use_self_attention = model_config.get('use_self_attention', True)
     
     # Use ablation model if any component is disabled
-    is_ablation = not (use_gvp and use_esm and use_physchem_early and use_physchem_late)
+    is_ablation = not (use_gvp and use_esm and use_physchem_early and use_physchem_late and use_self_attention)
     
     if is_ablation:
         print("Using PocketGVPFusionAblation (ablation mode)")
