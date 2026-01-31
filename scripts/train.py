@@ -286,35 +286,35 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
             stats['grad_norm_pairwise_bridge'] = bridge_norm
     
     # Separate projection paths (new architecture)
-    if hasattr(model, 'gvp_proj'):
+    if hasattr(model, 'gvp_proj') and model.gvp_proj is not None:
         stats['grad_norm_gvp_proj'] = get_grad_norm(model.gvp_proj)
     
-    if hasattr(model, 'esm_proj'):
+    if hasattr(model, 'esm_proj') and model.esm_proj is not None:
         stats['grad_norm_esm_proj'] = get_grad_norm(model.esm_proj)
     
     # Legacy: Bridge projection (old architecture fallback)
-    if hasattr(model, 'bridge_proj'):
+    if hasattr(model, 'bridge_proj') and model.bridge_proj is not None:
         stats['grad_norm_bridge_proj'] = get_grad_norm(model.bridge_proj)
     
-    # Protein context encoder (transformer)
-    if hasattr(model, 'protein_context_encoder'):
+    # Protein context encoder (transformer) - may be None when self-attention disabled
+    if hasattr(model, 'protein_context_encoder') and model.protein_context_encoder is not None:
         stats['grad_norm_protein_encoder'] = get_grad_norm(model.protein_context_encoder)
     
     # Ligand encoder
-    if hasattr(model, 'ligand_encoder'):
+    if hasattr(model, 'ligand_encoder') and model.ligand_encoder is not None:
         stats['grad_norm_ligand_encoder'] = get_grad_norm(model.ligand_encoder)
     
     # Cross-attention (support both old and new multi-layer format)
     cross_attn_norm = 0.0
-    if hasattr(model, 'cross_attention_layers'):
+    if hasattr(model, 'cross_attention_layers') and model.cross_attention_layers is not None:
         for layer in model.cross_attention_layers:
             cross_attn_norm += get_grad_norm(layer) ** 2
         stats['grad_norm_cross_attn'] = cross_attn_norm ** 0.5
-    elif hasattr(model, 'cross_attention'):
+    elif hasattr(model, 'cross_attention') and model.cross_attention is not None:
         stats['grad_norm_cross_attn'] = get_grad_norm(model.cross_attention)
     
     # Classifier head
-    if hasattr(model, 'classifier'):
+    if hasattr(model, 'classifier') and model.classifier is not None:
         stats['grad_norm_classifier'] = get_grad_norm(model.classifier)
     
     # Compute modality gradient balance ratios
