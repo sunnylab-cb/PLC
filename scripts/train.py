@@ -653,6 +653,10 @@ def main():
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume')
     parser.add_argument('--device', type=str, default=None, help='Device override (cuda/cpu)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode (anomaly detection, nan checks)')
+    parser.add_argument('--gvp-checkpoint', type=str, default=None, 
+                        help='Path to pretrained GVP checkpoint (from GVP-only ablation)')
+    parser.add_argument('--freeze-gvp', action='store_true', 
+                        help='Freeze GVP parameters during training')
     args = parser.parse_args()
     
     # Debug mode
@@ -737,6 +741,24 @@ def main():
     
     # Model
     model = create_model(config, device)
+    
+    # ============================================================
+    # GVP Transfer Learning: Load pretrained weights & freeze
+    # ============================================================
+    # Priority: CLI args > config file
+    gvp_checkpoint = args.gvp_checkpoint or config['model'].get('gvp_checkpoint_path')
+    freeze_gvp = args.freeze_gvp or config['model'].get('freeze_gvp', False)
+    
+    if gvp_checkpoint:
+        print(f"\nLoading pretrained GVP weights from: {gvp_checkpoint}")
+        model.load_gvp_from_checkpoint(gvp_checkpoint)
+    
+    if freeze_gvp:
+        print("Freezing GVP parameters")
+        model.freeze_gvp(freeze=True)
+        # Re-compute trainable param count
+        n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Trainable parameters after freezing: {n_trainable:,}")
     
     # Optimizer and scheduler
     optimizer = create_optimizer(model, config)

@@ -533,6 +533,97 @@ class PocketGVPFusion(nn.Module):
             loss = focal_loss.sum() * 0  # Avoids NaN, returns 0
         
         return loss
+    
+    def load_gvp_from_checkpoint(self, checkpoint_path: str, strict: bool = False) -> Dict[str, int]:
+        """
+        Load GVP-related weights from an existing checkpoint.
+        
+        This is useful for transferring pre-trained GVP weights from an
+        ESM-independent ablation run (use_esm=False) to initialize the GVP pathway.
+        
+        Args:
+            checkpoint_path: Path to the checkpoint file (.pt)
+            strict: If True, raise error on missing/unexpected keys. Default: False
+            
+        Returns:
+            Dict with 'loaded', 'skipped', 'missing' counts
+        """
+        import torch
+        
+        # Load checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        source_state_dict = checkpoint.get('model_state_dict', checkpoint)
+        
+        # GVP-related prefixes to transfer
+        gvp_prefixes = ('gvp_encoder.', 'pairwise_bridge.', 'gvp_proj.')
+        
+        # Filter source keys to only GVP-related ones
+        gvp_keys = {k: v for k, v in source_state_dict.items() 
+                    if any(k.startswith(prefix) for prefix in gvp_prefixes)}
+        
+        # Get current model state
+        current_state = self.state_dict()
+        
+        # Match and load
+        loaded_count = 0
+        skipped_count = 0
+        missing_keys = []
+        
+        for key, value in gvp_keys.items():
+            if key in current_state:
+                if current_state[key].shape == value.shape:
+                    current_state[key] = value
+                    loaded_count += 1
+                else:
+                    print(f"  [GVP Load] Shape mismatch for {key}: "
+                          f"checkpoint={value.shape}, model={current_state[key].shape}")
+                    skipped_count += 1
+            else:
+                missing_keys.append(key)
+                skipped_count += 1
+        
+        # Load the updated state
+        self.load_state_dict(current_state)
+        
+        print(f"[GVP Checkpoint] Loaded {loaded_count} parameters, "
+              f"skipped {skipped_count} (missing/shape mismatch)")
+        
+        if missing_keys and strict:
+            raise ValueError(f"Missing keys in model: {missing_keys}")
+        
+        return {
+            'loaded': loaded_count,
+            'skipped': skipped_count,
+            'missing': len(missing_keys)
+        }
+    
+    def freeze_gvp(self, freeze: bool = True) -> int:
+        """
+        Freeze or unfreeze GVP-related parameters.
+        
+        When frozen, GVP encoder and projection layers will not receive gradients,
+        allowing other components (ESM pathway, transformers) to adapt while
+        GVP features remain stable.
+        
+        Args:
+            freeze: If True, freeze GVP params. If False, unfreeze.
+            
+        Returns:
+            Number of parameters affected
+        """
+        gvp_modules = [self.gvp_encoder, self.pairwise_bridge, self.gvp_proj]
+        
+        param_count = 0
+        for module in gvp_modules:
+            if module is not None:
+                for param in module.parameters():
+                    param.requires_grad = not freeze
+                    param_count += param.numel()
+        
+        status = "frozen" if freeze else "unfrozen"
+        print(f"[GVP] {status.capitalize()} {param_count:,} parameters")
+        
+        return param_count
 
 
 class PocketGVPFusionAblation(nn.Module):
@@ -869,6 +960,105 @@ class PocketGVPFusionAblation(nn.Module):
         """Convenience method for inference."""
         outputs = self.forward(**kwargs)
         return outputs['logits'].argmax(dim=-1)
+    
+    def load_gvp_from_checkpoint(self, checkpoint_path: str, strict: bool = False) -> Dict[str, int]:
+        """
+        Load GVP-related weights from an existing checkpoint.
+        
+        This is useful for transferring pre-trained GVP weights from an
+        ESM-independent ablation run (use_esm=False) to initialize the GVP pathway.
+        
+        Args:
+            checkpoint_path: Path to the checkpoint file (.pt)
+            strict: If True, raise error on missing/unexpected keys. Default: False
+            
+        Returns:
+            Dict with 'loaded', 'skipped', 'missing' counts
+        """
+        if not self.use_gvp:
+            print("[GVP Checkpoint] Warning: GVP is disabled in this model. Skipping load.")
+            return {'loaded': 0, 'skipped': 0, 'missing': 0}
+        
+        import torch
+        
+        # Load checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        source_state_dict = checkpoint.get('model_state_dict', checkpoint)
+        
+        # GVP-related prefixes to transfer
+        gvp_prefixes = ('gvp_encoder.', 'pairwise_bridge.', 'gvp_proj.')
+        
+        # Filter source keys to only GVP-related ones
+        gvp_keys = {k: v for k, v in source_state_dict.items() 
+                    if any(k.startswith(prefix) for prefix in gvp_prefixes)}
+        
+        # Get current model state
+        current_state = self.state_dict()
+        
+        # Match and load
+        loaded_count = 0
+        skipped_count = 0
+        missing_keys = []
+        
+        for key, value in gvp_keys.items():
+            if key in current_state:
+                if current_state[key].shape == value.shape:
+                    current_state[key] = value
+                    loaded_count += 1
+                else:
+                    print(f"  [GVP Load] Shape mismatch for {key}: "
+                          f"checkpoint={value.shape}, model={current_state[key].shape}")
+                    skipped_count += 1
+            else:
+                missing_keys.append(key)
+                skipped_count += 1
+        
+        # Load the updated state
+        self.load_state_dict(current_state)
+        
+        print(f"[GVP Checkpoint] Loaded {loaded_count} parameters, "
+              f"skipped {skipped_count} (missing/shape mismatch)")
+        
+        if missing_keys and strict:
+            raise ValueError(f"Missing keys in model: {missing_keys}")
+        
+        return {
+            'loaded': loaded_count,
+            'skipped': skipped_count,
+            'missing': len(missing_keys)
+        }
+    
+    def freeze_gvp(self, freeze: bool = True) -> int:
+        """
+        Freeze or unfreeze GVP-related parameters.
+        
+        When frozen, GVP encoder and projection layers will not receive gradients,
+        allowing other components (ESM pathway, transformers) to adapt while
+        GVP features remain stable.
+        
+        Args:
+            freeze: If True, freeze GVP params. If False, unfreeze.
+            
+        Returns:
+            Number of parameters affected
+        """
+        if not self.use_gvp:
+            print("[GVP] Warning: GVP is disabled in this model. Nothing to freeze.")
+            return 0
+        
+        gvp_modules = [self.gvp_encoder, self.pairwise_bridge, self.gvp_proj]
+        
+        param_count = 0
+        for module in gvp_modules:
+            if module is not None:
+                for param in module.parameters():
+                    param.requires_grad = not freeze
+                    param_count += param.numel()
+        
+        status = "frozen" if freeze else "unfrozen"
+        print(f"[GVP] {status.capitalize()} {param_count:,} parameters")
+        
+        return param_count
 
 
 # Backward compatibility alias
