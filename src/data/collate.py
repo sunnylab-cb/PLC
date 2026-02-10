@@ -36,16 +36,24 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     max_atoms = max(n_atoms_list)
     
     B = len(batch)
-    
+
+    # Detect ESM embedding dimension from first sample
+    esm_dim = batch[0]['esm'].shape[-1]
+
+    # Detect protein scalar feature dimension from first sample
+    protein_scalar_dim = batch[0]['protein_scalar'].shape[-1]
+
     # Initialize padded tensors
-    esm_embeddings = torch.zeros(B, max_residues, 1280)
-    protein_scalar = torch.zeros(B, max_residues, 35)
+    esm_embeddings = torch.zeros(B, max_residues, esm_dim)
+    protein_scalar = torch.zeros(B, max_residues, protein_scalar_dim)
     protein_coords = torch.zeros(B, max_residues, 3)
     protein_vectors = torch.zeros(B, max_residues, 4, 3)
     protein_mask = torch.zeros(B, max_residues, dtype=torch.bool)
     labels = torch.zeros(B, max_residues, dtype=torch.long)
-    
-    ligand_features = torch.zeros(B, max_atoms, 64)
+
+    # Detect ligand feature dimension from first sample
+    ligand_dim = batch[0]['ligand_features'].shape[-1]
+    ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
     

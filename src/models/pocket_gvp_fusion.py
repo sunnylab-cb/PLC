@@ -292,11 +292,11 @@ class PocketGVPFusion(nn.Module):
         for b in range(B):
             # Get valid residues for this protein
             mask_b = protein_mask[b]  # [L]
-            n_valid = mask_b.sum().item()
-            
+            n_valid = mask_b.sum()  # Keep as tensor to avoid graph break
+
             if n_valid == 0:
-                h_s_gvp_list.append(torch.zeros(L, c['d_gvp_internal'], device=device))
-                h_v_gvp_list.append(torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device))
+                h_s_gvp_list.append(torch.zeros(L, c['d_gvp_internal'], device=device, dtype=protein_scalar.dtype))
+                h_v_gvp_list.append(torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device, dtype=protein_vectors.dtype))
                 continue
             
             # Extract valid residues
@@ -321,9 +321,9 @@ class PocketGVPFusion(nn.Module):
             )
             
             # Pad back to full length
-            h_s_full = torch.zeros(L, c['d_gvp_internal'], device=device)
-            h_v_full = torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device)
-            
+            h_s_full = torch.zeros(L, c['d_gvp_internal'], device=device, dtype=h_s.dtype)
+            h_v_full = torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device, dtype=h_v.dtype)
+
             h_s_full[mask_b] = h_s
             h_v_full[mask_b] = h_v
             
@@ -415,10 +415,10 @@ class PocketGVPFusion(nn.Module):
         # We need to scatter the GNN output `h_ligand_nodes` into a [B, Max_M, D] tensor for CrossAttn.
         
         # Create zero tensor [B, Max_M, D]
-        B_dim, Max_M_dim, _ = ligand_to_protein.shape 
+        B_dim, Max_M_dim, _ = ligand_to_protein.shape
         # ligand_to_protein passed in is currently raw features [B, M, 64] from inputs
-        
-        h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device)
+
+        h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device, dtype=h_ligand_nodes.dtype)
         
         # Scatter node embeddings
         # ligand_batch: [N_total] -> tells us which batch index
@@ -832,11 +832,11 @@ class PocketGVPFusionAblation(nn.Module):
             
             for b in range(B):
                 mask_b = protein_mask[b]
-                n_valid = mask_b.sum().item()
-                
+                n_valid = mask_b.sum()  # Keep as tensor to avoid graph break
+
                 if n_valid == 0:
-                    h_s_gvp_list.append(torch.zeros(L, c['d_gvp_internal'], device=device))
-                    h_v_gvp_list.append(torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device))
+                    h_s_gvp_list.append(torch.zeros(L, c['d_gvp_internal'], device=device, dtype=protein_scalar.dtype))
+                    h_v_gvp_list.append(torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device, dtype=protein_vectors.dtype))
                     continue
                 
                 scalar_b = protein_scalar[b, mask_b]
@@ -851,9 +851,9 @@ class PocketGVPFusionAblation(nn.Module):
                     node_s=scalar_b, node_v=vectors_b,
                     edge_index=edge_index, edge_s=edge_dist, edge_v=edge_dir
                 )
-                
-                h_s_full = torch.zeros(L, c['d_gvp_internal'], device=device)
-                h_v_full = torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device)
+
+                h_s_full = torch.zeros(L, c['d_gvp_internal'], device=device, dtype=h_s.dtype)
+                h_v_full = torch.zeros(L, c['n_gvp_vector_hidden'], 3, device=device, dtype=h_v.dtype)
                 h_s_full[mask_b] = h_s
                 h_v_full[mask_b] = h_v
                 
@@ -921,7 +921,7 @@ class PocketGVPFusionAblation(nn.Module):
         )
         
         B_dim, Max_M_dim, _ = ligand_to_protein.shape
-        h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device)
+        h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device, dtype=h_ligand_nodes.dtype)
         
         for b in range(B_dim):
             mask_b = ligand_batch == b

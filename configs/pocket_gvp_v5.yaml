@@ -1,0 +1,90 @@
+# Pocket-GVP-Fusion v5 Configuration (with VDW-based binding site labels)
+# ===================================
+
+# Experiment settings
+experiment:
+  name: "pocket_gvp_fusion_v5"
+  seed: 42
+  output_dir: "outputs"
+
+# Data settings
+data:
+  data_root: "data"                 # Root directory with nested structure
+  ligand_features_dir: "ligand_features_v3"  # V5: 80-dim features (35D V2 + 45D global)
+  distances_file: "data/residue_ligand_distances_vdw.pt"  # ✅ V5: VDW-based distance labels
+  distances_file_original: "data/residue_ligand_distances_poc_style.pt"  # Original fixed-threshold labels for comparison
+  split_file: null                  # Path to split file (if null, creates random split)
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1500                 # Maximum protein sequence length
+  max_atoms: 100                    # Maximum ligand atoms
+
+# Model architecture
+model:
+  # Dimensions
+  d_esm: 1280                       # ESM-2 embedding size (1280-dim)
+  d_phys: 82                        # Complete features (42D physchem + 14D surface + 26D geometry)
+  d_gvp_internal: 256               # GVP hidden dimension
+  d_model: 512                      # Transformer dimension (d_model/2 for each projection path)
+  d_ligand_atom: 80                 # ✅ V5: 80-dim ligand features (35D V2 + 45D global)
+  n_gvp_vectors: 4                  # Number of GVP vector features
+  n_gvp_vector_hidden: 16           # GVP vector hidden dimension
+
+  # Layers
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4
+
+  # Settings
+  dropout: 0.1
+  use_gated_attn: true              # Qwen-style gated attention
+  use_swiglu: true                  # LLaMA-style SwiGLU FFN
+  gvp_radius: 10.0                  # GVP neighbor radius (Angstroms)
+  gvp_k_neighbors: 20               # GVP k-nearest neighbors
+  esm_dropout_prob: 0.5             # Probability of dropping ESM during training (modality dropout)
+
+  # Output
+  n_classes: 3                      # Contact, Near, Far
+  edge_dim: 6                       # Ligand edge features
+
+# Training settings
+training:
+  batch_size: 28                     # Batch size
+  num_epochs: 100
+  num_workers: 28                    # DataLoader workers
+
+  # Optimizer
+  optimizer: "adamw"
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+  # Learning rate schedule
+  scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+
+  # Loss
+  loss_type: "focal"                # "focal" or "cross_entropy"
+  focal_gamma: 2.0
+  class_weights: [5.0, 1.0, 2.0]    # Contact, Near, Far
+
+  # Regularization
+  gradient_clip: 1.0
+
+  # Checkpointing
+  save_every: 5                     # Save checkpoint every N epochs
+  early_stopping_patience: 15       # Stop if val loss doesn't improve
+
+  # Precision
+  use_amp: false                    # Use full precision for stability
+
+# Logging
+logging:
+  log_every: 10                     # Log every N batches
+  tensorboard: true
+  tensorboard_dir: "runs"           # TensorBoard log directory
+  wandb: false                      # Weights & Biases (optional)

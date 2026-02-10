@@ -10,6 +10,7 @@ experiment:
 # Data settings
 data:
   feature_dir: "database/features"  # Directory with *_features.npz files
+  esm_dir: "data/esm3_latents"      # Directory with ESM3 *.pt files
   split_file: null                  # Path to split file (if null, creates random split)
   train_ratio: 0.8
   val_ratio: 0.1
@@ -20,7 +21,7 @@ data:
 # Model architecture
 model:
   # Dimensions
-  d_esm: 1280                       # ESM-2 embedding size
+  d_esm: 1536                       # ESM-3 embedding size (1536-dim)
   d_phys: 35                        # Physicochemical features
   d_gvp_internal: 256               # GVP hidden dimension
   d_model: 512                      # Transformer dimension (d_model/2 for each projection path)
@@ -50,7 +51,7 @@ model:
 
 # Training settings
 training:
-  batch_size: 32                     # Batch size (may need adjustment based on VRAM)
+  batch_size: 112                     # Batch size (may need adjustment based on VRAM)
   num_epochs: 100
   num_workers: 4                    # DataLoader workers
   

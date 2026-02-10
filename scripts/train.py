@@ -716,7 +716,8 @@ def main():
     
     # Create dataloaders
     train_cfg = config['training']
-    
+    esm_dir = data_cfg.get('esm_dir', 'data/esm3_latents')  # ESM3 latents directory
+
     train_loader = create_dataloader(
         feature_dir=feature_dir,
         pdb_ids=train_ids,
@@ -725,9 +726,10 @@ def main():
         num_workers=train_cfg['num_workers'],
         max_seq_len=data_cfg['max_seq_len'],
         max_atoms=data_cfg['max_atoms'],
-        seed=seed
+        seed=seed,
+        esm_dir=esm_dir
     )
-    
+
     val_loader = create_dataloader(
         feature_dir=feature_dir,
         pdb_ids=val_ids,
@@ -736,7 +738,8 @@ def main():
         num_workers=train_cfg['num_workers'],
         max_seq_len=data_cfg['max_seq_len'],
         max_atoms=data_cfg['max_atoms'],
-        seed=seed
+        seed=seed,
+        esm_dir=esm_dir
     )
     
     # Model
