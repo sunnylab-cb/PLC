@@ -981,40 +981,48 @@ def main():
                     print_rank0(f"Val DICE (Original): {val_metrics['dice_c0_original']:.4f}, IoU: {val_metrics['iou_c0_original']:.4f}")
 
             if writer is not None:
-                # Epoch级别的损失和准确率 (VDW)
+                # V5/V6: 命名空间策略（用于横向对比）
+                # Train/ - 训练指标（基于新标签VDW，用于优化）
+                # Val/ - 原始标签的验证指标（用于与之前模型对比）
+                # Val_new/ - 新标签的验证指标（VDW调整后）
+                # Health/ - 健康诊断指标
+
+                # 训练指标（基于新标签VDW）
                 writer.add_scalar('Train/epoch_loss', train_metrics['loss'], epoch)
                 writer.add_scalar('Train/epoch_acc', train_metrics['accuracy'], epoch)
-                writer.add_scalar('Val/epoch_loss', val_metrics['loss'], epoch)
-                writer.add_scalar('Val/epoch_acc', val_metrics['accuracy'], epoch)
                 writer.add_scalar('Train/learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
-                # 每类验证指标（precision、recall、F1）- VDW
-                for k, v in val_metrics.items():
-                    if k.startswith('f1_') or k.startswith('precision_') or k.startswith('recall_'):
-                        if not k.endswith('_original'):  # VDW metrics
-                            writer.add_scalar(f'Val/{k}', v, epoch)
-
-                # 分割指标（DICE、IoU）- VDW
-                if 'dice_c0' in val_metrics:
-                    writer.add_scalar('Val/dice_c0', val_metrics['dice_c0'], epoch)
-                    writer.add_scalar('Val/iou_c0', val_metrics['iou_c0'], epoch)
-
-                # V5: 原始标签的指标记录到 Val_original/ 命名空间
+                # 原始标签的验证指标 → Val/（用于横向对比）
                 if 'loss_original' in val_metrics:
-                    writer.add_scalar('Val_original/epoch_loss', val_metrics['loss_original'], epoch)
-                    writer.add_scalar('Val_original/epoch_acc', val_metrics['accuracy_original'], epoch)
+                    writer.add_scalar('Val/epoch_loss', val_metrics['loss_original'], epoch)
+                    writer.add_scalar('Val/epoch_acc', val_metrics['accuracy_original'], epoch)
 
-                    # 每类验证指标 - Original
+                    # 每类验证指标 - Original → Val/
                     for k, v in val_metrics.items():
                         if k.endswith('_original'):
-                            # 移除 _original 后缀作为指标名
                             metric_name = k.replace('_original', '')
-                            writer.add_scalar(f'Val_original/{metric_name}', v, epoch)
+                            if k.startswith('f1_') or k.startswith('precision_') or k.startswith('recall_'):
+                                writer.add_scalar(f'Val/{metric_name}', v, epoch)
 
-                    # 分割指标 - Original
+                    # 分割指标 - Original → Val/
                     if 'dice_c0_original' in val_metrics:
-                        writer.add_scalar('Val_original/dice_c0', val_metrics['dice_c0_original'], epoch)
-                        writer.add_scalar('Val_original/iou_c0', val_metrics['iou_c0_original'], epoch)
+                        writer.add_scalar('Val/dice_c0', val_metrics['dice_c0_original'], epoch)
+                        writer.add_scalar('Val/iou_c0', val_metrics['iou_c0_original'], epoch)
+
+                # 新标签（VDW）的验证指标 → Val_new/
+                writer.add_scalar('Val_new/epoch_loss', val_metrics['loss'], epoch)
+                writer.add_scalar('Val_new/epoch_acc', val_metrics['accuracy'], epoch)
+
+                # 每类验证指标 - VDW → Val_new/
+                for k, v in val_metrics.items():
+                    if k.startswith('f1_') or k.startswith('precision_') or k.startswith('recall_'):
+                        if not k.endswith('_original'):
+                            writer.add_scalar(f'Val_new/{k}', v, epoch)
+
+                # 分割指标 - VDW → Val_new/
+                if 'dice_c0' in val_metrics:
+                    writer.add_scalar('Val_new/dice_c0', val_metrics['dice_c0'], epoch)
+                    writer.add_scalar('Val_new/iou_c0', val_metrics['iou_c0'], epoch)
 
             # ✅ Save checkpoints with complete state
             # 1. Save latest checkpoint after EVERY epoch

@@ -136,7 +136,7 @@ def calculate_vdw_based_distances(
     ligand_coords: np.ndarray,
     ligand_atom_symbols: List[str],
     tolerance: float = TOLERANCE
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     基于范德华半径计算蛋白质-配体距离 (使用所有原子)
 
@@ -148,13 +148,15 @@ def calculate_vdw_based_distances(
         tolerance: 容差值 (Å)
 
     Returns:
-        min_distances: [N_res] 每个残基到配体的最小距离
+        min_distances: [N_res] 每个残基到配体的最小实际距离
+        min_distances_vdw_adjusted: [N_res] 扣除VDW半径后的最小距离
         is_binding: [N_res] 是否为结合位点 (基于VDW阈值)
     """
     n_residues = len(protein_all_atom_coords)
     n_ligand_atoms = len(ligand_coords)
 
     min_distances = np.full(n_residues, np.inf, dtype=np.float32)
+    min_distances_vdw_adjusted = np.full(n_residues, np.inf, dtype=np.float32)
     is_binding = np.zeros(n_residues, dtype=bool)
 
     # 对每个残基
@@ -190,16 +192,23 @@ def calculate_vdw_based_distances(
                 # 欧几里得距离
                 dist = np.linalg.norm(p_coord - l_coord)
 
-                # 更新最小距离
+                # 扣除VDW半径后的距离
+                dist_vdw_adjusted = dist - (p_vdw + l_vdw)
+
+                # 更新最小实际距离
                 if dist < min_distances[i]:
                     min_distances[i] = dist
+
+                # 更新扣除VDW半径后的最小距离
+                if dist_vdw_adjusted < min_distances_vdw_adjusted[i]:
+                    min_distances_vdw_adjusted[i] = dist_vdw_adjusted
 
                 # VDW阈值判断
                 vdw_threshold = p_vdw + l_vdw + tolerance
                 if dist < vdw_threshold:
                     is_binding[i] = True
 
-    return min_distances, is_binding
+    return min_distances, min_distances_vdw_adjusted, is_binding
 
 
 def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
@@ -238,7 +247,7 @@ def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
             ligand_symbols.extend(['C'] * (len(ligand_coords) - len(ligand_symbols)))
 
         # 计算基于VDW的距离（使用所有原子）
-        min_distances, is_binding = calculate_vdw_based_distances(
+        min_distances, min_distances_vdw_adjusted, is_binding = calculate_vdw_based_distances(
             protein_all_atom_coords,
             protein_all_atom_names,
             ligand_coords,
@@ -251,7 +260,8 @@ def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
 
         result = {
             'pdb_id': pdb_id,
-            'distances': torch.from_numpy(min_distances),
+            'distances': torch.from_numpy(min_distances),  # 实际距离
+            'distances_vdw_adjusted': torch.from_numpy(min_distances_vdw_adjusted),  # 扣除VDW半径后的距离
             'is_binding_vdw': torch.from_numpy(is_binding),
             'n_binding': int(n_binding),
             'n_total': int(n_total),
@@ -270,29 +280,53 @@ def batch_calculate_distances(
     data_root: Path,
     output_file: Path,
     n_workers: int = None,
-    max_complexes: int = None
+    max_complexes: int = None,
+    specific_ids: list = None
 ):
     """
     批量计算所有复合物的距离
+
+    Args:
+        data_root: 数据根目录
+        output_file: 输出文件路径
+        n_workers: 并行进程数
+        max_complexes: 最大处理复合物数
+        specific_ids: 指定要处理的PDB ID列表（如果提供，只处理这些ID）
     """
     # 收集所有复合物ID
     year_ranges = ['1981-2000', '2001-2010', '2011-2019']
     complex_list = []
 
-    for year_range in year_ranges:
-        protein_year_dir = data_root / 'complete_features' / year_range
-        if not protein_year_dir.exists():
-            continue
-
-        for complex_dir in protein_year_dir.iterdir():
-            if not complex_dir.is_dir():
+    if specific_ids:
+        # 只处理指定的ID
+        print(f"处理指定的 {len(specific_ids)} 个复合物: {', '.join(specific_ids)}")
+        for pdb_id in specific_ids:
+            # 查找该ID所在的年份范围
+            found = False
+            for year_range in year_ranges:
+                protein_file = data_root / 'complete_features' / year_range / pdb_id / f'{pdb_id}_protein.pt'
+                if protein_file.exists():
+                    complex_list.append((pdb_id, str(data_root), year_range))
+                    found = True
+                    break
+            if not found:
+                print(f"警告: 未找到 {pdb_id}")
+    else:
+        # 处理所有复合物
+        for year_range in year_ranges:
+            protein_year_dir = data_root / 'complete_features' / year_range
+            if not protein_year_dir.exists():
                 continue
 
-            pdb_id = complex_dir.name
-            complex_list.append((pdb_id, str(data_root), year_range))
+            for complex_dir in protein_year_dir.iterdir():
+                if not complex_dir.is_dir():
+                    continue
 
-    if max_complexes:
-        complex_list = complex_list[:max_complexes]
+                pdb_id = complex_dir.name
+                complex_list.append((pdb_id, str(data_root), year_range))
+
+        if max_complexes:
+            complex_list = complex_list[:max_complexes]
 
     print(f"找到 {len(complex_list)} 个复合物")
 
@@ -385,6 +419,13 @@ def main():
         default=None,
         help="最大处理复合物数（用于测试）"
     )
+    parser.add_argument(
+        "--ids",
+        type=str,
+        nargs='+',
+        default=None,
+        help="指定要处理的PDB ID列表（例如: --ids 1lvk 2pll 3vjs）"
+    )
 
     args = parser.parse_args()
 
@@ -398,7 +439,8 @@ def main():
         data_root=data_root,
         output_file=output_file,
         n_workers=args.workers,
-        max_complexes=args.max
+        max_complexes=args.max,
+        specific_ids=args.ids
     )
 
 

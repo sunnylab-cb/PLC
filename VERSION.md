@@ -4,7 +4,179 @@
 
 ---
 
-## V5 (当前版本) - 2026-02-08
+## 总体简介（如何阅读/如何维护）
+
+- **目的**：用“面向维护”的方式记录每次版本迭代的**动机**、**改动点**、**影响范围**与**复现实例**，方便回溯与对齐训练/评测脚本。
+- **顺序**：按时间从新到旧（最新版本放最上面）。
+- **最小必填**（每个版本建议都包含）：`主要特性`、`关键改进/变化`、`文件结构`、`配置变化`、`使用方法`。
+- **以代码为准**：如文档与实现不一致，请在对应版本条目里标注“以哪些文件为准”，并给出路径（例如：`configs/...`、`src/models/...`、`scripts/...`）。
+- **关联文档**：模型结构图见 `MODEL_ARCHITECTURE_GRAPH.md`（如需更新，请同步更新对应版本条目中的“架构改进”描述）。
+
+## 总体结论（版本演进主线）
+
+- 迭代主线通常围绕三件事：**标签/物理定义更准确**（例如距离阈值）、**特征更丰富**（例如配体/蛋白输入特征）、**模态融合更强**（例如交叉注意力从单向到双向）。
+- 维护建议：每次升级尽量明确回答三问：**为什么改**（问题/瓶颈）、**改了什么**（模块/超参/数据）、**怎么验证**（复现实验命令+预期变化）。
+
+## 维护模板（复制即可）
+
+> 新版本建议直接复制以下模板，填完后放到本文档最上方（在当前最新版本之前）。
+
+```markdown
+## V? - YYYY-MM-DD
+
+### 主要特性
+- ✅ ...
+
+### 关键改进/变化
+1. ...
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/...`
+- 代码：`src/...`
+- 脚本：`scripts/...`
+- 数据/标签：`data/...`
+
+### 文件结构
+```
+configs/
+  └── ...
+src/
+  └── ...
+scripts/
+  └── ...
+```
+
+### 配置变化
+```yaml
+model:
+  # ...
+data:
+  # ...
+```
+
+### 使用方法（最小可复现）
+```bash
+# 训练
+python scripts/train_?.py --config configs/?.yaml --amp
+
+# 评测
+python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
+```
+
+### 兼容性/迁移说明（可选）
+- 与 V? checkpoint 是否兼容：是/否（如否，给出转换脚本/原因）
+- 需要重新生成哪些中间产物：...
+
+### 已知问题（可选）
+- ...
+
+---
+```
+
+## V6 (当前版本) - 2026-02-10
+
+### 主要特性
+- ✅ **双向交叉注意力** (Bidirectional Co-Attention)
+- ✅ **Induced Fit建模**: 蛋白质和配体相互增强
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+- ✅ 物理准确的结合位点定义
+
+### 标签定义 (Label Definition)
+
+**VDW-adjusted距离标签** (扣除VDW半径后的距离):
+```python
+# 距离计算
+distance_vdw_adjusted = distance - (r_vdw_protein + r_vdw_ligand)
+
+# 标签阈值
+c0: distance_vdw_adjusted < 0.5Å   # 紧密接触 (Close contact)
+c1: 0.5Å ≤ distance_vdw_adjusted < 4.5Å  # 中等距离 (Medium range)
+c2: distance_vdw_adjusted ≥ 4.5Å   # 远距离 (Far range)
+```
+
+**物理意义**: 由于已扣除VDW半径，0.5Å的阈值实际上等价于原始距离约5Å（对于C-C接触）。
+
+### 架构改进
+
+**V5问题**: 单向交叉注意力
+```
+Protein (Query) → Ligand (Key/Value)
+结果: 只有蛋白质特征被配体更新
+```
+
+**V6改进**: 双向交叉注意力
+```
+Protein ↔ Ligand (Co-Attention)
+- Prot → Lig: 蛋白质查询配体，更新蛋白质特征
+- Lig → Prot: 配体查询蛋白质，更新配体特征
+结果: 两者相互增强，建模induced fit现象
+```
+
+### 实现细节
+```python
+# V5: 单向交叉注意力
+h_prot_fused = CrossAttention(q=h_prot, kv=h_ligand)
+# 只有蛋白质特征被更新
+
+# V6: 双向交叉注意力
+h_prot_fused, h_lig_fused = BidirectionalCrossAttention(
+    h_prot=h_prot,
+    h_lig=h_ligand
+)
+# 蛋白质和配体特征都被更新
+```
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v6.yaml          # V6配置文件
+
+src/models/
+  ├── pocket_gvp_fusion_v6.py     # V6主模型
+  └── transformer_layers.py       # 包含BidirectionalCrossAttentionBlock
+
+src/data/
+  └── pocket_dataset_v6.py        # V6数据加载器
+
+scripts/
+  └── train_v6.py                 # V6训练脚本
+
+data/
+  ├── residue_ligand_distances_vdw.pt  # VDW距离标签
+  └── ligand_features_v3/              # 80维配体特征
+```
+
+### 使用方法
+```bash
+# 训练
+python scripts/train_v6.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+```
+
+### 关键改进
+1. **双向信息流**: 蛋白质和配体相互增强，不再是单向更新
+2. **Induced Fit建模**: 更好地捕捉蛋白质-配体相互适应
+3. **更丰富的特征**: 配体特征也被蛋白质信息增强
+4. **保持物理准确性**: 继承V5的VDW距离阈值
+
+### 配置变化
+```yaml
+model:
+  n_cross_attention_layers: 4  # V6: 双向交叉注意力层数
+```
+
+### 预期性能提升
+- **更准确的结合位点预测**: 双向信息流提供更丰富的上下文
+- **更好的泛化能力**: Induced fit建模更符合生物物理实际
+- **更强的特征表示**: 两个模态相互增强
+
+---
+
+## V5 - 2026-02-08
 
 ### 主要特性
 - ✅ **VDW半径距离阈值** (BioLiP标准)
@@ -33,6 +205,21 @@ C-C: 1.70 + 1.70 + 0.5 = 3.9 Å
 O-O: 1.52 + 1.52 + 0.5 = 2.54 Å
 N-C: 1.55 + 1.70 + 0.5 = 3.75 Å
 ```
+
+### 标签定义 (Label Definition)
+
+**VDW-adjusted距离标签** (扣除VDW半径后的距离):
+```python
+# 距离计算
+distance_vdw_adjusted = distance - (r_vdw_protein + r_vdw_ligand)
+
+# 标签阈值
+c0: distance_vdw_adjusted < 0.5Å   # 紧密接触 (Close contact)
+c1: 0.5Å ≤ distance_vdw_adjusted < 4.5Å  # 中等距离 (Medium range)
+c2: distance_vdw_adjusted ≥ 4.5Å   # 远距离 (Far range)
+```
+
+**物理意义**: 由于已扣除VDW半径，0.5Å的阈值实际上等价于原始距离约5Å（对于C-C接触）。
 
 ### 数据统计
 **完整数据集 (19,032个复合物)**:
@@ -249,23 +436,24 @@ scripts/
 
 ## 版本对比
 
-| 特性 | V1 | V2 | V3 | V4 | V5 |
-|------|----|----|----|----|-----|
-| **配体特征维度** | 64 | 64 | 35 | 80 | 80 |
-| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 |
-| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 |
-| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D |
-| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW自适应 |
-| **使用原子** | Cα | Cα | Cα | Cα | 所有原子 |
-| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ |
-| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ |
-| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ |
-| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ |
-| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ |
-| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ |
-| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ |
-| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 特性 | V1 | V2 | V3 | V4 | V5 | V6 |
+|------|----|----|----|----|-----|-----|
+| **配体特征维度** | 64 | 64 | 35 | 80 | 80 | 80 |
+| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 | ESM-2 |
+| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 | 1280 |
+| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D |
+| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW自适应 | VDW自适应 |
+| **使用原子** | Cα | Cα | Cα | Cα | 所有原子 | 所有原子 |
+| **交叉注意力** | 单向 | 单向 | 单向 | 单向 | 单向 | **双向** |
+| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
@@ -369,6 +557,17 @@ torchrun --nproc_per_node=2 scripts/train_v5.py \
     --config configs/pocket_gvp_v5.yaml --compile --amp
 ```
 
+### V6
+```bash
+# 单GPU + AMP
+python scripts/train_v6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
 ---
 
 ## 性能预期
@@ -440,6 +639,17 @@ python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
 
 ## 更新日志
 
+### 2026-02-10 (V6)
+- ✅ 创建V6版本
+- ✅ 实现双向交叉注意力机制 (BidirectionalCrossAttentionBlock)
+- ✅ 蛋白质和配体特征相互增强
+- ✅ 更好地建模induced fit现象
+- ✅ 创建pocket_gvp_fusion_v6.py
+- ✅ 创建pocket_dataset_v6.py
+- ✅ 创建train_v6.py
+- ✅ 创建pocket_gvp_v6.yaml
+- ✅ 更新VERSION.md添加V6说明
+
 ### 2026-02-08 (V5)
 - ✅ 创建V5版本
 - ✅ 实现BioLiP标准VDW半径距离计算
@@ -471,5 +681,5 @@ python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
 
 ---
 
-**当前推荐版本**: V5 (VDW自适应距离阈值)
-**稳定版本**: V4 (80维配体特征)
+**当前推荐版本**: V6 (双向交叉注意力 + VDW自适应距离阈值)
+**稳定版本**: V5 (VDW自适应距离阈值)

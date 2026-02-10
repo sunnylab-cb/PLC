@@ -422,12 +422,90 @@ class LearnablePositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
+class BidirectionalCrossAttentionBlock(nn.Module):
+    """
+    Bidirectional cross-attention block for protein-ligand co-attention.
+
+    Implements mutual information exchange:
+    - Protein queries Ligand (Prot -> Lig): Updates protein features
+    - Ligand queries Protein (Lig -> Prot): Updates ligand features
+
+    This allows both modalities to be enhanced by each other, modeling
+    the "induced fit" phenomenon where both protein and ligand adapt
+    to each other's presence.
+
+    Args:
+        d_model: Model dimension
+        n_heads: Number of attention heads
+        dropout: Dropout rate
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int = 8,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+
+        # Prot -> Lig: Protein queries Ligand
+        self.prot_to_lig = CrossAttentionBlock(
+            d_model=d_model,
+            n_heads=n_heads,
+            dropout=dropout
+        )
+
+        # Lig -> Prot: Ligand queries Protein
+        self.lig_to_prot = CrossAttentionBlock(
+            d_model=d_model,
+            n_heads=n_heads,
+            dropout=dropout
+        )
+
+    def forward(
+        self,
+        h_prot: torch.Tensor,
+        h_lig: torch.Tensor,
+        prot_mask: Optional[torch.Tensor] = None,
+        lig_mask: Optional[torch.Tensor] = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass with bidirectional cross-attention.
+
+        Args:
+            h_prot: Protein features [B, L_prot, d_model]
+            h_lig: Ligand features [B, L_lig, d_model]
+            prot_mask: Protein mask [B, L_prot]
+            lig_mask: Ligand mask [B, L_lig]
+
+        Returns:
+            Tuple of (updated_protein_features, updated_ligand_features)
+        """
+        # Prot -> Lig: Protein queries Ligand, updates protein
+        h_prot_updated = self.prot_to_lig(
+            q=h_prot,
+            kv=h_lig,
+            q_mask=prot_mask,
+            kv_mask=lig_mask
+        )
+
+        # Lig -> Prot: Ligand queries Protein, updates ligand
+        h_lig_updated = self.lig_to_prot(
+            q=h_lig,
+            kv=h_prot,
+            q_mask=lig_mask,
+            kv_mask=prot_mask
+        )
+
+        return h_prot_updated, h_lig_updated
+
+
 class ProteinContextEncoder(nn.Module):
     """
     Protein Context Encoder using stacked GatedTransformerBlocks.
-    
+
     Learns global context over the protein sequence.
-    
+
     Args:
         d_model: Model dimension
         n_layers: Number of transformer layers
