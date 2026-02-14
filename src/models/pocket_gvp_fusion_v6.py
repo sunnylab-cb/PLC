@@ -254,25 +254,44 @@ class PocketGVPFusionV6(nn.Module):
         h_s_gvp = torch.stack(h_s_gvp_list, dim=0)
         h_v_gvp = torch.stack(h_v_gvp_list, dim=0)
 
+        # Cache GVP features for diagnostics
+        self._cached_gvp_scalar = h_s_gvp
+        self._cached_gvp_vector = h_v_gvp
+
         # ============================================================
         # Module 3: Bridge & Early Injection
         # ============================================================
         v_inv = self.pairwise_bridge(h_v_gvp)
         h_geo = torch.cat([h_s_gvp, v_inv, protein_scalar], dim=-1)
 
+        # Cache h_geo for diagnostics
+        self._cached_h_geo = h_geo
+
         # Modality Dropout
         current_esm = esm_embeddings
+        esm_dropout_mask = None
         if self.training:
             p_drop_esm = c.get('esm_dropout_prob', 0.3)
             esm_dropout_mask = torch.bernoulli(
                 torch.full((B, 1, 1), 1 - p_drop_esm, device=device)
             )
             current_esm = current_esm * esm_dropout_mask
+        else:
+            # During eval, no dropout - mask is all ones
+            esm_dropout_mask = torch.ones((B, 1, 1), device=device)
+
+        # Cache ESM features for diagnostics
+        self._cached_esm_mask = esm_dropout_mask
+        self._cached_current_esm = current_esm
 
         # Separate projections
         h_gvp_proj = self.gvp_proj(h_geo)
         h_esm_proj = self.esm_proj(current_esm)
         h_seq = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
+
+        # Cache projected features for diagnostics
+        self._cached_h_gvp_proj = h_gvp_proj
+        self._cached_h_esm_proj = h_esm_proj
 
         # ============================================================
         # Module 4: Protein Context Encoder

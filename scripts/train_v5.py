@@ -386,7 +386,7 @@ def train_epoch(
     epoch: int,
     writer: Optional[SummaryWriter],
     log_every: int = 10,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    scaler: Optional[torch.amp.GradScaler] = None,
     use_amp: bool = False,
     accumulation_steps: int = 1
 ) -> Dict[str, float]:
@@ -712,7 +712,7 @@ def main():
     use_amp = args.amp or config['training'].get('use_amp', False)
     if use_amp:
         print_rank0("Using Automatic Mixed Precision (AMP)")
-        scaler = torch.cuda.amp.GradScaler()
+        scaler = torch.amp.GradScaler('cuda')
     else:
         scaler = None
 

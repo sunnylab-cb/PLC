@@ -70,14 +70,18 @@ training:
   # Loss
   loss_type: "focal"                # "focal" or "cross_entropy"
   focal_gamma: 2.0
-  class_weights: [5.0, 3.0, 1.0]    # Contact, Near, Far
+  class_weights: [7.0, 1.0, 2.2]    # Contact, Near, Far
+
+  # V6m3: Combined loss weights (V6m2 will ignore these)
+  dice_weight: 0.5                  # Dice Loss weight (default 0.5)
+  focal_weight: 0.5                 # Focal Loss weight (default 0.5)
 
   # Regularization
   gradient_clip: 1.0
 
   # Checkpointing
   save_every: 5                     # Save checkpoint every N epochs
-  early_stopping_patience: 15       # Stop if val loss doesn't improve
+  early_stopping_patience: 25       # Stop if val loss doesn't improve
 
   # Precision
   use_amp: false                    # Use full precision for stability

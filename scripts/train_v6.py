@@ -388,7 +388,7 @@ def train_epoch(
     epoch: int,
     writer: Optional[SummaryWriter],
     log_every: int = 10,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    scaler: Optional[torch.amp.GradScaler] = None,
     use_amp: bool = False,
     accumulation_steps: int = 1
 ) -> Dict[str, float]:
@@ -714,7 +714,7 @@ def main():
     use_amp = args.amp or config['training'].get('use_amp', False)
     if use_amp:
         print_rank0("Using Automatic Mixed Precision (AMP)")
-        scaler = torch.cuda.amp.GradScaler()
+        scaler = torch.amp.GradScaler('cuda')
     else:
         scaler = None
 
@@ -1041,8 +1041,11 @@ def main():
                 if 'dice_c0' in val_metrics:
                     writer.add_scalar('Val_new/dice_c0', val_metrics['dice_c0'], epoch)
                     writer.add_scalar('Val_new/iou_c0', val_metrics['iou_c0'], epoch)
-                        writer.add_scalar('Val_original/dice_c0', val_metrics['dice_c0_original'], epoch)
-                        writer.add_scalar('Val_original/iou_c0', val_metrics['iou_c0_original'], epoch)
+
+                # 分割指标 - Original → Val_original/ (仅当存在时)
+                if 'dice_c0_original' in val_metrics:
+                    writer.add_scalar('Val_original/dice_c0', val_metrics['dice_c0_original'], epoch)
+                    writer.add_scalar('Val_original/iou_c0', val_metrics['iou_c0_original'], epoch)
 
             # ✅ Save checkpoints with complete state
             # 1. Save latest checkpoint after EVERY epoch

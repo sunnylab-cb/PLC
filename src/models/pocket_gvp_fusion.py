@@ -355,21 +355,24 @@ class PocketGVPFusion(nn.Module):
         # This forces the model to leverage GVP features during training
         current_esm = esm_embeddings
         esm_dropout_mask = None
-        
+
         if self.training:
             # Dropout probability from config (default: 0.5)
             p_drop_esm = c.get('esm_dropout_prob', 0.5)
-            
+
             # Create Bernoulli mask: [B, 1, 1]
             # Same decision for all residues in a protein, independent per protein
             # 1 = Keep, 0 = Drop
             esm_dropout_mask = torch.bernoulli(
                 torch.full((B, 1, 1), 1 - p_drop_esm, device=device)
             )
-            
+
             # Apply mask (no scaling - LayerNorm will handle variance)
             current_esm = current_esm * esm_dropout_mask
-        
+        else:
+            # During eval, no dropout - mask is all ones
+            esm_dropout_mask = torch.ones((B, 1, 1), device=device)
+
         # Cache for diagnostics
         self._cached_esm_mask = esm_dropout_mask
         self._cached_current_esm = current_esm

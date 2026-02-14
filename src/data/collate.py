@@ -51,29 +51,41 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     protein_mask = torch.zeros(B, max_residues, dtype=torch.bool)
     labels = torch.zeros(B, max_residues, dtype=torch.long)
 
+    # Check if labels_original exists in any sample (V5: for comparison)
+    has_labels_original = any('labels_original' in sample for sample in batch)
+    if has_labels_original:
+        labels_original = torch.zeros(B, max_residues, dtype=torch.long)
+
     # Detect ligand feature dimension from first sample
     ligand_dim = batch[0]['ligand_features'].shape[-1]
     ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
-    
+
     # Fill in data
     for i, sample in enumerate(batch):
         n_res = sample['n_residues']
         n_atm = sample['n_atoms']
-        
+
         esm_embeddings[i, :n_res] = sample['esm'][:n_res]
         protein_scalar[i, :n_res] = sample['protein_scalar'][:n_res]
         protein_coords[i, :n_res] = sample['gvp_coords'][:n_res]
         protein_vectors[i, :n_res] = sample['gvp_vectors'][:n_res]
         protein_mask[i, :n_res] = True
         labels[i, :n_res] = sample['labels'][:n_res]
-        
+
+        # V5: Fill labels_original if available
+        if has_labels_original and 'labels_original' in sample:
+            # Handle case where labels_original might be shorter than n_res
+            labels_orig = sample['labels_original']
+            n_orig = min(len(labels_orig), n_res)
+            labels_original[i, :n_orig] = labels_orig[:n_orig]
+
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
         ligand_mask[i, :n_atm] = True
-    
-    return {
+
+    result = {
         'pdb_ids': pdb_ids,
         'esm_embeddings': esm_embeddings,
         'protein_scalar': protein_scalar,
@@ -90,6 +102,12 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'max_residues': max_residues,
         'max_atoms': max_atoms
     }
+
+    # V5: Add labels_original if available
+    if has_labels_original:
+        result['labels_original'] = labels_original
+
+    return result
 
 
 def build_ligand_graphs(batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

@@ -1,0 +1,1 @@
+This run mainly test whether improve the weight of c0 would make a difference, now upregulate the weight of c_0 loss from original 5.0 to 100.0 to give it a try. It tuned out that the graident is not stable and the reult is by no means good, recall gets a increase but iou as well as the precision decreases.

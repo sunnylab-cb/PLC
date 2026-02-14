@@ -6,11 +6,11 @@
 
 ## 总体简介（如何阅读/如何维护）
 
-- **目的**：用“面向维护”的方式记录每次版本迭代的**动机**、**改动点**、**影响范围**与**复现实例**，方便回溯与对齐训练/评测脚本。
+- **目的**：用"面向维护"的方式记录每次版本迭代的**动机**、**改动点**、**影响范围**与**复现实例**，方便回溯与对齐训练/评测脚本。
 - **顺序**：按时间从新到旧（最新版本放最上面）。
 - **最小必填**（每个版本建议都包含）：`主要特性`、`关键改进/变化`、`文件结构`、`配置变化`、`使用方法`。
-- **以代码为准**：如文档与实现不一致，请在对应版本条目里标注“以哪些文件为准”，并给出路径（例如：`configs/...`、`src/models/...`、`scripts/...`）。
-- **关联文档**：模型结构图见 `MODEL_ARCHITECTURE_GRAPH.md`（如需更新，请同步更新对应版本条目中的“架构改进”描述）。
+- **以代码为准**：如文档与实现不一致，请在对应版本条目里标注"以哪些文件为准"，并给出路径（例如：`configs/...`、`src/models/...`、`scripts/...`）。
+- **关联文档**：模型结构图见 `MODEL_ARCHITECTURE_GRAPH.md`（如需更新，请同步更新对应版本条目中的"架构改进"描述）。
 
 ## 总体结论（版本演进主线）
 
@@ -73,7 +73,461 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 ---
 ```
 
-## V6 (当前版本) - 2026-02-10
+## V6m4 (当前版本) - 2026-02-14
+
+### 主要特性
+- ✅ **PhysChem Encoder 添加 LayerNorm**: 修复特征尺度不匹配问题
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder**: 理化特征预处理网络 (35D -> 64D) (继承自V6m2)
+- ✅ **双向交叉注意力** (继承自V6)
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+
+### 痛点分析
+
+**V6m2/V6m3 问题**: PhysChem 特征尺度不匹配导致性能下降
+```
+观察现象:
+- V6m2 相比 V5 性能下降 1-3%
+- c0 召回率提升，但精确率和 IoU 下降
+- 训练后期性能趋同
+
+根本原因:
+1. GVP 输出 (256D): 经过多层 GNN，特征范数较大 (~1.0)
+2. PhysChem MLP 输出 (64D): 两层 Linear + ReLU，特征范数很小 (~0.01)
+3. 特征拼接时不平衡 → PhysChem 信息被稀释
+4. 模型过度依赖 GVP 特征 → 补偿性过度预测 c0
+```
+
+**V6m4 改进**: 在 PhysChem Encoder 中添加 LayerNorm
+```python
+# V6m2/V6m3: 无归一化
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(35, 64),
+    nn.ReLU(),
+    nn.Linear(64, 64),
+    nn.ReLU()
+)
+
+# V6m4: 添加 LayerNorm
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(35, 64),
+    nn.LayerNorm(64),      # 归一化第一层输出
+    nn.ReLU(),
+    nn.Linear(64, 64),
+    nn.LayerNorm(64),      # 归一化第二层输出
+    nn.ReLU()
+)
+```
+
+**预期效果**:
+- LayerNorm 将特征归一化到相似尺度
+- PhysChem 和 GVP 特征平衡融合
+- 提升精确率和 IoU，恢复到 V5 水平或更好
+- 保持 V6m3 的 Dice Loss 优势
+
+### 关键改进/变化
+
+1. **PhysChem Encoder 架构更新**
+   - 在两个 Linear 层后各添加一个 LayerNorm
+   - 保持 ReLU 激活函数不变
+   - 输出维度仍为 64D
+
+2. **训练稳定性提升**
+   - LayerNorm 提供更稳定的梯度
+   - 减少特征尺度导致的训练不稳定
+   - 加速收敛
+
+3. **特征融合改进**
+   - GVP 和 PhysChem 特征尺度匹配
+   - 更好的多模态信息融合
+   - 减少模态偏向
+
+### 影响范围（改了哪些东西）
+
+- 模型：`src/models/pocket_gvp_fusion_v6m4.py` (新增)
+- 脚本：`scripts/train_v6m4.py` (新增)
+- 配置：`configs/pocket_gvp_v6.yaml` (无需修改，与V6m3共享)
+
+### 文件结构
+```
+scripts/
+  ├── train_v6m4.py          # V6m4训练脚本（LayerNorm + Dice + Focal）
+  ├── train_v6m3.py          # V6m3训练脚本（Dice + Focal）
+  ├── train_v6m2.py          # V6m2训练脚本（仅Focal）
+  └── train_v6.py            # V6训练脚本
+src/
+  └── models/
+      ├── pocket_gvp_fusion_v6m4.py  # V6m4模型（新增LayerNorm）
+      ├── pocket_gvp_fusion_v6m2.py  # V6m2模型
+      └── pocket_gvp_fusion_v6.py    # V6模型
+configs/
+  └── pocket_gvp_v6.yaml     # 配置文件（V6m2/V6m3/V6m4共享）
+```
+
+### 配置变化
+
+无需修改配置文件，与 V6m3 完全相同：
+
+```yaml
+training:
+  # 损失函数配置
+  loss_type: "focal"
+  focal_gamma: 2.0
+  class_weights: [7.0, 1.0, 2.2]
+
+  # 组合损失权重
+  dice_weight: 0.5
+  focal_weight: 0.5
+```
+
+### 使用方法（最小可复现）
+
+```bash
+# 单GPU训练
+python scripts/train_v6m4.py --config configs/pocket_gvp_v6.yaml
+
+# 单GPU + AMP
+python scripts/train_v6m4.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练 + AMP
+torchrun --nproc_per_node=2 scripts/train_v6m4.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# torch.compile加速
+python scripts/train_v6m4.py --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 诊断建议
+
+训练时可以监控以下指标来验证 LayerNorm 的效果：
+
+1. **特征范数**（如果添加了诊断代码）:
+   ```
+   GVP norm: ~1.0
+   PhysChem norm: ~1.0  (V6m4 应该接近 1.0，V6m2 约 0.01)
+   ```
+
+2. **训练曲线**:
+   - 精确率应该比 V6m2/V6m3 更高
+   - IoU 应该恢复到 V5 水平或更好
+   - 收敛速度可能更快
+
+3. **TensorBoard 指标**:
+   ```
+   Val_new/precision_c0  # 应该提升
+   Val_new/iou_c0        # 应该提升
+   Val_new/dice_c0       # 保持 V6m3 水平
+   ```
+
+### 兼容性/迁移说明
+
+- **与 V6m3 checkpoint 不兼容**: 否（模型结构不同，多了 LayerNorm 层）
+- **与 V6m2 checkpoint 不兼容**: 否（模型结构不同）
+- **数据/标签**: 与 V6m2/V6m3 完全相同，无需重新生成
+- **从 V6m3 迁移**: 需要从头训练，无法直接加载 checkpoint
+
+### 预期改进
+
+1. **精确率提升**: 预期提升 2-5%，恢复到 V5 水平
+2. **IoU 提升**: 预期提升 2-5%
+3. **训练稳定性**: 更稳定的梯度，更快的收敛
+4. **特征融合**: GVP 和 PhysChem 特征平衡利用
+
+### 理论分析
+
+**为什么 LayerNorm 有效？**
+
+1. **特征尺度归一化**:
+   ```
+   V6m2: h_geo = [gvp(norm~1.0), physchem(norm~0.01)]  # 不平衡
+   V6m4: h_geo = [gvp(norm~1.0), physchem(norm~1.0)]   # 平衡
+   ```
+
+2. **梯度流改善**:
+   - LayerNorm 提供更稳定的梯度
+   - 减少梯度消失/爆炸
+   - 加速收敛
+
+3. **模态平衡**:
+   - 防止某个模态主导
+   - 充分利用多模态信息
+   - 提升泛化能力
+
+---
+
+## V6m3 - 2026-02-13
+
+### 主要特性
+- ✅ **Dice Loss + Focal Loss 组合损失函数**: 更好地处理分割任务和类别不平衡
+- ✅ **PhysChem MLP Encoder**: 理化特征预处理网络 (35D -> 64D) (继承自V6m2)
+- ✅ **双向交叉注意力** (继承自V6)
+- ✅ **Induced Fit建模** (继承自V6)
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+
+### 痛点分析
+
+**V6m2问题**: 单一Focal Loss对分割任务优化不足
+```
+现状: 仅使用Focal Loss处理类别不平衡
+问题: 1. Focal Loss主要关注难分样本，但对区域连续性关注不足
+      2. 蛋白-配体结合位点预测本质是分割任务，需要考虑空间连续性
+      3. Contact类别（结合位点）的Dice系数提升空间大
+```
+
+**V6m3改进**: Dice Loss + Focal Loss 组合损失
+```python
+# 组合损失函数
+total_loss = dice_weight * dice_loss + focal_weight * focal_loss
+
+# Dice Loss: 优化区域重叠度，关注分割质量
+dice_loss = 1 - (2 * intersection + smooth) / (cardinality + smooth)
+
+# Focal Loss: 处理类别不平衡，关注难分样本
+focal_loss = -(1 - p_t)^gamma * log(p_t)
+```
+
+**预期效果**:
+- Dice Loss 提升结合位点的空间连续性和完整性
+- Focal Loss 保持对难分样本的关注
+- 组合损失平衡两者优势，提升整体分割质量
+
+### 关键改进/变化
+
+1. **损失函数改进**
+   - 新增 `compute_dice_loss()`: 计算多类别Dice Loss
+   - 新增 `compute_combined_loss()`: 组合Dice和Focal损失
+   - 支持可配置的损失权重 (`dice_weight`, `focal_weight`)
+
+2. **训练/评估流程更新**
+   - `train_epoch()`: 使用组合损失，记录Dice和Focal分量
+   - `evaluate()`: 同时评估组合损失的各个分量
+   - TensorBoard日志: 分别记录总损失、Dice损失、Focal损失
+
+3. **配置扩展**
+   - 新增 `dice_weight` (默认0.5): Dice Loss权重
+   - 新增 `focal_weight` (默认0.5): Focal Loss权重
+
+### 影响范围（改了哪些东西）
+
+- 脚本：`scripts/train_v6m3.py` (新增)
+- 模型：使用 `src/models/pocket_gvp_fusion_v6m2.py` (与V6m2共享)
+- 配置：`configs/pocket_gvp_v6.yaml` (可选添加dice_weight/focal_weight)
+
+### 文件结构
+```
+scripts/
+  ├── train_v6m3.py          # V6m3训练脚本（Dice + Focal Loss）
+  ├── train_v6m2.py          # V6m2训练脚本（仅Focal Loss）
+  └── train_v6.py            # V6训练脚本
+src/
+  └── models/
+      └── pocket_gvp_fusion_v6m2.py  # V6m2/V6m3共享模型
+configs/
+  └── pocket_gvp_v6.yaml     # 配置文件（可选添加损失权重）
+```
+
+### 配置变化
+
+```yaml
+training:
+  # 损失函数配置
+  loss_type: "focal"                # 保持不变（内部使用组合损失）
+  focal_gamma: 2.0                  # Focal Loss gamma参数
+  class_weights: [7.0, 1.0, 2.2]    # 类别权重
+
+  # V6m3新增（可选，默认值为0.5）
+  dice_weight: 0.5                  # Dice Loss权重
+  focal_weight: 0.5                 # Focal Loss权重
+```
+
+### 使用方法（最小可复现）
+
+```bash
+# 单GPU训练
+python scripts/train_v6m3.py --config configs/pocket_gvp_v6.yaml
+
+# 单GPU + AMP
+python scripts/train_v6m3.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练 + AMP
+torchrun --nproc_per_node=2 scripts/train_v6m3.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# torch.compile加速
+python scripts/train_v6m3.py --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 损失权重调优建议
+
+根据任务特点调整 `dice_weight` 和 `focal_weight`:
+
+1. **更关注分割质量** (提升Dice/IoU):
+   ```yaml
+   dice_weight: 0.7
+   focal_weight: 0.3
+   ```
+
+2. **更关注难分样本** (提升准确率):
+   ```yaml
+   dice_weight: 0.3
+   focal_weight: 0.7
+   ```
+
+3. **平衡两者** (默认):
+   ```yaml
+   dice_weight: 0.5
+   focal_weight: 0.5
+   ```
+
+### TensorBoard监控指标
+
+V6m3在TensorBoard中新增以下指标:
+
+```
+Train/
+  ├── epoch_loss          # 总损失
+  ├── dice_loss           # Dice损失分量
+  ├── focal_loss          # Focal损失分量
+  └── epoch_acc           # 准确率
+
+Val_new/  (VDW标签)
+  ├── epoch_loss
+  ├── dice_loss
+  ├── focal_loss
+  ├── epoch_acc
+  ├── dice_c0             # Contact类Dice系数
+  └── iou_c0              # Contact类IoU
+
+Val/  (原始标签，用于横向对比)
+  ├── epoch_loss
+  ├── dice_loss
+  ├── focal_loss
+  └── ...
+```
+
+### 兼容性/迁移说明
+
+- **与V6m2 checkpoint兼容**: 是（模型结构完全相同，仅损失函数不同）
+- **从V6m2迁移**: 直接使用V6m2的checkpoint，用train_v6m3.py继续训练即可
+- **数据/标签**: 与V6m2完全相同，无需重新生成
+
+### 预期改进
+
+1. **分割质量提升**:
+   - Contact类Dice系数预期提升 2-5%
+   - IoU预期提升 2-5%
+   - 结合位点预测更完整、连续
+
+2. **训练稳定性**:
+   - Dice Loss提供额外的梯度信号
+   - 组合损失减少对单一指标的过拟合
+
+3. **类别平衡**:
+   - 保持Focal Loss对难分样本的关注
+   - Dice Loss改善少数类的召回率
+
+---
+
+## V6m2 - 2026-02-11
+
+### 主要特性
+- ✅ **PhysChem MLP Encoder**: 理化特征预处理网络 (35D -> 64D)
+- ✅ **非线性交互捕捉**: 捕捉理化指标间的复杂关系
+- ✅ **双向交叉注意力** (继承自V6)
+- ✅ **Induced Fit建模** (继承自V6)
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+
+### 痛点分析
+
+**V6问题**: 理化标量的非线性交互缺失
+```
+现状: 35个标量直接拼接进入网络
+问题: 原始理化指标（电荷、疏水性、体积等）之间存在复杂非线性关系
+      例如："体积大且疏水" vs "体积小且疏水" 对结合的影响截然不同
+      简单拼接依赖后续MLP挖掘关系，效率较低
+```
+
+**V6m2改进**: 独立的理化特征预处理网络
+```python
+# PhysChem MLP Encoder
+protein_scalar (35D) -> MLP(35->64->64) -> protein_scalar_encoded (64D)
+
+# 收益
+- 将低维硬指标映射到高维潜在语义空间
+- 增加理化特征在融合时的权重和表达能力
+- 提前捕捉非线性交互模式
+```
+
+### 架构改进
+
+**新增模块**: PhysChem MLP Encoder
+```python
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(35, 64),
+    nn.ReLU(),
+    nn.Linear(64, 64),
+    nn.ReLU()
+)
+```
+
+**使用位置**:
+1. **Early Injection**: `h_geo = [h_s_gvp, v_inv, protein_scalar_encoded]`
+   - 原始: 256 + 136 + 35 = 427
+   - V6m2: 256 + 136 + 64 = 456
+2. **Late Injection**: `x_final = [h_prot_fused, protein_scalar_encoded]`
+   - 原始: 512 + 35 = 547
+   - V6m2: 512 + 64 = 576
+
+### 文件结构
+```
+src/models/
+  └── pocket_gvp_fusion_v6m2.py     # V6m2主模型
+
+scripts/
+  └── train_v6m2.py                 # V6m2训练脚本
+
+configs/
+  └── pocket_gvp_v6.yaml            # 复用V6配置（无需修改）
+```
+
+### 使用方法
+```bash
+# 训练（复用V6配置）
+python scripts/train_v6m2.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m2.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+```
+
+### 关键改进
+1. **理化特征增强**: 35D -> 64D，提升表达能力
+2. **非线性交互**: 提前捕捉理化指标间的复杂关系
+3. **最小改动**: 仅新增PhysChem encoder，其他架构保持不变
+4. **配置兼容**: 复用V6配置文件，无需额外配置
+
+### 配置变化
+```yaml
+# 无需修改配置文件
+# 模型自动使用 d_phys_encoded=64 (在DEFAULT_CONFIG中定义)
+```
+
+### 预期性能提升
+- **更强的特征表示**: 理化特征从35D扩展到64D
+- **更好的非线性建模**: 提前捕捉复杂交互模式
+- **更高的融合效率**: 高维语义空间更易于后续融合
+
+### 兼容性说明
+- **与V6的区别**: 仅新增PhysChem encoder，其他完全相同
+- **配置兼容**: 可直接使用V6的配置文件
+- **Checkpoint不兼容**: 由于维度变化，无法直接加载V6的checkpoint
+
+---
+
+## V6 - 2026-02-10
 
 ### 主要特性
 - ✅ **双向交叉注意力** (Bidirectional Co-Attention)
