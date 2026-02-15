@@ -836,7 +836,7 @@ def main():
 
     # Wrap with DDP
     if world_size > 1:
-        model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
         print_rank0("Model wrapped with DistributedDataParallel")
 
     # Optimizer

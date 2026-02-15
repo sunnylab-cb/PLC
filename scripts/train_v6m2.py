@@ -392,7 +392,7 @@ def train_epoch(
     epoch: int,
     writer: Optional[SummaryWriter],
     log_every: int = 10,
-    scaler: Optional[torch.amp.GradScaler] = None,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None,
     use_amp: bool = False,
     accumulation_steps: int = 1
 ) -> Dict[str, float]:
@@ -718,7 +718,7 @@ def main():
     use_amp = args.amp or config['training'].get('use_amp', False)
     if use_amp:
         print_rank0("Using Automatic Mixed Precision (AMP)")
-        scaler = torch.amp.GradScaler('cuda')
+        scaler = torch.cuda.amp.GradScaler()
     else:
         scaler = None
 
@@ -858,7 +858,7 @@ def main():
 
     # Wrap with DDP
     if world_size > 1:
-        model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
         print_rank0("Model wrapped with DistributedDataParallel")
 
     # Optimizer

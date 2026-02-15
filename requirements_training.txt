@@ -1,0 +1,25 @@
+# Pocket-GVP-Fusion Training Dependencies (Minimal)
+# ===================================================
+# 仅包含训练时必需的核心依赖项
+
+# Core deep learning framework
+torch>=2.0.0
+torch-geometric>=2.3.0
+
+# Data processing
+numpy>=1.24.0
+pyyaml>=6.0
+
+# Protein language model
+fair-esm>=2.0.0
+
+# Logging and monitoring
+tensorboard>=2.12.0
+
+# Optional but recommended
+tqdm>=4.65.0  # Progress bars
+
+# Note:
+# - ESM-2 模型权重会自动下载
+# - 分布式训练功能已包含在 PyTorch 中
+# - CUDA/ROCm 支持取决于你的 PyTorch 安装版本

@@ -9,3 +9,5 @@ __pycache__
 *.pt
 outputs/
 logs/
+*.tar
+*.tar.gz
