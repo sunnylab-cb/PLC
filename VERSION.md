@@ -73,7 +73,171 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 ---
 ```
 
-## V6m4 (当前版本) - 2026-02-14
+## V6m6 (当前版本) - 2026-02-15
+
+### 主要特性
+- ✅ **3D Ligand GVP Encoder**: 使用真实 3D 坐标编码配体空间信息
+- ✅ **移除 Distance-Aware Attention**: 避免数据泄漏风险（标签基于距离定义）
+- ✅ **PhysChem Modality Dropout**: 独立的 PhysChem 特征 dropout，避免过度依赖单一模态
+- ✅ **GELU 激活函数** (继承自V6m5)
+- ✅ **PhysChem Encoder 添加 LayerNorm** (继承自V6m4)
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder** (继承自V6m2)
+
+### 关键改进/变化
+
+#### 1. 3D Ligand GVP Encoder
+**动机**: 2D 配体编码器（GINEConv）无法捕捉配体的 3D 空间构象信息，而配体的 3D 结构对结合至关重要。
+
+**实现**:
+- 使用 GVP (Geometric Vector Perceptrons) 处理配体 3D 坐标
+- 基于空间距离构建边（radius=5.0Å, max_neighbors=32）
+- 同时处理标量特征（80D）和向量特征（3D 坐标）
+- 输出编码后的标量特征 + 更新后的坐标
+
+**坐标选择**: 使用 `coords`（全部原子，含氢），与 VDW 距离计算一致。
+
+#### 2. 移除 Distance-Aware Attention
+**动机**: 数据泄漏风险分析发现两个严重问题：
+- **风险 1**: 坐标被使用两次（3D Ligand Encoder + Distance-Aware Attention），信息冗余
+- **风险 2**: 标签直接基于距离阈值定义（Contact < 3.5Å, Near < 6Å），Distance-Aware Attention 直接暴露距离信息，模型可能学习简单的距离映射而非真正的结合模式
+
+**解决方案**: 移除 Distance-Aware Attention，仅使用标准的 Bidirectional Cross-Attention，让模型从 3D Ligand Encoder 编码的特征中学习空间信息。
+
+#### 3. PhysChem Modality Dropout
+**动机**: 避免模型过度依赖 PhysChem 特征，提高泛化能力。
+
+**实现**:
+```python
+if self.training and physchem_dropout_prob > 0:
+    physchem_dropout_mask = torch.rand(B, 1, 1, device=device) > physchem_dropout_prob
+    protein_scalar_encoded = protein_scalar_encoded * physchem_dropout_mask.float()
+```
+
+**配置**: `physchem_dropout_prob: 0.3`（与 ESM dropout 独立）
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v6.yaml` (添加 `physchem_dropout_prob`)
+- 代码：
+  - `src/models/ligand_encoder_3d.py` (新增 3D Ligand GVP Encoder)
+  - `src/models/pocket_gvp_fusion_v6m6.py` (主模型)
+  - `src/data/collate.py` (添加 `ligand_pos` 收集和传递)
+- 脚本：`scripts/train_v6m6.py`
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v6.yaml (添加 physchem_dropout_prob)
+src/
+  ├── models/
+  │   ├── ligand_encoder_3d.py (NEW: 3D Ligand GVP Encoder)
+  │   └── pocket_gvp_fusion_v6m6.py (主模型)
+  └── data/
+      └── collate.py (添加 ligand_pos 支持)
+scripts/
+  └── train_v6m6.py
+```
+
+### 配置变化
+```yaml
+model:
+  esm_dropout_prob: 0.5
+  physchem_dropout_prob: 0.3  # NEW in V6m6
+  d_ligand_atom: 80  # 支持 V3 配体特征 (35D V2 + 45D global)
+```
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m6.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m5 checkpoint 不兼容**: 配体编码器从 2D (LigandEncoder) 改为 3D (Ligand3DEncoder)
+- **需要重新生成**: 无（使用相同的 V3 配体特征，包含 `coords` 字段）
+- **数据要求**: 需要 V3 配体特征（包含 `ligand_coords` 字段）
+
+### 架构对比
+
+| 模块 | V6m5 | V6m6 |
+|---|---|---|
+| PhysChem Encoder | GELU + LayerNorm | GELU + LayerNorm |
+| PhysChem Dropout | ❌ | ✅ (0.3) |
+| ESM Dropout | ✅ (0.5) | ✅ (0.5) |
+| Ligand Encoder | 2D GINEConv | **3D GVP** |
+| Cross-Attention | Standard | Standard |
+| Distance-Aware Attention | ❌ | ❌ |
+
+### 数据泄漏风险分析
+
+#### 已解决的泄漏风险
+- ✅ **Distance-Aware Attention**: 已移除，避免直接暴露距离信息
+
+#### 剩余的轻微风险
+- ⚠️ **3D Ligand Encoder 中的距离使用**: 用于构建图结构（radius=5.0Å），但这是标准的 3D GNN 做法，风险较小，因为：
+  1. 距离仅用于确定邻居关系（二值化：连接/不连接）
+  2. GVP 处理的是相对几何（边向量），不是绝对距离
+  3. 这是 SchNet、DimeNet 等标准 3D 模型的通用做法
+
+### 已知问题
+- 无
+
+---
+
+## V6m5 - 2026-02-15
+
+### 主要特性
+- ✅ **GELU 激活函数**: 替代 ReLU，减少信息丢失
+- ✅ **PhysChem Encoder 添加 LayerNorm** (继承自V6m4)
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder** (继承自V6m2)
+
+### 关键改进/变化
+
+#### 1. GELU 激活函数
+**动机**: ReLU 会将所有负值置零，可能导致信息丢失。GELU 提供更平滑的梯度，保留更多信息。
+
+**实现**:
+```python
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(c['d_phys'], 64),
+    nn.LayerNorm(64),
+    nn.GELU(),  # V6m5: Changed from ReLU to GELU
+    nn.Linear(64, c['d_phys_encoded']),
+    nn.LayerNorm(c['d_phys_encoded']),
+    nn.GELU()   # V6m5: Changed from ReLU to GELU
+)
+```
+
+### 影响范围（改了哪些东西）
+- 代码：`src/models/pocket_gvp_fusion_v6m5.py`
+- 脚本：`scripts/train_v6m5.py`
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m5.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m5.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m4 checkpoint 不兼容**: 激活函数从 ReLU 改为 GELU
+- **需要重新训练**: 是
+
+---
+
+## V6m4 - 2026-02-14
 
 ### 主要特性
 - ✅ **PhysChem Encoder 添加 LayerNorm**: 修复特征尺度不匹配问题
@@ -890,24 +1054,30 @@ scripts/
 
 ## 版本对比
 
-| 特性 | V1 | V2 | V3 | V4 | V5 | V6 |
-|------|----|----|----|----|-----|-----|
-| **配体特征维度** | 64 | 64 | 35 | 80 | 80 | 80 |
-| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 | ESM-2 |
-| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 | 1280 |
-| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D |
-| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW自适应 | VDW自适应 |
-| **使用原子** | Cα | Cα | Cα | Cα | 所有原子 | 所有原子 |
-| **交叉注意力** | 单向 | 单向 | 单向 | 单向 | 单向 | **双向** |
-| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ |
-| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 特性 | V1 | V2 | V3 | V4 | V5 | V6 | V6m2 | V6m3 | V6m4 | V6m5 | V6m6 |
+|------|----|----|----|----|-----|-----|------|------|------|------|------|
+| **配体特征维度** | 64 | 64 | 35 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 |
+| **配体编码器** | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | **3D GVP** |
+| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 |
+| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 |
+| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D |
+| **PhysChem Encoder** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **MLP** | MLP | **MLP+LN** | **MLP+LN+GELU** | MLP+LN+GELU |
+| **PhysChem Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓** |
+| **ESM Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **损失函数** | Focal | Focal | Focal | Focal | Focal | Focal | Focal | **Dice+Focal** | Dice+Focal | Dice+Focal | Dice+Focal |
+| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW | VDW | VDW | VDW | VDW | VDW | VDW |
+| **使用原子** | Cα | Cα | Cα | Cα | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 |
+| **交叉注意力** | 单向 | 单向 | 单向 | 单向 | 单向 | **双向** | 双向 | 双向 | 双向 | 双向 | 双向 |
+| **Distance-Aware Attn** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
@@ -1022,6 +1192,61 @@ torchrun --nproc_per_node=2 scripts/train_v6.py \
     --config configs/pocket_gvp_v6.yaml --compile --amp
 ```
 
+### V6m2
+```bash
+# 单GPU + AMP
+python scripts/train_v6m2.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m2.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m3
+```bash
+# 单GPU + AMP
+python scripts/train_v6m3.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m3.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m4
+```bash
+# 单GPU + AMP
+python scripts/train_v6m4.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m4.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m5
+```bash
+# 单GPU + AMP
+python scripts/train_v6m5.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m5.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m6 (当前推荐)
+```bash
+# 单GPU + AMP
+python scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
 ---
 
 ## 性能预期
@@ -1093,6 +1318,47 @@ python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
 
 ## 更新日志
 
+### 2026-02-15 (V6m6)
+- ✅ 创建 V6m6 版本
+- ✅ 实现 3D Ligand GVP Encoder（使用真实 3D 坐标）
+- ✅ 移除 Distance-Aware Attention（避免数据泄漏风险）
+- ✅ 添加 PhysChem Modality Dropout（独立于 ESM dropout）
+- ✅ 创建 `src/models/ligand_encoder_3d.py`
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m6.py`
+- ✅ 修改 `src/data/collate.py` 支持 `ligand_pos`
+- ✅ 创建 `scripts/train_v6m6.py`
+- ✅ 更新 `configs/pocket_gvp_v6.yaml` 添加 `physchem_dropout_prob`
+- ✅ 数据泄漏风险分析和解决方案文档化
+
+### 2026-02-15 (V6m5)
+- ✅ 创建 V6m5 版本
+- ✅ 将 PhysChem Encoder 激活函数从 ReLU 改为 GELU
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m5.py`
+- ✅ 创建 `scripts/train_v6m5.py`
+- ✅ 保持其他架构与 V6m4 一致
+
+### 2026-02-14 (V6m4)
+- ✅ 创建 V6m4 版本
+- ✅ 在 PhysChem Encoder 中添加 LayerNorm
+- ✅ 修复特征尺度不匹配问题
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m4.py`
+- ✅ 创建 `scripts/train_v6m4.py`
+- ✅ 更新 VERSION.md 添加详细的痛点分析
+
+### 2026-02-13 (V6m3)
+- ✅ 创建 V6m3 版本
+- ✅ 实现 Dice Loss + Focal Loss 组合损失函数
+- ✅ 创建 `scripts/train_v6m3.py`
+- ✅ 添加损失权重配置（dice_weight, focal_weight）
+- ✅ 更新 TensorBoard 日志记录损失分量
+
+### 2026-02-11 (V6m2)
+- ✅ 创建 V6m2 版本
+- ✅ 实现 PhysChem MLP Encoder（35D -> 64D）
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m2.py`
+- ✅ 创建 `scripts/train_v6m2.py`
+- ✅ 捕捉理化特征的非线性交互
+
 ### 2026-02-10 (V6)
 - ✅ 创建V6版本
 - ✅ 实现双向交叉注意力机制 (BidirectionalCrossAttentionBlock)
@@ -1135,5 +1401,6 @@ python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
 
 ---
 
-**当前推荐版本**: V6 (双向交叉注意力 + VDW自适应距离阈值)
-**稳定版本**: V5 (VDW自适应距离阈值)
+**当前推荐版本**: V6m6 (3D Ligand Encoder, 无数据泄漏风险)
+**稳定版本**: V6m4 (PhysChem Encoder + LayerNorm)
+**实验版本**: V6m5 (GELU 激活函数)

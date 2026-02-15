@@ -134,25 +134,27 @@ def build_ligand_graphs(batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tenso
     
     # Collect all atoms across batch
     all_nodes = []
+    all_coords = []  # V6m6: Collect 3D coordinates
     all_edges_src = []
     all_edges_dst = []
     all_edge_attrs = []
     all_batch = []
-    
+
     node_offset = 0
-    
+
     for b in range(B):
         mask_b = ligand_mask[b]  # [M]
         n_atoms = mask_b.sum().item()
-        
+
         if n_atoms == 0:
             continue
-        
+
         # Get valid atoms
         nodes = ligand_features[b, mask_b]  # [n_atoms, 64]
         coords = ligand_coords[b, mask_b]   # [n_atoms, 3]
-        
+
         all_nodes.append(nodes)
+        all_coords.append(coords)  # V6m6: Store coordinates
         all_batch.extend([b] * n_atoms)
         
         # Build edges based on distance (< 2Å suggests bond)
@@ -180,24 +182,27 @@ def build_ligand_graphs(batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tenso
     # Stack into tensors
     if len(all_nodes) > 0:
         ligand_x = torch.cat(all_nodes, dim=0)  # [N_total, 64]
+        ligand_pos = torch.cat(all_coords, dim=0)  # [N_total, 3] - V6m6
         ligand_batch_idx = torch.tensor(all_batch, dtype=torch.long)
     else:
         ligand_x = torch.zeros(1, 64)
+        ligand_pos = torch.zeros(1, 3)  # V6m6
         ligand_batch_idx = torch.zeros(1, dtype=torch.long)
-    
+
     if len(all_edges_src) > 0:
         edge_index = torch.tensor([all_edges_src, all_edges_dst], dtype=torch.long)
         edge_attr = torch.tensor(all_edge_attrs, dtype=torch.float32)
     else:
         edge_index = torch.zeros(2, 0, dtype=torch.long)
         edge_attr = torch.zeros(0, 6, dtype=torch.float32)
-    
+
     # Add to batch
     batch['ligand_x'] = ligand_x
+    batch['ligand_pos'] = ligand_pos  # V6m6: Add 3D coordinates
     batch['ligand_edge_index'] = edge_index
     batch['ligand_edge_attr'] = edge_attr
     batch['ligand_batch'] = ligand_batch_idx
-    
+
     return batch
 
 
@@ -228,13 +233,14 @@ def prepare_model_inputs(
         'protein_coords': batch['protein_coords'].to(device),
         'protein_mask': batch['protein_mask'].to(device),
         'ligand_x': batch['ligand_x'].to(device),
+        'ligand_pos': batch['ligand_pos'].to(device),  # V6m6: 3D coordinates
         'ligand_edge_index': batch['ligand_edge_index'].to(device),
         'ligand_edge_attr': batch['ligand_edge_attr'].to(device),
         'ligand_batch': batch['ligand_batch'].to(device),
         'ligand_to_protein': batch['ligand_features'].to(device),  # Padded version for cross-attn
         'ligand_mask': batch['ligand_mask'].to(device),
     }
-    
+
     return model_inputs
 
 
