@@ -73,7 +73,97 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 ---
 ```
 
-## V6m6 (当前版本) - 2026-02-15
+## V6m7 (当前版本) - 2026-02-16
+
+### 主要特性
+- ✅ **Label Smoothing (0.1)**: 防止过拟合，提高泛化能力
+- ✅ **3D Ligand GVP Encoder**: 使用真实 3D 坐标编码配体空间信息 (继承自V6m6)
+- ✅ **移除 Distance-Aware Attention**: 避免数据泄漏风险 (继承自V6m6)
+- ✅ **PhysChem Modality Dropout**: 独立的 PhysChem 特征 dropout (继承自V6m6)
+- ✅ **GELU 激活函数** (继承自V6m5)
+- ✅ **PhysChem Encoder 添加 LayerNorm** (继承自V6m4)
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder** (继承自V6m2)
+
+### 关键改进/变化
+
+#### 1. Label Smoothing
+**动机**: 防止模型对训练标签过度自信，提高泛化能力，特别适合类别不平衡的数据集。
+
+**实现**:
+```python
+# 在 compute_focal_loss() 中
+ce_loss = F.cross_entropy(
+    logits_flat, labels_flat,
+    reduction='none',
+    label_smoothing=0.1  # V6m7: PyTorch 内置支持
+)
+```
+
+**效果**:
+- 将硬标签 `[0, 1, 0]` 平滑为 `[0.05, 0.9, 0.05]`
+- 防止模型对单一类别过度自信
+- 提高对噪声标签的鲁棒性
+
+**参数选择**: `label_smoothing=0.1`（推荐值，适合 3 类分类）
+
+### 影响范围（改了哪些东西）
+- 脚本：`scripts/train_v6m7.py`（仅修改训练脚本）
+- 配置：使用相同的 `configs/pocket_gvp_v6.yaml`
+- 模型：使用相同的 `PocketGVPFusionV6m6`
+
+### 文件结构
+```
+scripts/
+  └── train_v6m7.py (NEW: 添加 label smoothing)
+```
+
+### 配置变化
+无配置文件变化，label smoothing 硬编码在训练脚本中 (0.1)。
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m7.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m6 checkpoint 完全兼容**: 仅训练过程不同，模型架构相同
+- **无需重新生成数据**: 使用相同的 V3 配体特征
+- **可直接加载 V6m6 checkpoint 继续训练**
+
+### 架构对比
+
+| 模块 | V6m6 | V6m7 |
+|---|---|---|
+| Label Smoothing | ❌ | **✅ (0.1)** |
+| PhysChem Encoder | GELU + LayerNorm | GELU + LayerNorm |
+| PhysChem Dropout | ✅ (0.3) | ✅ (0.3) |
+| ESM Dropout | ✅ (0.5) | ✅ (0.5) |
+| Ligand Encoder | 3D GVP | 3D GVP |
+| Cross-Attention | Standard | Standard |
+| 损失函数 | Dice + Focal | Dice + Focal |
+
+### 预期效果
+- ✅ 提高验证集性能（减少过拟合）
+- ✅ 提高对噪声标签的鲁棒性
+- ✅ 更平滑的训练曲线
+- ⚠️ 训练损失可能略高（正常现象）
+
+### 已知问题
+- 无
+
+---
+
+## V6m6 - 2026-02-15
 
 ### 主要特性
 - ✅ **3D Ligand GVP Encoder**: 使用真实 3D 坐标编码配体空间信息
@@ -1054,30 +1144,31 @@ scripts/
 
 ## 版本对比
 
-| 特性 | V1 | V2 | V3 | V4 | V5 | V6 | V6m2 | V6m3 | V6m4 | V6m5 | V6m6 |
-|------|----|----|----|----|-----|-----|------|------|------|------|------|
-| **配体特征维度** | 64 | 64 | 35 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 |
-| **配体编码器** | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | **3D GVP** |
-| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 |
-| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 |
-| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D |
-| **PhysChem Encoder** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **MLP** | MLP | **MLP+LN** | **MLP+LN+GELU** | MLP+LN+GELU |
-| **PhysChem Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓** |
-| **ESM Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| **损失函数** | Focal | Focal | Focal | Focal | Focal | Focal | Focal | **Dice+Focal** | Dice+Focal | Dice+Focal | Dice+Focal |
-| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW | VDW | VDW | VDW | VDW | VDW | VDW |
-| **使用原子** | Cα | Cα | Cα | Cα | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 |
-| **交叉注意力** | 单向 | 单向 | 单向 | 单向 | 单向 | **双向** | 双向 | 双向 | 双向 | 双向 | 双向 |
-| **Distance-Aware Attn** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 特性 | V1 | V2 | V3 | V4 | V5 | V6 | V6m2 | V6m3 | V6m4 | V6m5 | V6m6 | V6m7 |
+|------|----|----|----|----|-----|-----|------|------|------|------|------|------|
+| **配体特征维度** | 64 | 64 | 35 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 |
+| **配体编码器** | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | **3D GVP** | 3D GVP |
+| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 |
+| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 |
+| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D |
+| **PhysChem Encoder** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **MLP** | MLP | **MLP+LN** | **MLP+LN+GELU** | MLP+LN+GELU | MLP+LN+GELU |
+| **PhysChem Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓** | ✓ |
+| **ESM Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| **Label Smoothing** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓ (0.1)** |
+| **损失函数** | Focal | Focal | Focal | Focal | Focal | Focal | Focal | **Dice+Focal** | Dice+Focal | Dice+Focal | Dice+Focal | Dice+Focal |
+| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW | VDW | VDW | VDW | VDW | VDW | VDW | VDW |
+| **使用原子** | Cα | Cα | Cα | Cα | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 |
+| **交叉注意力** | 单向 | 单向 | 单向 | 单向 | 单向 | **双向** | 双向 | 双向 | 双向 | 双向 | 双向 | 双向 |
+| **Distance-Aware Attn** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
@@ -1236,7 +1327,7 @@ torchrun --nproc_per_node=2 scripts/train_v6m5.py \
     --config configs/pocket_gvp_v6.yaml --compile --amp
 ```
 
-### V6m6 (当前推荐)
+### V6m6
 ```bash
 # 单GPU + AMP
 python scripts/train_v6m6.py \
@@ -1244,6 +1335,17 @@ python scripts/train_v6m6.py \
 
 # 双GPU + torch.compile
 torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m7 (当前推荐)
+```bash
+# 单GPU + AMP
+python scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m7.py \
     --config configs/pocket_gvp_v6.yaml --compile --amp
 ```
 
@@ -1317,6 +1419,14 @@ python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
 ---
 
 ## 更新日志
+
+### 2026-02-16 (V6m7)
+- ✅ 创建 V6m7 版本
+- ✅ 添加 Label Smoothing (0.1) 到 Focal Loss
+- ✅ 使用 PyTorch 内置 `F.cross_entropy(..., label_smoothing=0.1)`
+- ✅ 创建 `scripts/train_v6m7.py`
+- ✅ 防止过拟合，提高泛化能力
+- ✅ 与 V6m6 checkpoint 完全兼容
 
 ### 2026-02-15 (V6m6)
 - ✅ 创建 V6m6 版本
@@ -1401,6 +1511,6 @@ python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
 
 ---
 
-**当前推荐版本**: V6m6 (3D Ligand Encoder, 无数据泄漏风险)
-**稳定版本**: V6m4 (PhysChem Encoder + LayerNorm)
+**当前推荐版本**: V6m7 (Label Smoothing, 提高泛化能力)
+**稳定版本**: V6m6 (3D Ligand Encoder, 无数据泄漏风险)
 **实验版本**: V6m5 (GELU 激活函数)
