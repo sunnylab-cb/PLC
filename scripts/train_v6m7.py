@@ -161,9 +161,9 @@ def setup_experiment(config: Dict, rank: int, resume_path: str = None) -> Path:
 
     # Create new experiment directory
     exp_name = config['experiment']['name']
-    # V6m6: Add v6m6 suffix to distinguish from v6/v6m2/v6m3/v6m4
-    if not exp_name.endswith('_v6m6'):
-        exp_name = exp_name.replace('_v6m4', '_v6m6') if '_v6m4' in exp_name else (exp_name.replace('_v6m3', '_v6m6') if '_v6m3' in exp_name else (exp_name.replace('_v6m2', '_v6m6') if '_v6m2' in exp_name else (exp_name.replace('_v6', '_v6m6') if '_v6' in exp_name else f"{exp_name}_v6m6")))
+    # V6m7: Add v6m7 suffix to distinguish from previous versions
+    if not exp_name.endswith('_v6m7'):
+        exp_name = exp_name.replace('_v6m6', '_v6m7') if '_v6m6' in exp_name else (exp_name.replace('_v6m5', '_v6m7') if '_v6m5' in exp_name else (exp_name.replace('_v6m4', '_v6m7') if '_v6m4' in exp_name else (exp_name.replace('_v6m3', '_v6m7') if '_v6m3' in exp_name else (exp_name.replace('_v6m2', '_v6m7') if '_v6m2' in exp_name else (exp_name.replace('_v6', '_v6m7') if '_v6' in exp_name else f"{exp_name}_v6m7")))))
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     exp_dir = Path(config['experiment']['output_dir']) / f"{exp_name}_{timestamp}"
     exp_dir.mkdir(parents=True, exist_ok=True)

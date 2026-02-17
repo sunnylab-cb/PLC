@@ -13,7 +13,7 @@ data:
   ligand_features_dir: "ligand_features_v3"  # V6: 80-dim features (35D V2 + 45D global)
   distances_file: "data/residue_ligand_distances_vdw.pt"  # ✅ V6: VDW-based distance labels
   distances_file_original: "data/residue_ligand_distances_poc_style.pt"  # Original fixed-threshold labels for comparison
-  split_file: null                  # Path to split file (if null, creates random split)
+  split_file: "configs/spilts/filtered_splits.txt"  # Path to split file (filtered to exclude benchmark datasets)
   train_ratio: 0.8
   val_ratio: 0.1
   test_ratio: 0.1
