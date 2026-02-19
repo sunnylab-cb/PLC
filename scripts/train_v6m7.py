@@ -892,7 +892,13 @@ def main():
         split_file = exp_dir / "splits.txt" if exp_dir else Path("splits.txt")
 
         if data_cfg.get('split_file') and Path(data_cfg['split_file']).exists():
-            train_ids, val_ids, test_ids = load_splits(data_cfg['split_file'])
+            # Load from specified split file
+            source_split_file = data_cfg['split_file']
+            print_rank0(f"Loading splits from: {source_split_file}")
+            train_ids, val_ids, test_ids = load_splits(source_split_file)
+            # Always save a copy to experiment directory for verification
+            save_splits(train_ids, val_ids, test_ids, split_file)
+            print_rank0(f"Saved splits copy to: {split_file}")
         else:
             # V5: Pass ligand_features_dir to split function
             ligand_features_dir = data_cfg.get('ligand_features_dir', 'ligand_features_v3')
@@ -905,6 +911,7 @@ def main():
                 ligand_features_dir=ligand_features_dir
             )
             save_splits(train_ids, val_ids, test_ids, split_file)
+            print_rank0(f"Created and saved new splits to: {split_file}")
 
         print_rank0(f"Train: {len(train_ids)}, Val: {len(val_ids)}, Test: {len(test_ids)}")
     else:

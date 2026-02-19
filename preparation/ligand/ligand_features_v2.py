@@ -178,12 +178,12 @@ def compute_tpsa_contributions(mol: Chem.Mol) -> np.ndarray:
 # ============================================================================
 # 构象柔性分析
 # ============================================================================
-
 def generate_conformer_ensemble(
     mol: Chem.Mol,
     num_confs: int = 50,
     max_attempts: int = 1000,
-    prune_rms_thresh: float = 0.5
+    prune_rms_thresh: float = 0.5,
+    strict: bool = True,
 ) -> Chem.Mol:
     """
     生成构象系综
@@ -193,49 +193,65 @@ def generate_conformer_ensemble(
     if not RDKIT_AVAILABLE:
         return mol
 
-    # 添加氢原子
-    mol = Chem.AddHs(mol)
+    work_mol = Chem.Mol(mol)
+    has_explicit_h = any(atom.GetAtomicNum() == 1 for atom in work_mol.GetAtoms())
+    if not has_explicit_h:
+        work_mol = Chem.AddHs(work_mol)
 
-    # 生成构象 (使用关键字参数以兼容不同RDKit版本)
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 42
+    params.pruneRmsThresh = prune_rms_thresh
+    params.numThreads = 0
+
     try:
-        # 新版本RDKit (2023+)
-        params = AllChem.ETKDGv3()
-        params.randomSeed = 42
-        params.pruneRmsThresh = prune_rms_thresh
-        params.numThreads = 0  # 使用所有CPU核心
-
         conf_ids = AllChem.EmbedMultipleConfs(
-            mol,
+            work_mol,
             numConfs=num_confs,
             params=params
         )
     except TypeError:
-        # 旧版本RDKit或参数不兼容，使用直接参数
         conf_ids = AllChem.EmbedMultipleConfs(
-            mol,
+            work_mol,
             numConfs=num_confs,
             randomSeed=42,
             pruneRmsThresh=prune_rms_thresh,
             numThreads=0,
             maxAttempts=max_attempts
         )
+    except Exception as e:
+        if strict:
+            raise
+        warnings.warn(f"Conformer embedding failed in loose mode: {e}")
+        if work_mol.GetNumConformers() > 0:
+            return work_mol
+        AllChem.Compute2DCoords(work_mol)
+        return work_mol
 
     if len(conf_ids) == 0:
-        warnings.warn("Failed to generate conformers, using 2D coordinates")
-        AllChem.Compute2DCoords(mol)
-        return mol
+        if strict:
+            raise ValueError("Failed to generate conformers")
+        warnings.warn("No conformers generated in loose mode, fallback to existing coordinates")
+        if work_mol.GetNumConformers() > 0:
+            return work_mol
+        AllChem.Compute2DCoords(work_mol)
+        return work_mol
 
-    # MMFF94力场优化
-    results = AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=0)
+    try:
+        results = AllChem.MMFFOptimizeMoleculeConfs(work_mol, numThreads=0)
+    except Exception as e:
+        if strict:
+            raise
+        warnings.warn(f"MMFF optimization failed in loose mode: {e}")
+        return work_mol
 
-    # 过滤失败的优化
     valid_conf_ids = [conf_ids[i] for i, (converged, energy) in enumerate(results) if converged == 0]
-
     if len(valid_conf_ids) == 0:
-        warnings.warn("All conformer optimizations failed")
-        return mol
+        if strict:
+            raise ValueError("All conformer optimizations failed")
+        warnings.warn("All conformer optimizations failed in loose mode, keep embedded conformers")
+        return work_mol
 
-    return mol
+    return work_mol
 
 
 def compute_conformer_flexibility(
@@ -301,7 +317,8 @@ def extract_ligand_atom_features(
     mol: Chem.Mol,
     include_conformers: bool = True,
     num_conformers: int = 50,
-    use_existing_coords: bool = True
+    use_existing_coords: bool = True,
+    strict: bool = True,
 ) -> Dict[str, np.ndarray]:
     """
     提取完整的配体原子特征 (V2 - 修复版)
@@ -393,10 +410,15 @@ def extract_ligand_atom_features(
 
     if include_conformers and has_3d_coords:
         # 创建深拷贝用于柔性分析（不影响原始分子）
-        from io import BytesIO
         mol_copy = Chem.Mol(mol.ToBinary())  # 深拷贝
-        mol_copy = generate_conformer_ensemble(mol_copy, num_confs=num_conformers)
+        mol_copy = generate_conformer_ensemble(mol_copy, num_confs=num_conformers, strict=strict)
         rmsf, flexibility_flag = compute_conformer_flexibility(mol_copy)
+        num_generated_confs = mol_copy.GetNumConformers()
+
+        if num_generated_confs < 2:
+            if strict:
+                raise ValueError(f"Insufficient conformers generated: {num_generated_confs}")
+            print(f"  ⚠️  柔性分析降级: 仅{num_generated_confs}个构象")
 
         # 只保留重原子的柔性信息
         heavy_atom_indices = [atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1]
@@ -405,17 +427,22 @@ def extract_ligand_atom_features(
                 rmsf_full[idx] = rmsf[i]
                 flexibility_flag_full[idx] = flexibility_flag[i]
 
-        print(f"  ✅ 柔性分析完成: {num_conformers}个构象")
+        print(f"  ✅ 柔性分析完成: {num_generated_confs}个构象")
         del mol_copy  # 释放内存
     elif not has_3d_coords:
         # 没有原始坐标，生成新的
         if include_conformers:
-            mol = generate_conformer_ensemble(mol, num_confs=num_conformers)
+            mol = generate_conformer_ensemble(mol, num_confs=num_conformers, strict=strict)
         else:
             AllChem.EmbedMolecule(mol, randomSeed=42)
             AllChem.MMFFOptimizeMolecule(mol)
 
         print(f"  ⚠️  生成新坐标: 无原始实验坐标")
+
+    if mol.GetNumConformers() == 0:
+        if strict:
+            raise ValueError("No conformer available")
+        AllChem.Compute2DCoords(mol)
 
     # ========================================================================
     # 步骤5: 提取原子特征
@@ -514,7 +541,8 @@ def extract_ligand_atom_features(
 def extract_ligand_features_from_file(
     ligand_file: str,
     include_conformers: bool = True,
-    num_conformers: int = 50
+    num_conformers: int = 50,
+    strict: bool = True,
 ) -> Dict[str, np.ndarray]:
     """
     从文件提取配体特征
@@ -524,57 +552,30 @@ def extract_ligand_features_from_file(
     if not RDKIT_AVAILABLE:
         raise ImportError("RDKit is required")
 
-    # 读取分子 - 使用多种fallback方法
-    mol = None
-
+    # 读取分子 - 仅使用非严格价态加载，不做其他fallback
     if ligand_file.endswith('.sdf'):
-        # 尝试标准加载
-        suppl = Chem.SDMolSupplier(ligand_file, removeHs=False)
+        suppl = Chem.SDMolSupplier(ligand_file, sanitize=False, removeHs=False)
         mol = next(suppl, None)
-
-        # Fallback 1: 禁用sanitize（处理特殊原子如硼）
-        if mol is None:
-            suppl = Chem.SDMolSupplier(ligand_file, sanitize=False, removeHs=False)
-            mol = next(suppl, None)
-            if mol is not None:
-                print(f"  ⚠️  使用sanitize=False加载SDF")
-
-        # Fallback 2: 尝试mol2文件
-        if mol is None:
-            mol2_file = ligand_file.replace('.sdf', '.mol2')
-            try:
-                mol = Chem.MolFromMol2File(mol2_file, removeHs=False)
-                if mol is not None:
-                    print(f"  ⚠️  SDF加载失败，使用mol2文件")
-            except:
-                pass
-
     elif ligand_file.endswith('.mol2'):
-        mol = Chem.MolFromMol2File(ligand_file, removeHs=False)
-
+        mol = Chem.MolFromMol2File(ligand_file, sanitize=False, removeHs=False)
     elif ligand_file.endswith('.pdb'):
-        mol = Chem.MolFromPDBFile(ligand_file, removeHs=False)
-
+        mol = Chem.MolFromPDBFile(ligand_file, sanitize=False, removeHs=False)
     elif ligand_file.endswith('.mol'):
-        mol = Chem.MolFromMolFile(ligand_file, removeHs=False)
-        # Fallback: 禁用sanitize
-        if mol is None:
-            mol = Chem.MolFromMolFile(ligand_file, sanitize=False, removeHs=False)
-            if mol is not None:
-                print(f"  ⚠️  使用sanitize=False加载MOL")
+        mol = Chem.MolFromMolFile(ligand_file, sanitize=False, removeHs=False)
     else:
         raise ValueError(f"Unsupported file format: {ligand_file}")
 
     if mol is None:
         raise ValueError(f"Failed to read molecule from {ligand_file}")
 
-    return extract_ligand_atom_features(mol, include_conformers, num_conformers)
+    return extract_ligand_atom_features(mol, include_conformers, num_conformers, strict=strict)
 
 
 def extract_ligand_features_from_smiles(
     smiles: str,
     include_conformers: bool = True,
-    num_conformers: int = 50
+    num_conformers: int = 50,
+    strict: bool = True,
 ) -> Dict[str, np.ndarray]:
     """
     从SMILES字符串提取配体特征
@@ -586,7 +587,7 @@ def extract_ligand_features_from_smiles(
     if mol is None:
         raise ValueError(f"Invalid SMILES: {smiles}")
 
-    return extract_ligand_atom_features(mol, include_conformers, num_conformers)
+    return extract_ligand_atom_features(mol, include_conformers, num_conformers, strict=strict)
 
 
 # ============================================================================

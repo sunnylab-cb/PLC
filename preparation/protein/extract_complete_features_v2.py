@@ -248,7 +248,7 @@ def process_single_protein(
     try:
         # 构建输出路径
         rel_path = pdb_file.relative_to(pdb_file.parent.parent.parent)
-        out_path = output_dir / rel_path.parent / f"{pdb_file.stem}_protein_v2.pt"
+        out_path = output_dir / rel_path.parent / f"{pdb_file.stem}.pt"  # V7: 标准命名
 
         # 检查是否已存在
         if out_path.exists() and not overwrite:
@@ -285,6 +285,7 @@ def process_single_protein(
             'flexibility_features': torch.from_numpy(features['flexibility_features']),
             'environmental_features': torch.from_numpy(features['environmental_features']),
             'ca_coords': torch.from_numpy(features['ca_coords']),
+            'all_atom_coords': features['all_atom_coords'],  # V7: 保存全原子坐标
             'residue_index': features['residue_index'],
             'chain_id': features['chain_id'],
             'residue_name_3': features['residue_name_3'],
@@ -441,7 +442,7 @@ def main():
 
         # 保存
         output_path.mkdir(parents=True, exist_ok=True)
-        out_file = output_path / f"{input_path.stem}_protein_v2.pt"
+        out_file = output_path / f"{input_path.stem}.pt"  # V7: 标准命名
 
         torch_data = {
             'complete_features_v2': torch.from_numpy(data['complete_features_v2']),
@@ -452,6 +453,7 @@ def main():
             'flexibility_features': torch.from_numpy(data['flexibility_features']),
             'environmental_features': torch.from_numpy(data['environmental_features']),
             'ca_coords': torch.from_numpy(data['ca_coords']),
+            'all_atom_coords': data['all_atom_coords'],  # V7: 保存全原子坐标
             'residue_index': data['residue_index'],
             'chain_id': data['chain_id'],
             'residue_name_3': data['residue_name_3'],

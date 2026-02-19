@@ -330,13 +330,21 @@ class CrossAttentionBlock(nn.Module):
         
         out = self.cross_attn(q_normed, mask=cross_mask, kv=kv_normed)
         out = self.dropout(out) + residual
-        
+
+        # V6m9: Apply q_mask to output to reduce padding noise propagation
+        if q_mask is not None:
+            out = out * q_mask.unsqueeze(-1).float()  # [B, L_q, d_model]
+
         # FFN with residual
         residual = out
         out = self.norm2(out)
         out = self.ffn(out)
         out = self.dropout(out) + residual
-        
+
+        # V6m9: Apply q_mask again after FFN
+        if q_mask is not None:
+            out = out * q_mask.unsqueeze(-1).float()
+
         return out
 
 

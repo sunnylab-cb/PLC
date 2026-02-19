@@ -46,6 +46,7 @@ model:
   gvp_k_neighbors: 20               # GVP k-nearest neighbors
   esm_dropout_prob: 0.1             # Probability of dropping ESM during training (modality dropout)
   physchem_dropout_prob: 0.2        # V6m6: Probability of dropping PhysChem features (modality dropout)
+  use_gradient_checkpointing: false # V6m9: Gradient checkpointing for memory efficiency (default: false)
 
   # Output
   n_classes: 3                      # Contact, Near, Far
