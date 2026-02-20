@@ -55,9 +55,9 @@ model:
 
 # Training settings
 training:
-  batch_size: 24                     # Batch size
+  batch_size: 16                     # Batch size
   num_epochs: 100
-  num_workers: 24                    # DataLoader workers
+  num_workers: 16                    # DataLoader workers
 
   # Optimizer
   optimizer: "adamw"
