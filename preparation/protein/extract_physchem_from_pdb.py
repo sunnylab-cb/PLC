@@ -101,6 +101,7 @@ def parse_pdb_protein(pdb_path: Path, chain_id: str = None, mode: str = 'complex
     # 提取残基信息
     residue_names = []
     residue_indices = []
+    insertion_codes = []
     chain_ids = []
     sequence = []
 
@@ -108,9 +109,11 @@ def parse_pdb_protein(pdb_path: Path, chain_id: str = None, mode: str = 'complex
         res_name = residue.res_name[0]  # 三字母代码
         res_id = residue.res_id[0]
         res_chain = residue.chain_id[0]
+        ins_code = residue.ins_code[0] if hasattr(residue, 'ins_code') else ''
 
         residue_names.append(res_name)
         residue_indices.append(int(res_id))
+        insertion_codes.append(str(ins_code).strip())
         chain_ids.append(res_chain)
 
         # 转换为单字母代码
@@ -130,9 +133,14 @@ def parse_pdb_protein(pdb_path: Path, chain_id: str = None, mode: str = 'complex
         # 获取当前残基的所有原子
         res_id = residue.res_id[0]
         res_chain = residue.chain_id[0]
+        ins = insertion_codes[idx]
 
-        # 在原始atom_array中找到该残基的所有原子
-        res_mask = (atom_array.res_id == res_id) & (atom_array.chain_id == res_chain)
+        # 在原始atom_array中找到该残基的所有原子（含 insertion code 精确匹配）
+        res_mask = (
+            (atom_array.res_id == res_id) &
+            (atom_array.chain_id == res_chain) &
+            (atom_array.ins_code == ins)
+        )
         res_atoms = atom_array[res_mask]
 
         # 提取该残基的所有重原子（排除氢原子）
@@ -151,6 +159,7 @@ def parse_pdb_protein(pdb_path: Path, chain_id: str = None, mode: str = 'complex
         'sequence': sequence_str,
         'residue_names': residue_names,
         'residue_indices': residue_indices,
+        'insertion_codes': insertion_codes,  # 每个残基的insertion code（列表）
         'chain_ids': chain_ids,  # 每个残基的chain_id（列表）
         'ca_coords': ca_coords,  # [N, 3] - 保留用于快速访问
         'all_atom_coords': all_atom_coords,  # List[np.ndarray] - 每个残基的所有原子

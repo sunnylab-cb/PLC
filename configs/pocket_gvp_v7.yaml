@@ -14,7 +14,7 @@ data:
   protein_features_dir: "complete_features_v2"  # V7: 94-dim protein features (up from 82D)
   distances_file: "data/residue_ligand_distances_vdw.pt"  # ✅ V6: VDW-based distance labels
   distances_file_original: "data/residue_ligand_distances_poc_style.pt"  # Original fixed-threshold labels for comparison
-  split_file: "configs/spilts/filtered_splits.txt"  # Path to split file (filtered to exclude benchmark datasets)
+  split_file: "configs/splits/mmseqs_splits_strict.csv"  # Path to split file (MMseqs2 30% sequence identity clustering)
   train_ratio: 0.8
   val_ratio: 0.1
   test_ratio: 0.1
@@ -55,9 +55,9 @@ model:
 
 # Training settings
 training:
-  batch_size: 16                     # Batch size
+  batch_size: 24                     # Batch size
   num_epochs: 100
-  num_workers: 16                    # DataLoader workers
+  num_workers: 24                    # DataLoader workers
 
   # Optimizer
   optimizer: "adamw"
@@ -84,7 +84,7 @@ training:
 
   # Checkpointing
   save_every: 5                     # Save checkpoint every N epochs
-  early_stopping_patience: 25       # Stop if val loss doesn't improve
+  early_stopping_patience: 30       # Stop if val loss doesn't improve
 
   # Precision
   use_amp: false                    # Use full precision for stability

@@ -56,7 +56,8 @@ def compute_iou_loss(
     # False Positive: 预测为结合位点，但实际不是
     fp_mask = (pred_binding == 1) & (true_binding == 0) & (mask == 1)  # [B, N]
 
-    distance_penalty = 0.0
+    # 初始化为tensor标量
+    distance_penalty = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
     n_fp_total = fp_mask.sum()
 
     if n_fp_total > 0:

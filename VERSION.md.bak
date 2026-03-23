@@ -1,0 +1,2343 @@
+# Pocket-GVP-Fusion 版本说明
+
+本文档记录了Pocket-GVP-Fusion模型的各个版本及其主要变化。
+
+---
+
+## 总体简介（如何阅读/如何维护）
+
+- **目的**：用"面向维护"的方式记录每次版本迭代的**动机**、**改动点**、**影响范围**与**复现实例**，方便回溯与对齐训练/评测脚本。
+- **顺序**：按时间从新到旧（最新版本放最上面）。
+- **最小必填**（每个版本建议都包含）：`主要特性`、`关键改进/变化`、`文件结构`、`配置变化`、`使用方法`。
+- **以代码为准**：如文档与实现不一致，请在对应版本条目里标注"以哪些文件为准"，并给出路径（例如：`configs/...`、`src/models/...`、`scripts/...`）。
+- **关联文档**：模型结构图见 `MODEL_ARCHITECTURE_GRAPH.md`（如需更新，请同步更新对应版本条目中的"架构改进"描述）。
+
+## 总体结论（版本演进主线）
+
+- 迭代主线通常围绕三件事：**标签/物理定义更准确**（例如距离阈值）、**特征更丰富**（例如配体/蛋白输入特征）、**模态融合更强**（例如交叉注意力从单向到双向）。
+- 维护建议：每次升级尽量明确回答三问：**为什么改**（问题/瓶颈）、**改了什么**（模块/超参/数据）、**怎么验证**（复现实验命令+预期变化）。
+
+## 维护模板（复制即可）
+
+> 新版本建议直接复制以下模板，填完后放到本文档最上方（在当前最新版本之前）。
+
+````markdown
+## V? - YYYY-MM-DD
+
+### 主要特性
+- ✅ ...
+
+### 关键改进/变化
+1. ...
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/...`
+- 代码：`src/...`
+- 脚本：`scripts/...`
+- 数据/标签：`data/...`
+
+### 文件结构
+```
+configs/
+  └── ...
+src/
+  └── ...
+scripts/
+  └── ...
+```
+
+### 配置变化
+```yaml
+model:
+  # ...
+data:
+  # ...
+```
+
+### 使用方法（最小可复现）
+```bash
+# 训练
+python scripts/train_?.py --config configs/?.yaml --amp
+
+# 评测
+python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
+```
+
+### 兼容性/迁移说明（可选）
+- 与 V? checkpoint 是否兼容：是/否（如否，给出转换脚本/原因）
+- 需要重新生成哪些中间产物：...
+
+### 已知问题（可选）
+- ...
+
+---
+````
+
+## V8 - 2026-02-24
+
+### 主要特性
+- ✅ **Complete Features V3 Integration**: 使用 V3 特征提取（62D PhysChem + 72D Spatial Scalar + 6×3D Spatial Vectors）
+- ✅ **Enhanced GVP with 10 Vectors**: 将 6 个 V3 化学矢量与 4 个 GVP 矢量结合（总共 10 个矢量）
+- ✅ **Separated Feature Categories**: 物理化学、空间标量、空间矢量三类特征分离处理
+- ✅ **Increased GVP Capacity**: GVP 矢量隐藏维度从 16 增至 20
+
+### 关键改进/变化
+1. **特征分离与专用处理**:
+   - 62D 物理化学特征 → PhysChem MLP Encoder
+   - 72D 空间标量特征 → GVP node_s
+   - 6×3D 空间矢量特征 + 4×3D GVP 矢量 → GVP node_v (总共 10 个矢量)
+
+2. **GVP 架构增强**:
+   - `n_gvp_vectors`: 4 → 10 (增加 6 个 V3 化学矢量)
+   - `n_gvp_vector_hidden`: 16 → 20 (增加矢量处理能力)
+   - Bridge 输出: 136 → 210 维 (20 个矢量通道)
+
+3. **V3 特征的 6 个空间矢量**:
+   - Sidechain Base/CoM Vector: 侧链方向
+   - Aromatic Normal Vector: 芳香环法向量
+   - H-bond Donor/Acceptor Vector: 氢键方向
+   - Cavity Pointing Vector: 空腔指向矢量
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v8.yaml`
+- 模型：`src/models/pocket_gvp_fusion_v8.py`
+- 数据集：`src/data/pocket_dataset_v7.py`
+- 特征提取：`preparation/protein/extract_complete_features_v3.py`
+- 文档：`DOCs/V3_FEATURE_EXTRACTION.md`
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v8.yaml                    # V8 模型配置
+src/
+  ├── models/
+  │   └── pocket_gvp_fusion_v8.py          # V8 模型实现
+  └── data/
+      └── pocket_dataset_v7.py              # V7 数据集（加载 V3 特征）
+preparation/protein/
+  ├── extract_complete_features_v3.py      # V3 特征提取脚本
+  └── test_v3_features.py                  # V3 特征验证脚本
+```
+
+### 配置变化
+```yaml
+model:
+  d_phys: 62                        # V8: 物理化学特征（从 94D 降至 62D）
+  d_spatial_scalar: 72              # V8: 空间标量特征（新增）
+  n_gvp_vectors: 10                 # V8: 10 个矢量（4 GVP + 6 V3）
+  n_gvp_vector_hidden: 20           # V8: 矢量隐藏维度（从 16 增至 20）
+
+data:
+  protein_features_dir: "complete_features_v3"  # V8: 使用 V3 特征
+  ligand_features_dir: "ligand_features_v4"     # 继续使用 V4 配体特征
+```
+
+### 使用方法（最小可复现）
+
+#### 1. 提取 V3 蛋白质特征
+```bash
+# 批量提取整个目录
+python preparation/protein/extract_complete_features_v3.py \
+  --input data/processed/ \
+  --output data/complete_features_v3/ \
+  --pattern "*_protein.pdb" \
+  --workers 32
+
+# 验证提取的特征
+python preparation/protein/test_v3_features.py \
+  --input data/complete_features_v3/1981-2000/1a0q/1a0q_protein.pt
+```
+
+#### 2. 训练 V8 模型
+```bash
+# 基础训练
+python scripts/train/train_v8.py \
+  --config configs/pocket_gvp_v8.yaml
+
+# 多 GPU 训练
+torchrun --nproc_per_node=4 scripts/train/train_v8.py \
+  --config configs/pocket_gvp_v8.yaml \
+  --distributed
+```
+
+#### 3. 评估 V8 模型
+```bash
+python scripts/evaluate.py \
+  --config configs/pocket_gvp_v8.yaml \
+  --checkpoint outputs/pocket_gvp_fusion_v8/best.pt \
+  --split test
+```
+
+### 兼容性/迁移说明
+- **与 V7 checkpoint 不兼容**：GVP 输入维度不同（4 → 10 vectors）
+- **需要重新提取 V3 蛋白质特征**：使用 `extract_complete_features_v3.py`
+- **配体特征可复用**：继续使用 V4 配体特征（无需重新提取）
+- **距离标签可复用**：继续使用 VDW-based 距离标签
+
+### 已知问题
+- ~~训练脚本待创建~~: ✅ `scripts/train/train_v8.py` 已创建
+- **参数量增加**: Bridge 维度增大，需要监控过拟合风险
+- **计算复杂度增加**: 10 个矢量 vs 4 个矢量，训练速度可能下降
+
+---
+
+## V7m3 - 2026-02-23
+
+### 主要特性
+- ✅ **Cluster-Size Inverse Weighting Loss**: 基于 MMseqs2 聚类大小的动态样本权重
+- ✅ **Sample-wise Loss Weighting**: 对小簇（孤儿蛋白）施加更高的 Loss 惩罚
+- ✅ **Improved Generalization**: 提高模型对低相似度样本的泛化能力
+- ✅ **MMseqs2 30% Sequence Identity Clustering**: 使用更严格的数据划分避免数据泄露
+
+### 关键改进/变化
+
+1. **Cluster-Weighted Loss (V7m3)**
+   - 权重公式: `weight = 1 / log(cluster_size + ε)`
+   - 小簇（cluster_size 小）获得更高权重
+   - 大簇（cluster_size 大）获得较低权重
+   - 默认 ε = 2.0 防止权重过大
+
+2. **数据划分更新**
+   - 使用 `configs/splits/mmseqs_splits_strict.csv`
+   - MMseqs2 参数: `--min-seq-id 0.3 -c 0.8`
+   - 新增 cluster_size 列用于权重计算
+   - 数据集: Train 15229, Val 1903, Test 1905 (Total 19037)
+
+3. **实现细节**
+   - 新增 `ClusterWeightedLoss` 类管理样本权重
+   - 新增 `load_splits_with_cluster_size()` 函数读取聚类信息
+   - 新增 `compute_combined_loss_with_sample_weights()` 函数
+   - 向后兼容：如果没有 cluster_size 信息，自动回退到标准 loss
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v7.yaml` (split_file 路径更新)
+- 代码：
+  - `src/data/pocket_dataset.py` (新增 `load_splits_with_cluster_size`)
+  - `scripts/train/train_v7m3.py` (新增 ClusterWeightedLoss 类和相关逻辑)
+- 数据：`configs/splits/mmseqs_splits_strict.csv` (4列格式)
+
+### 文件结构
+```
+configs/
+  ├── pocket_gvp_v7.yaml          # 配置文件（split_file 更新）
+  └── splits/
+      └── mmseqs_splits_strict.csv  # 新格式：split\tpdb_id\trepresentative\tcluster_size
+src/
+  └── data/
+      └── pocket_dataset.py        # 新增 load_splits_with_cluster_size()
+scripts/
+  └── train/
+      └── train_v7m3.py            # V7m3 训练脚本
+```
+
+### 配置变化
+```yaml
+data:
+  split_file: "configs/splits/mmseqs_splits_strict.csv"  # 更新为 CSV 格式
+```
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train/train_v7m3.py --config configs/pocket_gvp_v7.yaml
+
+# 单GPU + torch.compile
+python scripts/train/train_v7m3.py --config configs/pocket_gvp_v7.yaml --compile
+
+# 多GPU分布式训练
+torchrun --nproc_per_node=4 scripts/train/train_v7m3.py \
+    --config configs/pocket_gvp_v7.yaml --compile
+```
+
+### 权重统计示例
+```
+Cluster-Weighted Loss Statistics:
+  Total samples: 19037
+  Weight range: [0.2891, 1.4427]
+  Mean weight: 0.4523
+
+  Top 5 highest-weighted samples (smallest clusters):
+    1xyz: weight=1.4427, cluster_size=1  (孤儿蛋白)
+    2abc: weight=1.2345, cluster_size=2
+    ...
+
+  Top 5 lowest-weighted samples (largest clusters):
+    3ov1: weight=0.2891, cluster_size=2236  (大簇代表)
+    ...
+```
+
+### 兼容性/迁移说明
+- 与 V7m2 checkpoint 兼容（模型结构未变）
+- 与 V7 checkpoint 兼容（模型结构未变）
+- 需要使用新的 split 文件：`configs/splits/mmseqs_splits_strict.csv`
+- 向后兼容：如果使用旧的 split 文件（无 cluster_size），自动回退到标准 loss
+
+### 已知问题
+- 无
+
+---
+
+## V7m2 - 2026-02-20
+
+### 主要特性
+- ✅ **Distance-Weighted IoU Loss**: 优化区域重叠并惩罚远距离假阳性
+- ✅ **IoU Component**: 标准 IoU Loss 优化预测区域与真实区域的重叠
+- ✅ **Distance Penalty**: 对远距离假阳性施加非线性惩罚 `(d/d_max)^power`
+- ✅ **Combined Loss**: `L_total = L_dice + L_focal + λ_iou * L_iou`
+
+### 关键改进/变化
+
+1. **IoU Loss (V7m2)**
+   - 只将 Contact (class 0) 视为正类
+   - IoU Component: 标准 Intersection over Union
+   - Distance Penalty: `penalty = ((d / d_max) ^ power) * FP_mask`
+   - 默认参数: `iou_weight=0.3, iou_component_weight=1.0, iou_dist_weight=0.2, power=1.5, d_max=10.0`
+
+2. **Loss 组合**
+   ```python
+   L_iou = iou_component_weight * L_iou_component + iou_dist_weight * L_dist_penalty
+   L_total = dice_weight * L_dice + focal_weight * L_focal + iou_weight * L_iou
+   ```
+
+3. **实现细节**
+   - 新增 `compute_combined_iou_loss()` 函数 (`src/losses.py`)
+   - 新增 `compute_iou_metric()` 函数用于评估
+   - 训练循环中添加 IoU loss 监控
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v7.yaml` (无需修改，通过 CLI 参数控制)
+- 代码：
+  - `src/losses.py` (新增 IoU loss 函数)
+  - `scripts/train/train_v7m2.py` (集成 IoU loss)
+- 脚本：`scripts/train/train_v7m2.py`
+
+### 文件结构
+```
+src/
+  └── losses.py                    # 新增 compute_combined_iou_loss()
+scripts/
+  └── train/
+      └── train_v7m2.py            # V7m2 训练脚本
+```
+
+### 配置变化
+无需修改配置文件，通过训练脚本内部参数控制：
+```python
+iou_weight = 0.3              # IoU loss 总权重
+iou_component_weight = 1.0    # IoU component 权重
+iou_dist_weight = 0.2         # Distance penalty 权重
+iou_power = 1.5               # Distance penalty 幂次
+iou_d_max = 10.0              # Distance normalization factor
+```
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train/train_v7m2.py --config configs/pocket_gvp_v7.yaml
+
+# 单GPU + torch.compile
+python scripts/train/train_v7m2.py --config configs/pocket_gvp_v7.yaml --compile
+
+# 多GPU分布式训练
+torchrun --nproc_per_node=4 scripts/train/train_v7m2.py \
+    --config configs/pocket_gvp_v7.yaml --compile
+```
+
+### 兼容性/迁移说明
+- 与 V7m1 checkpoint 兼容（模型结构未变）
+- 与 V7 checkpoint 兼容（模型结构未变）
+- 只是 loss 函数变化，不影响模型推理
+
+### 已知问题
+- 无
+
+---
+
+## V7 (当前版本) - 2026-02-19
+
+### 主要特性
+- ✅ **Ligand Features V4**: 96D 原子特征（从 80D 增加）
+- ✅ **Complete Features V2**: 94D 蛋白特征（从 82D 增加）
+- ✅ **Enhanced PhysChem Encoder**: 更大容量处理更丰富特征
+- ✅ **Channel-wise Gating** (继承自V6m9)
+- ✅ **q_mask Application** (继承自V6m9)
+- ✅ **Global Ligand Token** (继承自V6m9)
+- ✅ **Optional Gradient Checkpointing** (继承自V6m9)
+- ✅ **Sequential Bidirectional Cross-Attention** (继承自V6m8)
+- ✅ **Filtered Dataset Splits** (继承自V6m8)
+
+### 关键改进/变化
+
+#### 1. Ligand Features V4 (96D Atom Features)
+**动机**: V3 的 80D 原子特征信息有限，V4 增加到 96D，包含更全面的原子级描述符。
+
+**特征组成**:
+- 原子特征：96D（包含原子类型、杂化、电荷、SASA、亲脂性、氢键供受体、手性等）
+- 全局特征：45D（分子属性，保持不变）
+- 形状特征：10D（新增，分子形状描述符）
+
+**数据路径**: `data/ligand_features_v4/`
+
+**效果**:
+- 更丰富的原子级信息
+- 更好的配体表示能力
+- 支持更精细的蛋白-配体交互建模
+
+#### 2. Complete Features V2 (94D Protein Features)
+**动机**: V1 的 82D 蛋白特征缺少一些重要的结构和环境信息，V2 增加到 94D。
+
+**特征组成** (94D total):
+- Physicochemical: 42D（理化性质）
+- Surface: 14D（表面特征）
+- Structural Geometry: 26D（结构几何）
+- Pocketness: 3D（口袋性质）
+- Flexibility: 3D（柔性）
+- Environmental: 6D（环境特征）
+
+**数据路径**: `data/complete_features_v2/`
+
+**效果**:
+- 更全面的残基级描述
+- 更好的口袋识别能力
+- 更准确的结合位点预测
+
+#### 3. Enhanced PhysChem Encoder
+**动机**: 更丰富的输入特征（94D）需要更大的编码器容量。
+
+**实现**:
+```python
+# V6: 82D -> 64D -> 64D
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(82, 64),
+    nn.LayerNorm(64),
+    nn.GELU(),
+    nn.Linear(64, 64),
+    nn.LayerNorm(64),
+    nn.GELU()
+)
+
+# V7: 94D -> 128D -> 128D
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(94, 128),  # 增加容量
+    nn.LayerNorm(128),
+    nn.GELU(),
+    nn.Linear(128, 128),  # 输出维度也增加
+    nn.LayerNorm(128),
+    nn.GELU()
+)
+```
+
+**配置变化**:
+```yaml
+model:
+  d_phys: 94  # V7: Complete Features V2
+  d_phys_encoded: 128  # V7: 增加编码维度
+  d_ligand_atom: 96  # V7: Ligand Features V4
+```
+
+**效果**:
+- 更强的特征编码能力
+- 更好地捕捉非线性交互
+- 参数量适度增加（约 +24K 参数）
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v7.yaml` (NEW: 更新特征维度)
+- 代码：
+  - `src/models/pocket_gvp_fusion_v7.py` (NEW: V7 模型)
+- 脚本：
+  - `scripts/train_v7.py` (NEW: V7 训练脚本)
+- 数据：
+  - `data/ligand_features_v4/` (NEW: 96D 原子特征)
+  - `data/complete_features_v2/` (NEW: 94D 蛋白特征)
+  - `configs/spilts/filtered_splits.txt` (继承自V6m8)
+
+### 文件结构
+```
+configs/
+  ├── pocket_gvp_v7.yaml (NEW: V7 配置)
+  └── spilts/
+      ├── excluded_samples.txt (继承自V6m8)
+      └── filtered_splits.txt (继承自V6m8)
+src/
+  └── models/
+      └── pocket_gvp_fusion_v7.py (NEW: V7 模型)
+scripts/
+  └── train_v7.py (NEW: V7 训练脚本)
+data/
+  ├── ligand_features_v4/ (NEW: 96D 原子特征)
+  └── complete_features_v2/ (NEW: 94D 蛋白特征)
+```
+
+### 配置变化
+```yaml
+data:
+  ligand_features_dir: "ligand_features_v4"  # V7: 96D atom features
+
+model:
+  d_phys: 94  # V7: Complete Features V2 (up from 82D)
+  d_phys_encoded: 128  # V7: Increased capacity
+  d_ligand_atom: 96  # V7: Ligand Features V4 (up from 80D)
+```
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v7.py --config configs/pocket_gvp_v7.yaml --amp
+
+# 单GPU + Gradient Checkpointing
+python scripts/train_v7.py --config configs/pocket_gvp_v7.yaml --amp --gradient-checkpointing
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v7.py \
+    --config configs/pocket_gvp_v7.yaml --amp
+
+# 双GPU + torch.compile + Gradient Checkpointing
+torchrun --nproc_per_node=2 scripts/train_v7.py \
+    --config configs/pocket_gvp_v7.yaml --compile --amp --gradient-checkpointing
+```
+
+### 兼容性/迁移说明
+- **与 V6m9 checkpoint 不兼容**: 特征维度改变（96D ligand, 94D protein）
+- **需要重新训练**: 无法加载 V6m9 checkpoint
+- **数据要求**:
+  - 必须使用 `ligand_features_v4`（96D 原子特征）
+  - 必须使用 `complete_features_v2`（94D 蛋白特征）
+  - 使用过滤后的 splits（继承自V6m8）
+
+### 架构对比
+
+| 模块 | V6m9 | V7 |
+|---|---|---|
+| Ligand Atom Features | 80D | **96D** |
+| Protein Features | 82D | **94D** |
+| PhysChem Encoder | 82D→64D→64D | **94D→128D→128D** |
+| ESM/GVP Fusion | Channel-wise Gating | Channel-wise Gating |
+| Cross-Attention | 顺序更新 + q_mask | 顺序更新 + q_mask |
+| Ligand Token | 原子 + 全局 | 原子 + 全局 |
+| Gradient Checkpointing | ✅ (可选) | ✅ (可选) |
+| Dataset Splits | 过滤 benchmark | 过滤 benchmark |
+
+### 预期效果
+- ✅ 更强的特征表示能力（更丰富的输入）
+- ✅ 更好的蛋白-配体交互建模
+- ✅ 更准确的结合位点预测
+- ⚠️ 参数量略增（约 +24K 参数用于 PhysChem Encoder）
+- ⚠️ 需要新的特征文件（ligand_features_v4 + complete_features_v2）
+
+### 已知问题
+- 无
+
+---
+
+## V6m9 - 2026-02-17
+
+### 主要特性
+- ✅ **Channel-wise Gating**: 消除信息瓶颈，保留完整表达力
+- ✅ **q_mask Application**: 显式应用 query mask，减少 padding 噪声传播
+- ✅ **Global Ligand Token**: 全局化学语义引导 pocket 判别
+- ✅ **Optional Gradient Checkpointing**: 可选梯度检查点，节省显存
+- ✅ **Sequential Bidirectional Cross-Attention** (继承自V6m8)
+- ✅ **Filtered Dataset Splits** (继承自V6m8)
+- ✅ **Label Smoothing (0.1)** (继承自V6m7)
+- ✅ **3D Ligand GVP Encoder** (继承自V6m6)
+- ✅ **GELU 激活函数** (继承自V6m5)
+
+### 关键改进/变化
+
+#### 1. Channel-wise Gating (优化 V6m8 的信息瓶颈)
+**动机**: V6m8 的门控先加权求和到 d_half，再复制两份到 d_model，造成信息瓶颈。
+
+**V6m8 问题**:
+```python
+# V6m8: 加权求和 + 复制
+gate_weights = self.modality_gate(h_concat)  # [B, L, 2]
+h_seq = gate_weights[..., 0:1] * h_gvp_proj + gate_weights[..., 1:2] * h_esm_proj  # [B, L, d_half]
+h_seq = torch.cat([h_seq, h_seq], dim=-1)  # [B, L, d_model] - 复制导致信息瓶颈
+```
+
+**V6m9 改进**:
+```python
+# V6m9: 通道级门控 + 保留双分支
+self.modality_gate = nn.Sequential(
+    nn.Linear(d_half * 2, d_half),
+    nn.ReLU(),
+    nn.Linear(d_half, d_half),  # 输出 d_half 个门控值（每通道一个）
+    nn.Sigmoid()
+)
+gate = self.modality_gate(h_concat)  # [B, L, d_half]
+h_gvp_gated = gate * h_gvp_proj  # [B, L, d_half]
+h_esm_gated = (1 - gate) * h_esm_proj  # [B, L, d_half]
+h_seq = torch.cat([h_gvp_gated, h_esm_gated], dim=-1)  # [B, L, d_model] - 保留完整表达力
+```
+
+**效果**:
+- 消除信息瓶颈：输出维度从 d_half 恢复到 d_model
+- 通道级自适应：每个通道独立学习 GVP vs ESM 的权重
+- 保留双分支结构：concat(g*h_gvp, (1-g)*h_esm) 而非加权求和
+
+#### 2. q_mask Application in Cross-Attention
+**动机**: 交叉注意力中 q_mask 参数未实际使用，padding 位置的噪声会传播到后续层。
+
+**实现** (src/models/transformer_layers.py:331-345):
+```python
+# V6m9: 在输出端显式应用 q_mask
+out = self.cross_attn(q_normed, mask=cross_mask, kv=kv_normed)
+out = self.dropout(out) + residual
+
+# 应用 q_mask 到输出
+if q_mask is not None:
+    out = out * q_mask.unsqueeze(-1).float()  # [B, L_q, d_model]
+
+# FFN
+residual = out
+out = self.norm2(out)
+out = self.ffn(out)
+out = self.dropout(out) + residual
+
+# 再次应用 q_mask
+if q_mask is not None:
+    out = out * q_mask.unsqueeze(-1).float()
+```
+
+**效果**:
+- 减少 padding 噪声传播到后续层
+- 确保 padding 位置的特征始终为 0
+- 提高模型对序列长度变化的鲁棒性
+
+#### 3. Global Ligand Token
+**动机**: 当前只有原子级 token 参与交叉注意力，缺乏全局化学语义（如分子属性、药物相似性）。
+
+**实现** (src/models/pocket_gvp_fusion_v6m9.py:210-212, 418-430):
+```python
+# 初始化全局 token（可学习参数）
+self.ligand_global_token = nn.Parameter(torch.randn(1, 1, d_model))
+
+# Forward 中添加到配体表示
+global_token = self.ligand_global_token.expand(B, -1, -1)  # [B, 1, D]
+h_ligand_with_global = torch.cat([global_token, h_ligand], dim=1)  # [B, 1+Max_M, D]
+
+# 更新 mask
+global_token_mask = torch.ones(B, 1, device=device)
+ligand_mask_with_global = torch.cat([global_token_mask, ligand_mask], dim=1)
+
+# 交叉注意力使用带全局 token 的表示
+h_prot_updated = cross_attn_layer.prot_to_lig(
+    q=h_prot, kv=h_ligand_with_global,
+    q_mask=protein_mask, kv_mask=ligand_mask_with_global
+)
+
+# 最后移除全局 token（仅用于交叉注意力）
+h_lig_atoms = h_lig_fused[:, 1:, :]  # [B, Max_M, D]
+```
+
+**效果**:
+- 捕捉全局化学语义（分子量、logP、药物相似性等）
+- 增强对 pocket 判别的引导
+- 全局 token 参与交叉注意力，但不参与最终预测
+
+#### 4. Optional Gradient Checkpointing
+**动机**: 大模型训练时显存不足，需要 memory-efficient 训练策略。
+
+**实现** (src/models/pocket_gvp_fusion_v6m9.py:388-397, 439-477):
+```python
+# 配置选项
+config['use_gradient_checkpointing'] = True  # 或通过命令行 --gradient-checkpointing
+
+# Protein Context Encoder
+if self.config['use_gradient_checkpointing'] and self.training:
+    h_prot_global = checkpoint(
+        self.protein_context_encoder, h_seq, protein_mask,
+        use_reentrant=False
+    )
+else:
+    h_prot_global = self.protein_context_encoder(h_seq, mask=protein_mask)
+
+# Cross-Attention Layers
+if self.config['use_gradient_checkpointing'] and self.training:
+    h_prot_updated = checkpoint(
+        cross_attn_layer.prot_to_lig,
+        h_prot_fused, h_lig_fused, protein_mask, ligand_mask_with_global,
+        use_reentrant=False
+    )
+```
+
+**效果**:
+- 节省显存：以计算时间换显存空间
+- 可选启用：不影响推理速度
+- 适用于大 batch size 或长序列训练
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v6.yaml` (可选添加 `use_gradient_checkpointing`)
+- 代码：
+  - `src/models/pocket_gvp_fusion_v6m9.py` (新模型类)
+  - `src/models/transformer_layers.py` (修改 CrossAttentionBlock，添加 q_mask 应用)
+- 脚本：
+  - `scripts/train_v6m9.py` (训练脚本，添加 `--gradient-checkpointing` 参数)
+  - `scripts/filter_splits.py` (继承自V6m8)
+- 数据：`configs/spilts/filtered_splits.txt` (继承自V6m8)
+
+### 文件结构
+```
+configs/
+  ├── pocket_gvp_v6.yaml (可选添加 use_gradient_checkpointing)
+  └── spilts/
+      ├── excluded_samples.txt (继承自V6m8)
+      └── filtered_splits.txt (继承自V6m8)
+src/
+  └── models/
+      ├── pocket_gvp_fusion_v6m9.py (NEW: V6m9 模型)
+      └── transformer_layers.py (MODIFIED: 添加 q_mask 应用)
+scripts/
+  ├── train_v6m9.py (NEW: V6m9 训练脚本)
+  └── filter_splits.py (继承自V6m8)
+```
+
+### 配置变化
+```yaml
+model:
+  use_gradient_checkpointing: false  # V6m9: 可选梯度检查点（默认关闭）
+
+data:
+  split_file: "configs/spilts/filtered_splits.txt"  # 继承自V6m8
+```
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m9.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 单GPU + Gradient Checkpointing（节省显存）
+python scripts/train_v6m9.py --config configs/pocket_gvp_v6.yaml --amp --gradient-checkpointing
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m9.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile + Gradient Checkpointing
+torchrun --nproc_per_node=2 scripts/train_v6m9.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp --gradient-checkpointing
+```
+
+### 兼容性/迁移说明
+- **与 V6m8 checkpoint 不兼容**: 架构改变（Channel-wise Gating + Global Token）
+- **需要重新训练**: 无法加载 V6m8 checkpoint
+- **数据要求**: 使用相同的 V3 配体特征和过滤后的 splits
+
+### 架构对比
+
+| 模块 | V6m8 | V6m9 |
+|---|---|---|
+| ESM/GVP Fusion | Weighted Sum + Duplicate | **Channel-wise Gating** |
+| Cross-Attention q_mask | 未使用 | **显式应用** |
+| Ligand Representation | 仅原子 token | **原子 + 全局 token** |
+| Gradient Checkpointing | ❌ | **✅ (可选)** |
+| Cross-Attention | 顺序更新 | 顺序更新 |
+| Dataset Splits | 过滤 benchmark | 过滤 benchmark |
+| Label Smoothing | ✅ (0.1) | ✅ (0.1) |
+
+### 预期效果
+- ✅ 更强的表达力（消除信息瓶颈）
+- ✅ 更鲁棒的训练（减少 padding 噪声）
+- ✅ 更好的全局语义建模（全局 token）
+- ✅ 更高的显存效率（gradient checkpointing）
+- ⚠️ 参数量略增（全局 token: d_model 参数）
+- ⚠️ 训练速度略降（gradient checkpointing 启用时）
+
+### 已知问题
+- 无
+
+---
+
+## V6m8 - 2026-02-17
+
+### 主要特性
+- ✅ **Sequential Bidirectional Cross-Attention**: 顺序更新蛋白-配体特征，增强信息流
+- ✅ **Learnable Gating for ESM/GVP Fusion**: 自适应模态权重，替代固定拼接
+- ✅ **Filtered Dataset Splits**: 排除 5240 个 benchmark PDB IDs，避免测试集泄漏
+- ✅ **Label Smoothing (0.1)**: 防止过拟合 (继承自V6m7)
+- ✅ **3D Ligand GVP Encoder**: 使用真实 3D 坐标 (继承自V6m6)
+- ✅ **移除 Distance-Aware Attention**: 避免数据泄漏 (继承自V6m6)
+- ✅ **PhysChem Modality Dropout** (继承自V6m6)
+- ✅ **GELU 激活函数** (继承自V6m5)
+
+### 关键改进/变化
+
+#### 1. Sequential Bidirectional Cross-Attention
+**动机**: 原始并行更新中，蛋白和配体都使用对方的旧特征，限制了单层内的信息流。
+
+**实现**:
+```python
+# V6m6/V6m7: 并行更新
+h_prot_updated, h_lig_updated = cross_attn_layer(h_prot, h_lig)
+
+# V6m8: 顺序更新
+h_prot_updated = cross_attn_layer.prot_to_lig(q=h_prot, kv=h_lig)
+h_lig_updated = cross_attn_layer.lig_to_prot(q=h_lig, kv=h_prot_updated)  # 使用更新后的蛋白
+```
+
+**效果**:
+- 配体更新时能看到已融合配体信息的蛋白特征
+- 增强单层内的信息流动
+- 更强的蛋白-配体交互建模
+
+#### 2. Learnable Gating for ESM/GVP Fusion
+**动机**: 固定拼接假设 ESM 和 GVP 特征同等重要，但不同残基可能需要不同的模态权重。
+
+**实现**:
+```python
+# V6m6/V6m7: 固定拼接
+h_seq = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
+
+# V6m8: 可学习门控
+self.modality_gate = nn.Sequential(
+    nn.Linear(d_half * 2, d_half),
+    nn.ReLU(),
+    nn.Linear(d_half, 2),
+    nn.Softmax(dim=-1)
+)
+gate_weights = self.modality_gate(torch.cat([h_gvp_proj, h_esm_proj], dim=-1))
+h_seq = gate_weights[..., 0:1] * h_gvp_proj + gate_weights[..., 1:2] * h_esm_proj
+```
+
+**效果**:
+- 每个残基自适应选择 ESM vs GVP 特征权重
+- 处理异质性：表面残基可能更依赖 GVP（几何），内部残基更依赖 ESM（序列）
+- 参数量增加：`(d_half*2 * d_half) + (d_half * 2) = 256*256 + 256*2 = 66048` 参数
+
+#### 3. Filtered Dataset Splits
+**动机**: 避免训练集包含 benchmark 数据集（COACH420, HOLO4K, CryptoBench, UniSite）的 PDB IDs，防止测试集泄漏。
+
+**实现**:
+- 使用 `scripts/filter_splits.py` 从原始 splits 中排除 5240 个 benchmark PDB IDs
+- 生成 `configs/spilts/filtered_splits.txt`
+- 配置文件指向过滤后的 splits
+
+**数据统计**:
+- 原始：Train 15229, Val 1903, Test 1905（总计 19037）
+- 过滤后：Train 14212, Val 1777, Test 1788（总计 17777）
+- 排除：1260 个样本（Train 1017, Val 126, Test 117）
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v6.yaml` (更新 `split_file` 指向过滤后的 splits)
+- 代码：
+  - `src/models/pocket_gvp_fusion_v6m8.py` (新模型类)
+- 脚本：
+  - `scripts/train_v6m8.py` (训练脚本)
+  - `scripts/filter_splits.py` (NEW: 数据集过滤工具)
+- 数据：`configs/spilts/filtered_splits.txt` (NEW: 过滤后的数据集划分)
+
+### 文件结构
+```
+configs/
+  ├── pocket_gvp_v6.yaml (更新 split_file)
+  └── spilts/
+      ├── excluded_samples.txt (5240 个 benchmark PDB IDs)
+      └── filtered_splits.txt (NEW: 过滤后的划分)
+src/
+  └── models/
+      └── pocket_gvp_fusion_v6m8.py (NEW: V6m8 模型)
+scripts/
+  ├── train_v6m8.py (NEW: V6m8 训练脚本)
+  └── filter_splits.py (NEW: 数据集过滤工具)
+```
+
+### 配置变化
+```yaml
+data:
+  split_file: "configs/spilts/filtered_splits.txt"  # V6m8: 使用过滤后的 splits
+```
+
+### 使用方法（最小可复现）
+```bash
+# 生成过滤后的 splits（已完成，无需重复）
+python scripts/filter_splits.py \
+    --input outputs/pocket_gvp_fusion_v6m7_20260217_011531/splits.txt \
+    --exclude configs/spilts/excluded_samples.txt \
+    --output configs/spilts/filtered_splits.txt
+
+# 单GPU训练
+python scripts/train_v6m8.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m8.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m8.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m6/V6m7 checkpoint 不兼容**: 架构改变（Sequential Cross-Attention + Learnable Gating）
+- **需要重新训练**: 无法加载 V6m6/V6m7 checkpoint
+- **数据要求**: 使用相同的 V3 配体特征，但需要过滤后的 splits
+
+### 架构对比
+
+| 模块 | V6m7 | V6m8 |
+|---|---|---|
+| Cross-Attention | 并行更新 | **顺序更新** |
+| ESM/GVP Fusion | 固定拼接 | **可学习门控** |
+| Dataset Splits | 未过滤 | **过滤 benchmark** |
+| Label Smoothing | ✅ (0.1) | ✅ (0.1) |
+| PhysChem Dropout | ✅ (0.3) | ✅ (0.3) |
+| Ligand Encoder | 3D GVP | 3D GVP |
+
+### 预期效果
+- ✅ 更强的蛋白-配体交互建模（Sequential Cross-Attention）
+- ✅ 更灵活的模态融合（Learnable Gating）
+- ✅ 更公平的评测（排除 benchmark 数据集）
+- ⚠️ 参数量略增（~66K 参数用于 gating）
+
+### 已知问题
+- 无
+
+---
+
+## V6m7 - 2026-02-16
+
+### 主要特性
+- ✅ **Label Smoothing (0.1)**: 防止过拟合，提高泛化能力
+- ✅ **3D Ligand GVP Encoder**: 使用真实 3D 坐标编码配体空间信息 (继承自V6m6)
+- ✅ **移除 Distance-Aware Attention**: 避免数据泄漏风险 (继承自V6m6)
+- ✅ **PhysChem Modality Dropout**: 独立的 PhysChem 特征 dropout (继承自V6m6)
+- ✅ **GELU 激活函数** (继承自V6m5)
+- ✅ **PhysChem Encoder 添加 LayerNorm** (继承自V6m4)
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder** (继承自V6m2)
+
+### 关键改进/变化
+
+#### 1. Label Smoothing
+**动机**: 防止模型对训练标签过度自信，提高泛化能力，特别适合类别不平衡的数据集。
+
+**实现**:
+```python
+# 在 compute_focal_loss() 中
+ce_loss = F.cross_entropy(
+    logits_flat, labels_flat,
+    reduction='none',
+    label_smoothing=0.1  # V6m7: PyTorch 内置支持
+)
+```
+
+**效果**:
+- 将硬标签 `[0, 1, 0]` 平滑为 `[0.05, 0.9, 0.05]`
+- 防止模型对单一类别过度自信
+- 提高对噪声标签的鲁棒性
+
+**参数选择**: `label_smoothing=0.1`（推荐值，适合 3 类分类）
+
+### 影响范围（改了哪些东西）
+- 脚本：`scripts/train_v6m7.py`（仅修改训练脚本）
+- 配置：使用相同的 `configs/pocket_gvp_v6.yaml`（注：V6m8 后更新为使用过滤后的 splits）
+- 模型：使用相同的 `PocketGVPFusionV6m6`
+
+### 文件结构
+```
+scripts/
+  └── train_v6m7.py (NEW: 添加 label smoothing)
+```
+
+### 配置变化
+无配置文件变化，label smoothing 硬编码在训练脚本中 (0.1)。
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m7.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m6 checkpoint 完全兼容**: 仅训练过程不同，模型架构相同
+- **无需重新生成数据**: 使用相同的 V3 配体特征
+- **可直接加载 V6m6 checkpoint 继续训练**
+
+### 架构对比
+
+| 模块 | V6m6 | V6m7 |
+|---|---|---|
+| Label Smoothing | ❌ | **✅ (0.1)** |
+| PhysChem Encoder | GELU + LayerNorm | GELU + LayerNorm |
+| PhysChem Dropout | ✅ (0.3) | ✅ (0.3) |
+| ESM Dropout | ✅ (0.5) | ✅ (0.5) |
+| Ligand Encoder | 3D GVP | 3D GVP |
+| Cross-Attention | Standard | Standard |
+| 损失函数 | Dice + Focal | Dice + Focal |
+
+### 预期效果
+- ✅ 提高验证集性能（减少过拟合）
+- ✅ 提高对噪声标签的鲁棒性
+- ✅ 更平滑的训练曲线
+- ⚠️ 训练损失可能略高（正常现象）
+
+### 已知问题
+- 无
+
+---
+
+## V6m6 - 2026-02-15
+
+### 主要特性
+- ✅ **3D Ligand GVP Encoder**: 使用真实 3D 坐标编码配体空间信息
+- ✅ **移除 Distance-Aware Attention**: 避免数据泄漏风险（标签基于距离定义）
+- ✅ **PhysChem Modality Dropout**: 独立的 PhysChem 特征 dropout，避免过度依赖单一模态
+- ✅ **GELU 激活函数** (继承自V6m5)
+- ✅ **PhysChem Encoder 添加 LayerNorm** (继承自V6m4)
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder** (继承自V6m2)
+
+### 关键改进/变化
+
+#### 1. 3D Ligand GVP Encoder
+**动机**: 2D 配体编码器（GINEConv）无法捕捉配体的 3D 空间构象信息，而配体的 3D 结构对结合至关重要。
+
+**实现**:
+- 使用 GVP (Geometric Vector Perceptrons) 处理配体 3D 坐标
+- 基于空间距离构建边（radius=5.0Å, max_neighbors=32）
+- 同时处理标量特征（80D）和向量特征（3D 坐标）
+- 输出编码后的标量特征 + 更新后的坐标
+
+**坐标选择**: 使用 `coords`（全部原子，含氢），与 VDW 距离计算一致。
+
+#### 2. 移除 Distance-Aware Attention
+**动机**: 数据泄漏风险分析发现两个严重问题：
+- **风险 1**: 坐标被使用两次（3D Ligand Encoder + Distance-Aware Attention），信息冗余
+- **风险 2**: 标签直接基于距离阈值定义（Contact < 3.5Å, Near < 6Å），Distance-Aware Attention 直接暴露距离信息，模型可能学习简单的距离映射而非真正的结合模式
+
+**解决方案**: 移除 Distance-Aware Attention，仅使用标准的 Bidirectional Cross-Attention，让模型从 3D Ligand Encoder 编码的特征中学习空间信息。
+
+#### 3. PhysChem Modality Dropout
+**动机**: 避免模型过度依赖 PhysChem 特征，提高泛化能力。
+
+**实现**:
+```python
+if self.training and physchem_dropout_prob > 0:
+    physchem_dropout_mask = torch.rand(B, 1, 1, device=device) > physchem_dropout_prob
+    protein_scalar_encoded = protein_scalar_encoded * physchem_dropout_mask.float()
+```
+
+**配置**: `physchem_dropout_prob: 0.3`（与 ESM dropout 独立）
+
+### 影响范围（改了哪些东西）
+- 配置：`configs/pocket_gvp_v6.yaml` (添加 `physchem_dropout_prob`)
+- 代码：
+  - `src/models/ligand_encoder_3d.py` (新增 3D Ligand GVP Encoder)
+  - `src/models/pocket_gvp_fusion_v6m6.py` (主模型)
+  - `src/data/collate.py` (添加 `ligand_pos` 收集和传递)
+- 脚本：`scripts/train_v6m6.py`
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v6.yaml (添加 physchem_dropout_prob)
+src/
+  ├── models/
+  │   ├── ligand_encoder_3d.py (NEW: 3D Ligand GVP Encoder)
+  │   └── pocket_gvp_fusion_v6m6.py (主模型)
+  └── data/
+      └── collate.py (添加 ligand_pos 支持)
+scripts/
+  └── train_v6m6.py
+```
+
+### 配置变化
+```yaml
+model:
+  esm_dropout_prob: 0.5
+  physchem_dropout_prob: 0.3  # NEW in V6m6
+  d_ligand_atom: 80  # 支持 V3 配体特征 (35D V2 + 45D global)
+```
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m6.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m5 checkpoint 不兼容**: 配体编码器从 2D (LigandEncoder) 改为 3D (Ligand3DEncoder)
+- **需要重新生成**: 无（使用相同的 V3 配体特征，包含 `coords` 字段）
+- **数据要求**: 需要 V3 配体特征（包含 `ligand_coords` 字段）
+
+### 架构对比
+
+| 模块 | V6m5 | V6m6 |
+|---|---|---|
+| PhysChem Encoder | GELU + LayerNorm | GELU + LayerNorm |
+| PhysChem Dropout | ❌ | ✅ (0.3) |
+| ESM Dropout | ✅ (0.5) | ✅ (0.5) |
+| Ligand Encoder | 2D GINEConv | **3D GVP** |
+| Cross-Attention | Standard | Standard |
+| Distance-Aware Attention | ❌ | ❌ |
+
+### 数据泄漏风险分析
+
+#### 已解决的泄漏风险
+- ✅ **Distance-Aware Attention**: 已移除，避免直接暴露距离信息
+
+#### 剩余的轻微风险
+- ⚠️ **3D Ligand Encoder 中的距离使用**: 用于构建图结构（radius=5.0Å），但这是标准的 3D GNN 做法，风险较小，因为：
+  1. 距离仅用于确定邻居关系（二值化：连接/不连接）
+  2. GVP 处理的是相对几何（边向量），不是绝对距离
+  3. 这是 SchNet、DimeNet 等标准 3D 模型的通用做法
+
+### 已知问题
+- 无
+
+---
+
+## V6m5 - 2026-02-15
+
+### 主要特性
+- ✅ **GELU 激活函数**: 替代 ReLU，减少信息丢失
+- ✅ **PhysChem Encoder 添加 LayerNorm** (继承自V6m4)
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder** (继承自V6m2)
+
+### 关键改进/变化
+
+#### 1. GELU 激活函数
+**动机**: ReLU 会将所有负值置零，可能导致信息丢失。GELU 提供更平滑的梯度，保留更多信息。
+
+**实现**:
+```python
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(c['d_phys'], 64),
+    nn.LayerNorm(64),
+    nn.GELU(),  # V6m5: Changed from ReLU to GELU
+    nn.Linear(64, c['d_phys_encoded']),
+    nn.LayerNorm(c['d_phys_encoded']),
+    nn.GELU()   # V6m5: Changed from ReLU to GELU
+)
+```
+
+### 影响范围（改了哪些东西）
+- 代码：`src/models/pocket_gvp_fusion_v6m5.py`
+- 脚本：`scripts/train_v6m5.py`
+
+### 使用方法（最小可复现）
+```bash
+# 单GPU训练
+python scripts/train_v6m5.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m5.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+```
+
+### 兼容性/迁移说明
+- **与 V6m4 checkpoint 不兼容**: 激活函数从 ReLU 改为 GELU
+- **需要重新训练**: 是
+
+---
+
+## V6m4 - 2026-02-14
+
+### 主要特性
+- ✅ **PhysChem Encoder 添加 LayerNorm**: 修复特征尺度不匹配问题
+- ✅ **Dice Loss + Focal Loss 组合损失函数** (继承自V6m3)
+- ✅ **PhysChem MLP Encoder**: 理化特征预处理网络 (35D -> 64D) (继承自V6m2)
+- ✅ **双向交叉注意力** (继承自V6)
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+
+### 痛点分析
+
+**V6m2/V6m3 问题**: PhysChem 特征尺度不匹配导致性能下降
+```
+观察现象:
+- V6m2 相比 V5 性能下降 1-3%
+- c0 召回率提升，但精确率和 IoU 下降
+- 训练后期性能趋同
+
+根本原因:
+1. GVP 输出 (256D): 经过多层 GNN，特征范数较大 (~1.0)
+2. PhysChem MLP 输出 (64D): 两层 Linear + ReLU，特征范数很小 (~0.01)
+3. 特征拼接时不平衡 → PhysChem 信息被稀释
+4. 模型过度依赖 GVP 特征 → 补偿性过度预测 c0
+```
+
+**V6m4 改进**: 在 PhysChem Encoder 中添加 LayerNorm
+```python
+# V6m2/V6m3: 无归一化
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(35, 64),
+    nn.ReLU(),
+    nn.Linear(64, 64),
+    nn.ReLU()
+)
+
+# V6m4: 添加 LayerNorm
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(35, 64),
+    nn.LayerNorm(64),      # 归一化第一层输出
+    nn.ReLU(),
+    nn.Linear(64, 64),
+    nn.LayerNorm(64),      # 归一化第二层输出
+    nn.ReLU()
+)
+```
+
+**预期效果**:
+- LayerNorm 将特征归一化到相似尺度
+- PhysChem 和 GVP 特征平衡融合
+- 提升精确率和 IoU，恢复到 V5 水平或更好
+- 保持 V6m3 的 Dice Loss 优势
+
+### 关键改进/变化
+
+1. **PhysChem Encoder 架构更新**
+   - 在两个 Linear 层后各添加一个 LayerNorm
+   - 保持 ReLU 激活函数不变
+   - 输出维度仍为 64D
+
+2. **训练稳定性提升**
+   - LayerNorm 提供更稳定的梯度
+   - 减少特征尺度导致的训练不稳定
+   - 加速收敛
+
+3. **特征融合改进**
+   - GVP 和 PhysChem 特征尺度匹配
+   - 更好的多模态信息融合
+   - 减少模态偏向
+
+### 影响范围（改了哪些东西）
+
+- 模型：`src/models/pocket_gvp_fusion_v6m4.py` (新增)
+- 脚本：`scripts/train_v6m4.py` (新增)
+- 配置：`configs/pocket_gvp_v6.yaml` (无需修改，与V6m3共享)
+
+### 文件结构
+```
+scripts/
+  ├── train_v6m4.py          # V6m4训练脚本（LayerNorm + Dice + Focal）
+  ├── train_v6m3.py          # V6m3训练脚本（Dice + Focal）
+  ├── train_v6m2.py          # V6m2训练脚本（仅Focal）
+  └── train_v6.py            # V6训练脚本
+src/
+  └── models/
+      ├── pocket_gvp_fusion_v6m4.py  # V6m4模型（新增LayerNorm）
+      ├── pocket_gvp_fusion_v6m2.py  # V6m2模型
+      └── pocket_gvp_fusion_v6.py    # V6模型
+configs/
+  └── pocket_gvp_v6.yaml     # 配置文件（V6m2/V6m3/V6m4共享）
+```
+
+### 配置变化
+
+无需修改配置文件，与 V6m3 完全相同：
+
+```yaml
+training:
+  # 损失函数配置
+  loss_type: "focal"
+  focal_gamma: 2.0
+  class_weights: [7.0, 1.0, 2.2]
+
+  # 组合损失权重
+  dice_weight: 0.5
+  focal_weight: 0.5
+```
+
+### 使用方法（最小可复现）
+
+```bash
+# 单GPU训练
+python scripts/train_v6m4.py --config configs/pocket_gvp_v6.yaml
+
+# 单GPU + AMP
+python scripts/train_v6m4.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练 + AMP
+torchrun --nproc_per_node=2 scripts/train_v6m4.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# torch.compile加速
+python scripts/train_v6m4.py --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 诊断建议
+
+训练时可以监控以下指标来验证 LayerNorm 的效果：
+
+1. **特征范数**（如果添加了诊断代码）:
+   ```
+   GVP norm: ~1.0
+   PhysChem norm: ~1.0  (V6m4 应该接近 1.0，V6m2 约 0.01)
+   ```
+
+2. **训练曲线**:
+   - 精确率应该比 V6m2/V6m3 更高
+   - IoU 应该恢复到 V5 水平或更好
+   - 收敛速度可能更快
+
+3. **TensorBoard 指标**:
+   ```
+   Val_new/precision_c0  # 应该提升
+   Val_new/iou_c0        # 应该提升
+   Val_new/dice_c0       # 保持 V6m3 水平
+   ```
+
+### 兼容性/迁移说明
+
+- **与 V6m3 checkpoint 不兼容**: 否（模型结构不同，多了 LayerNorm 层）
+- **与 V6m2 checkpoint 不兼容**: 否（模型结构不同）
+- **数据/标签**: 与 V6m2/V6m3 完全相同，无需重新生成
+- **从 V6m3 迁移**: 需要从头训练，无法直接加载 checkpoint
+
+### 预期改进
+
+1. **精确率提升**: 预期提升 2-5%，恢复到 V5 水平
+2. **IoU 提升**: 预期提升 2-5%
+3. **训练稳定性**: 更稳定的梯度，更快的收敛
+4. **特征融合**: GVP 和 PhysChem 特征平衡利用
+
+### 理论分析
+
+**为什么 LayerNorm 有效？**
+
+1. **特征尺度归一化**:
+   ```
+   V6m2: h_geo = [gvp(norm~1.0), physchem(norm~0.01)]  # 不平衡
+   V6m4: h_geo = [gvp(norm~1.0), physchem(norm~1.0)]   # 平衡
+   ```
+
+2. **梯度流改善**:
+   - LayerNorm 提供更稳定的梯度
+   - 减少梯度消失/爆炸
+   - 加速收敛
+
+3. **模态平衡**:
+   - 防止某个模态主导
+   - 充分利用多模态信息
+   - 提升泛化能力
+
+---
+
+## V6m3 - 2026-02-13
+
+### 主要特性
+- ✅ **Dice Loss + Focal Loss 组合损失函数**: 更好地处理分割任务和类别不平衡
+- ✅ **PhysChem MLP Encoder**: 理化特征预处理网络 (35D -> 64D) (继承自V6m2)
+- ✅ **双向交叉注意力** (继承自V6)
+- ✅ **Induced Fit建模** (继承自V6)
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+
+### 痛点分析
+
+**V6m2问题**: 单一Focal Loss对分割任务优化不足
+```
+现状: 仅使用Focal Loss处理类别不平衡
+问题: 1. Focal Loss主要关注难分样本，但对区域连续性关注不足
+      2. 蛋白-配体结合位点预测本质是分割任务，需要考虑空间连续性
+      3. Contact类别（结合位点）的Dice系数提升空间大
+```
+
+**V6m3改进**: Dice Loss + Focal Loss 组合损失
+```python
+# 组合损失函数
+total_loss = dice_weight * dice_loss + focal_weight * focal_loss
+
+# Dice Loss: 优化区域重叠度，关注分割质量
+dice_loss = 1 - (2 * intersection + smooth) / (cardinality + smooth)
+
+# Focal Loss: 处理类别不平衡，关注难分样本
+focal_loss = -(1 - p_t)^gamma * log(p_t)
+```
+
+**预期效果**:
+- Dice Loss 提升结合位点的空间连续性和完整性
+- Focal Loss 保持对难分样本的关注
+- 组合损失平衡两者优势，提升整体分割质量
+
+### 关键改进/变化
+
+1. **损失函数改进**
+   - 新增 `compute_dice_loss()`: 计算多类别Dice Loss
+   - 新增 `compute_combined_loss()`: 组合Dice和Focal损失
+   - 支持可配置的损失权重 (`dice_weight`, `focal_weight`)
+
+2. **训练/评估流程更新**
+   - `train_epoch()`: 使用组合损失，记录Dice和Focal分量
+   - `evaluate()`: 同时评估组合损失的各个分量
+   - TensorBoard日志: 分别记录总损失、Dice损失、Focal损失
+
+3. **配置扩展**
+   - 新增 `dice_weight` (默认0.5): Dice Loss权重
+   - 新增 `focal_weight` (默认0.5): Focal Loss权重
+
+### 影响范围（改了哪些东西）
+
+- 脚本：`scripts/train_v6m3.py` (新增)
+- 模型：使用 `src/models/pocket_gvp_fusion_v6m2.py` (与V6m2共享)
+- 配置：`configs/pocket_gvp_v6.yaml` (可选添加dice_weight/focal_weight)
+
+### 文件结构
+```
+scripts/
+  ├── train_v6m3.py          # V6m3训练脚本（Dice + Focal Loss）
+  ├── train_v6m2.py          # V6m2训练脚本（仅Focal Loss）
+  └── train_v6.py            # V6训练脚本
+src/
+  └── models/
+      └── pocket_gvp_fusion_v6m2.py  # V6m2/V6m3共享模型
+configs/
+  └── pocket_gvp_v6.yaml     # 配置文件（可选添加损失权重）
+```
+
+### 配置变化
+
+```yaml
+training:
+  # 损失函数配置
+  loss_type: "focal"                # 保持不变（内部使用组合损失）
+  focal_gamma: 2.0                  # Focal Loss gamma参数
+  class_weights: [7.0, 1.0, 2.2]    # 类别权重
+
+  # V6m3新增（可选，默认值为0.5）
+  dice_weight: 0.5                  # Dice Loss权重
+  focal_weight: 0.5                 # Focal Loss权重
+```
+
+### 使用方法（最小可复现）
+
+```bash
+# 单GPU训练
+python scripts/train_v6m3.py --config configs/pocket_gvp_v6.yaml
+
+# 单GPU + AMP
+python scripts/train_v6m3.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU分布式训练 + AMP
+torchrun --nproc_per_node=2 scripts/train_v6m3.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# torch.compile加速
+python scripts/train_v6m3.py --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### 损失权重调优建议
+
+根据任务特点调整 `dice_weight` 和 `focal_weight`:
+
+1. **更关注分割质量** (提升Dice/IoU):
+   ```yaml
+   dice_weight: 0.7
+   focal_weight: 0.3
+   ```
+
+2. **更关注难分样本** (提升准确率):
+   ```yaml
+   dice_weight: 0.3
+   focal_weight: 0.7
+   ```
+
+3. **平衡两者** (默认):
+   ```yaml
+   dice_weight: 0.5
+   focal_weight: 0.5
+   ```
+
+### TensorBoard监控指标
+
+V6m3在TensorBoard中新增以下指标:
+
+```
+Train/
+  ├── epoch_loss          # 总损失
+  ├── dice_loss           # Dice损失分量
+  ├── focal_loss          # Focal损失分量
+  └── epoch_acc           # 准确率
+
+Val_new/  (VDW标签)
+  ├── epoch_loss
+  ├── dice_loss
+  ├── focal_loss
+  ├── epoch_acc
+  ├── dice_c0             # Contact类Dice系数
+  └── iou_c0              # Contact类IoU
+
+Val/  (原始标签，用于横向对比)
+  ├── epoch_loss
+  ├── dice_loss
+  ├── focal_loss
+  └── ...
+```
+
+### 兼容性/迁移说明
+
+- **与V6m2 checkpoint兼容**: 是（模型结构完全相同，仅损失函数不同）
+- **从V6m2迁移**: 直接使用V6m2的checkpoint，用train_v6m3.py继续训练即可
+- **数据/标签**: 与V6m2完全相同，无需重新生成
+
+### 预期改进
+
+1. **分割质量提升**:
+   - Contact类Dice系数预期提升 2-5%
+   - IoU预期提升 2-5%
+   - 结合位点预测更完整、连续
+
+2. **训练稳定性**:
+   - Dice Loss提供额外的梯度信号
+   - 组合损失减少对单一指标的过拟合
+
+3. **类别平衡**:
+   - 保持Focal Loss对难分样本的关注
+   - Dice Loss改善少数类的召回率
+
+---
+
+## V6m2 - 2026-02-11
+
+### 主要特性
+- ✅ **PhysChem MLP Encoder**: 理化特征预处理网络 (35D -> 64D)
+- ✅ **非线性交互捕捉**: 捕捉理化指标间的复杂关系
+- ✅ **双向交叉注意力** (继承自V6)
+- ✅ **Induced Fit建模** (继承自V6)
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+
+### 痛点分析
+
+**V6问题**: 理化标量的非线性交互缺失
+```
+现状: 35个标量直接拼接进入网络
+问题: 原始理化指标（电荷、疏水性、体积等）之间存在复杂非线性关系
+      例如："体积大且疏水" vs "体积小且疏水" 对结合的影响截然不同
+      简单拼接依赖后续MLP挖掘关系，效率较低
+```
+
+**V6m2改进**: 独立的理化特征预处理网络
+```python
+# PhysChem MLP Encoder
+protein_scalar (35D) -> MLP(35->64->64) -> protein_scalar_encoded (64D)
+
+# 收益
+- 将低维硬指标映射到高维潜在语义空间
+- 增加理化特征在融合时的权重和表达能力
+- 提前捕捉非线性交互模式
+```
+
+### 架构改进
+
+**新增模块**: PhysChem MLP Encoder
+```python
+self.physchem_encoder = nn.Sequential(
+    nn.Linear(35, 64),
+    nn.ReLU(),
+    nn.Linear(64, 64),
+    nn.ReLU()
+)
+```
+
+**使用位置**:
+1. **Early Injection**: `h_geo = [h_s_gvp, v_inv, protein_scalar_encoded]`
+   - 原始: 256 + 136 + 35 = 427
+   - V6m2: 256 + 136 + 64 = 456
+2. **Late Injection**: `x_final = [h_prot_fused, protein_scalar_encoded]`
+   - 原始: 512 + 35 = 547
+   - V6m2: 512 + 64 = 576
+
+### 文件结构
+```
+src/models/
+  └── pocket_gvp_fusion_v6m2.py     # V6m2主模型
+
+scripts/
+  └── train_v6m2.py                 # V6m2训练脚本
+
+configs/
+  └── pocket_gvp_v6.yaml            # 复用V6配置（无需修改）
+```
+
+### 使用方法
+```bash
+# 训练（复用V6配置）
+python scripts/train_v6m2.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6m2.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+```
+
+### 关键改进
+1. **理化特征增强**: 35D -> 64D，提升表达能力
+2. **非线性交互**: 提前捕捉理化指标间的复杂关系
+3. **最小改动**: 仅新增PhysChem encoder，其他架构保持不变
+4. **配置兼容**: 复用V6配置文件，无需额外配置
+
+### 配置变化
+```yaml
+# 无需修改配置文件
+# 模型自动使用 d_phys_encoded=64 (在DEFAULT_CONFIG中定义)
+```
+
+### 预期性能提升
+- **更强的特征表示**: 理化特征从35D扩展到64D
+- **更好的非线性建模**: 提前捕捉复杂交互模式
+- **更高的融合效率**: 高维语义空间更易于后续融合
+
+### 兼容性说明
+- **与V6的区别**: 仅新增PhysChem encoder，其他完全相同
+- **配置兼容**: 可直接使用V6的配置文件
+- **Checkpoint不兼容**: 由于维度变化，无法直接加载V6的checkpoint
+
+---
+
+## V6 - 2026-02-10
+
+### 主要特性
+- ✅ **双向交叉注意力** (Bidirectional Co-Attention)
+- ✅ **Induced Fit建模**: 蛋白质和配体相互增强
+- ✅ VDW半径距离阈值 (BioLiP标准)
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+- ✅ 物理准确的结合位点定义
+
+### 标签定义 (Label Definition)
+
+**VDW-adjusted距离标签** (扣除VDW半径后的距离):
+```python
+# 距离计算
+distance_vdw_adjusted = distance - (r_vdw_protein + r_vdw_ligand)
+
+# 标签阈值
+c0: distance_vdw_adjusted < 0.5Å   # 紧密接触 (Close contact)
+c1: 0.5Å ≤ distance_vdw_adjusted < 4.5Å  # 中等距离 (Medium range)
+c2: distance_vdw_adjusted ≥ 4.5Å   # 远距离 (Far range)
+```
+
+**物理意义**: 由于已扣除VDW半径，0.5Å的阈值实际上等价于原始距离约5Å（对于C-C接触）。
+
+### 架构改进
+
+**V5问题**: 单向交叉注意力
+```
+Protein (Query) → Ligand (Key/Value)
+结果: 只有蛋白质特征被配体更新
+```
+
+**V6改进**: 双向交叉注意力
+```
+Protein ↔ Ligand (Co-Attention)
+- Prot → Lig: 蛋白质查询配体，更新蛋白质特征
+- Lig → Prot: 配体查询蛋白质，更新配体特征
+结果: 两者相互增强，建模induced fit现象
+```
+
+### 实现细节
+```python
+# V5: 单向交叉注意力
+h_prot_fused = CrossAttention(q=h_prot, kv=h_ligand)
+# 只有蛋白质特征被更新
+
+# V6: 双向交叉注意力
+h_prot_fused, h_lig_fused = BidirectionalCrossAttention(
+    h_prot=h_prot,
+    h_lig=h_ligand
+)
+# 蛋白质和配体特征都被更新
+```
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v6.yaml          # V6配置文件
+
+src/models/
+  ├── pocket_gvp_fusion_v6.py     # V6主模型
+  └── transformer_layers.py       # 包含BidirectionalCrossAttentionBlock
+
+src/data/
+  └── pocket_dataset_v6.py        # V6数据加载器
+
+scripts/
+  └── train_v6.py                 # V6训练脚本
+
+data/
+  ├── residue_ligand_distances_vdw.pt  # VDW距离标签
+  └── ligand_features_v3/              # 80维配体特征
+```
+
+### 使用方法
+```bash
+# 训练
+python scripts/train_v6.py --config configs/pocket_gvp_v6.yaml --amp
+
+# 分布式训练
+torchrun --nproc_per_node=2 scripts/train_v6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+```
+
+### 关键改进
+1. **双向信息流**: 蛋白质和配体相互增强，不再是单向更新
+2. **Induced Fit建模**: 更好地捕捉蛋白质-配体相互适应
+3. **更丰富的特征**: 配体特征也被蛋白质信息增强
+4. **保持物理准确性**: 继承V5的VDW距离阈值
+
+### 配置变化
+```yaml
+model:
+  n_cross_attention_layers: 4  # V6: 双向交叉注意力层数
+```
+
+### 预期性能提升
+- **更准确的结合位点预测**: 双向信息流提供更丰富的上下文
+- **更好的泛化能力**: Induced fit建模更符合生物物理实际
+- **更强的特征表示**: 两个模态相互增强
+
+---
+
+## V5 - 2026-02-08
+
+### 主要特性
+- ✅ **VDW半径距离阈值** (BioLiP标准)
+- ✅ **物理准确的结合位点定义**
+- ✅ 80维配体特征 (35D V2 + 45D全局特征)
+- ✅ 使用所有原子（包括侧链）计算距离
+- ✅ 自适应阈值: d < r_vdw(P) + r_vdw(L) + 0.5 Å
+
+### 距离计算改进
+**V4问题**: 固定3.5 Å阈值忽略原子大小差异
+- 对大原子（O、N）太严格
+- 对小原子（H）太宽松
+- 忽略非水接触
+
+**V5改进**: BioLiP标准VDW半径
+```python
+# VDW半径 (Bondi半径, Å)
+C: 1.70, N: 1.55, O: 1.52, S: 1.80
+P: 1.80, F: 1.47, Cl: 1.75, Br: 1.85, I: 1.98
+
+# 距离阈值
+threshold = r_vdw(protein_atom) + r_vdw(ligand_atom) + 0.5 Å
+
+# 示例
+C-C: 1.70 + 1.70 + 0.5 = 3.9 Å
+O-O: 1.52 + 1.52 + 0.5 = 2.54 Å
+N-C: 1.55 + 1.70 + 0.5 = 3.75 Å
+```
+
+### 标签定义 (Label Definition)
+
+**VDW-adjusted距离标签** (扣除VDW半径后的距离):
+```python
+# 距离计算
+distance_vdw_adjusted = distance - (r_vdw_protein + r_vdw_ligand)
+
+# 标签阈值
+c0: distance_vdw_adjusted < 0.5Å   # 紧密接触 (Close contact)
+c1: 0.5Å ≤ distance_vdw_adjusted < 4.5Å  # 中等距离 (Medium range)
+c2: distance_vdw_adjusted ≥ 4.5Å   # 远距离 (Far range)
+```
+
+**物理意义**: 由于已扣除VDW半径，0.5Å的阈值实际上等价于原始距离约5Å（对于C-C接触）。
+
+### 数据统计
+**完整数据集 (19,032个复合物)**:
+- 平均结合位点比例: 4.7%
+- 中位数: 3.8%
+- 范围: 0.1% - 70.8%
+- ✅ 所有蛋白质都有结合位点
+
+**结合位点分布**:
+- 0-1%: 1,327 (7.0%)
+- 1-5%: 11,084 (58.2%)
+- 5-10%: 5,053 (26.6%)
+- 10-20%: 1,428 (7.5%)
+- >20%: 140 (0.7%)
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v5.yaml          # V5配置文件
+
+src/data/
+  └── pocket_dataset_v5.py        # V5数据加载器
+
+scripts/
+  ├── train_v5.py                 # V5训练脚本
+  └── calculate_distances_vdw.py  # VDW距离计算
+
+data/
+  ├── residue_ligand_distances_vdw.pt  # VDW距离标签
+  └── ligand_features_v3/              # 80维配体特征
+```
+
+### 使用方法
+```bash
+# 训练
+python scripts/train_v5.py --config configs/pocket_gvp_v5.yaml --amp
+
+# 分布式训练
+torchrun --nproc_per_node=2 scripts/train_v5.py \
+    --config configs/pocket_gvp_v5.yaml --amp
+```
+
+### 关键改进
+1. **物理准确性**: 考虑原子范德华半径，更符合物理实际
+2. **使用所有原子**: 包括蛋白质侧链原子，不只是Cα
+3. **自适应阈值**: 不同原子对有不同的距离阈值
+4. **更合理的标签**: 避免固定阈值的偏差
+
+### 配置变化
+```yaml
+data:
+  distances_file: "data/residue_ligand_distances_vdw.pt"  # V5: VDW距离
+```
+
+---
+
+## V4 - 2026-02-08
+
+### 主要特性
+- ✅ **80维配体特征** (35D V2 + 45D全局特征)
+- ✅ 保留原始实验坐标用于距离计算
+- ✅ 构象柔性分析 (RMSF)
+- ✅ 电子效应特征 (Gasteiger电荷、LogP、TPSA)
+- ✅ 分子级别描述符 (10维)
+
+### 配体特征详情
+**80维特征组成**:
+- **35维V2特征**:
+  - 原子符号 (11维)
+  - 杂化类型 (6维)
+  - 芳香性 (1维)
+  - 环特征 (7维)
+  - 度特征 (5维)
+  - Gasteiger电荷 (1维)
+  - LogP贡献 (1维)
+  - TPSA贡献 (1维)
+  - RMSF (1维)
+  - 柔性标志 (1维)
+
+- **45维全局特征** (pypropel):
+  - Morgan指纹 (43维)
+  - LogP (1维)
+  - TPSA归一化 (1维)
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v4.yaml          # V4配置文件
+
+src/data/
+  └── pocket_dataset_v4.py        # V4数据加载器
+
+scripts/
+  └── train_v4.py                 # V4训练脚本
+
+data/
+  └── ligand_features_v3/         # 80维配体特征
+```
+
+### 使用方法
+```bash
+# 训练
+python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
+
+# 分布式训练
+torchrun --nproc_per_node=2 scripts/train_v4.py \
+    --config configs/pocket_gvp_v4.yaml --amp
+```
+
+### 关键改进
+1. **更丰富的化学信息**: 45维全局特征提供分子指纹和全局描述符
+2. **保留实验坐标**: 使用`coords_original`确保距离计算准确
+3. **柔性分析**: RMSF和柔性标志提供动态信息
+4. **电子效应**: Gasteiger电荷、LogP、TPSA提供更准确的相互作用建模
+
+### 配置变化
+```yaml
+model:
+  d_ligand_atom: 80  # V4: 80维 (V3: 35维)
+
+data:
+  ligand_features_dir: "ligand_features_v3"  # V4: 新目录
+```
+
+---
+
+## V3 - 2026-02-07
+
+### 主要特性
+- ✅ **35维配体特征** (30D原子 + 3D电子效应 + 2D柔性)
+- ✅ ESM-2 embeddings (1280维)
+- ✅ 完整蛋白质特征 (82维)
+- ✅ GVP几何特征
+- ✅ 嵌套目录结构
+
+### 配体特征详情
+**35维特征组成**:
+- 原子符号 (11维)
+- 杂化类型 (6维)
+- 芳香性 (1维)
+- 环特征 (7维)
+- 度特征 (5维)
+- Gasteiger电荷 (1维)
+- LogP贡献 (1维)
+- TPSA贡献 (1维)
+- RMSF (1维)
+- 柔性标志 (1维)
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v2_nested.yaml   # V3配置文件
+
+src/data/
+  └── pocket_dataset_v3.py        # V3数据加载器
+
+scripts/
+  └── train_v3_optimized.py       # V3优化训练脚本
+
+data/
+  ├── complete_features/          # 82维蛋白质特征
+  ├── esm2_latents/               # ESM-2 embeddings
+  └── ligand_features/            # 35维配体特征
+```
+
+### 关键改进
+1. **ESM-2迁移**: 从ESM-3 (1536D) 迁移到ESM-2 (1280D)
+2. **训练优化**: torch.compile、DDP、AMP支持
+3. **完整日志**: TensorBoard健康诊断和分类指标
+4. **数据清理**: 修复134个损坏的ESM2文件
+
+---
+
+## V2 - 2026-02-05
+
+### 主要特性
+- ✅ 7模块混合架构
+- ✅ ESM-3 embeddings (1536维)
+- ✅ GVP结构编码器
+- ✅ 双路径投影 (GVP + ESM)
+- ✅ 多层交叉注意力
+
+### 架构组件
+1. **GVP编码器**: 3D几何特征提取
+2. **GVP投影**: 256D → 256D
+3. **ESM投影**: 1536D → 256D
+4. **蛋白质上下文编码器**: 4层Transformer
+5. **配体编码器**: 3层GINEConv
+6. **交叉注意力**: 4层蛋白质-配体交互
+7. **分类器**: 3类预测 (Contact/Near/Far)
+
+### 文件结构
+```
+configs/
+  └── pocket_gvp_v2.yaml          # V2配置文件
+
+src/models/
+  └── pocket_gvp_fusion.py        # V2模型架构
+
+scripts/
+  └── train_v3.py                 # V2训练脚本
+```
+
+---
+
+## V1 - 2026-01-XX
+
+### 主要特性
+- ✅ 基础GVP-Fusion架构
+- ✅ 单路径特征融合
+- ✅ 简单交叉注意力
+
+---
+
+## 版本对比
+
+| 特性 | V1 | V2 | V3 | V4 | V5 | V6 | V6m2 | V6m3 | V6m4 | V6m5 | V6m6 | V6m7 | V6m8 | V6m9 | V7 | V7m3 |
+|------|-----|----|----|----|----|-----|------|------|------|------|------|------|------|------|----|------|
+| **配体特征维度** | 64 | 64 | 35 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | 80 | **96** | **96** |
+| **配体编码器** | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | 2D | **3D GVP** | 3D GVP | 3D GVP | 3D GVP | 3D GVP | 3D GVP |
+| **ESM模型** | ESM-3 | ESM-3 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 | ESM-2 |
+| **ESM维度** | 1536 | 1536 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 | 1280 |
+| **蛋白质特征** | 基础 | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | 完整82D | **完整94D** | **完整94D** |
+| **PhysChem Encoder** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **MLP** | MLP | **MLP+LN** | **MLP+LN+GELU** | MLP+LN+GELU | MLP+LN+GELU | MLP+LN+GELU | MLP+LN+GELU | **Enhanced** | **Enhanced** |
+| **PhysChem Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **ESM Dropout** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Label Smoothing** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓ (0.1)** | ✓ (0.1) | ✓ (0.1) | ✓ (0.1) | ✓ (0.1) |
+| **ESM/GVP Fusion** | Concat | Concat | Concat | Concat | Concat | Concat | Concat | Concat | Concat | Concat | Concat | Concat | Weighted Sum | **Channel-wise Gate** | Channel-wise Gate | Channel-wise Gate |
+| **Cross-Attention** | 单向 | 单向 | 单向 | 单向 | 单向 | **双向** | 双向 | 双向 | 双向 | 双向 | 双向 | 双向 | **双向顺序** | 双向顺序 | 双向顺序 | 双向顺序 |
+| **q_mask Application** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓** | ✓ | ✓ |
+| **Ligand Token** | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | 原子 | **原子+全局** | 原子+全局 | 原子+全局 |
+| **Gradient Checkpoint** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓ (可选)** | ✓ (可选) | ✓ (可选) |
+| **损失函数** | Focal | Focal | Focal | Focal | Focal | Focal | Focal | **Dice+Focal** | Dice+Focal | Dice+Focal | Dice+Focal | Dice+Focal | Dice+Focal | Dice+Focal | Dice+Focal | Dice+Focal |
+| **距离阈值** | 固定 | 固定 | 固定 | 固定 | VDW | VDW | VDW | VDW | VDW | VDW | VDW | VDW | VDW | VDW | VDW | VDW |
+| **使用原子** | Cα | Cα | Cα | Cα | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 | 所有 |
+| **Dataset Splits** | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | 随机 | **Filtered** | Filtered | Filtered | Filtered |
+| **Distance-Aware Attn** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **GVP编码器** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **双路径投影** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **多层交叉注意力** | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **torch.compile** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **分布式训练** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **AMP支持** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **构象柔性** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **全局特征** | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **原始坐标** | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+---
+
+## 配体特征演进
+
+### V1/V2: 64维 (PoC风格)
+```
+[19D 基础特征] + [45D 全局标签]
+```
+**问题**: 45维全局标签对每个原子重复，信息冗余
+
+### V3: 35维 (优化版)
+```
+[30D 原子特征] + [3D 电子效应] + [2D 柔性]
+```
+**改进**: 每个原子独立特征，无冗余
+
+### V4: 80维 (混合版)
+```
+[35D V2特征] + [45D 全局特征]
+```
+**优势**: 结合V3的详细原子特征和全局分子信息
+**距离**: 固定3.5 Å阈值
+
+### V5: 80维 + VDW距离 (物理准确版)
+```
+[35D V2特征] + [45D 全局特征] + VDW自适应阈值
+```
+**优势**:
+- 保留V4的丰富特征
+- 使用物理准确的VDW半径距离阈值
+- 考虑所有原子（包括侧链）
+- 更合理的结合位点定义
+
+---
+
+## 数据目录结构
+
+### 嵌套结构 (V3/V4)
+```
+data/
+├── complete_features/
+│   ├── 1981-2000/
+│   │   └── {pdb_id}/
+│   │       └── {pdb_id}_protein.pt
+│   ├── 2001-2010/
+│   └── 2011-2019/
+├── esm2_latents/
+│   ├── 1981-2000/
+│   ├── 2001-2010/
+│   └── 2011-2019/
+├── ligand_features/          # V3: 35维
+│   ├── 1981-2000/
+│   ├── 2001-2010/
+│   └── 2011-2019/
+└── ligand_features_v3/       # V4: 80维
+    ├── 1981-2000/
+    ├── 2001-2010/
+    └── 2011-2019/
+```
+
+---
+
+## 训练命令对比
+
+### V2
+```bash
+python scripts/train_v3.py --config configs/pocket_gvp_v2.yaml
+```
+
+### V3
+```bash
+# 单GPU + AMP
+python scripts/train_v3_optimized.py \
+    --config configs/pocket_gvp_v2_nested.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v3_optimized.py \
+    --config configs/pocket_gvp_v2_nested.yaml --compile --amp
+```
+
+### V4
+```bash
+# 单GPU + AMP
+python scripts/train_v4.py \
+    --config configs/pocket_gvp_v4.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v4.py \
+    --config configs/pocket_gvp_v4.yaml --compile --amp
+```
+
+### V5
+```bash
+# 单GPU + AMP
+python scripts/train_v5.py \
+    --config configs/pocket_gvp_v5.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v5.py \
+    --config configs/pocket_gvp_v5.yaml --compile --amp
+```
+
+### V6
+```bash
+# 单GPU + AMP
+python scripts/train_v6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m2
+```bash
+# 单GPU + AMP
+python scripts/train_v6m2.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m2.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m3
+```bash
+# 单GPU + AMP
+python scripts/train_v6m3.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m3.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m4
+```bash
+# 单GPU + AMP
+python scripts/train_v6m4.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m4.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m5
+```bash
+# 单GPU + AMP
+python scripts/train_v6m5.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m5.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m6
+```bash
+# 单GPU + AMP
+python scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m6.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+### V6m7 (当前推荐)
+```bash
+# 单GPU + AMP
+python scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --amp
+
+# 双GPU + torch.compile
+torchrun --nproc_per_node=2 scripts/train_v6m7.py \
+    --config configs/pocket_gvp_v6.yaml --compile --amp
+```
+
+---
+
+## 性能预期
+
+| 版本 | 配体特征 | 距离标签 | 训练速度 | 内存占用 | 预期性能 |
+|------|---------|---------|---------|---------|---------|
+| V2 | 64维 | 固定阈值 | 基准 | 基准 | 基准 |
+| V3 | 35维 | 固定阈值 | +10% | -15% | +2-3% |
+| V4 | 80维 | 固定阈值 | -5% | +10% | +3-5% |
+| V5 | 80维 | VDW自适应 | -5% | +10% | +5-8% |
+
+**V5性能提升来源**:
+- ✅ 更物理准确的结合位点定义
+- ✅ 考虑原子大小差异（VDW半径）
+- ✅ 使用所有原子（包括侧链）
+- ✅ 更合理的正负样本分布
+- ✅ 保留V4的丰富化学信息
+
+---
+
+## 迁移指南
+
+### 从V4迁移到V5
+
+1. **重新计算VDW距离标签** (已完成):
+```bash
+python scripts/calculate_distances_vdw.py \
+    --data-root data \
+    --output data/residue_ligand_distances_vdw.pt \
+    --workers 32
+```
+
+2. **使用V5配置**:
+```bash
+python scripts/train_v5.py --config configs/pocket_gvp_v5.yaml --amp
+```
+
+3. **模型无需修改**: 只是距离标签变化，模型架构保持不变
+
+### 从V3迁移到V4
+
+1. **提取新配体特征**:
+```bash
+python /home/husrcf/Code/ProtBind/extract_ligand_features_v3.py \
+    --input data/raw \
+    --output data/ligand_features_v3 \
+    --conformers 50 \
+    --workers 32
+```
+
+2. **使用V4配置**:
+```bash
+python scripts/train_v4.py --config configs/pocket_gvp_v4.yaml --amp
+```
+
+3. **模型无需修改**: 只是输入维度变化，模型架构保持不变
+
+---
+
+## 文档索引
+
+- **架构文档**: `MODEL_ARCHITECTURE.md`
+- **特征对比**: `FEATURE_EXTRACTION_COMPARISON.md`
+- **配体特征升级**: `LIGAND_FEATURES_V2_UPGRADE.md`
+- **数据加载器测试**: `DATALOADER_TEST_REPORT.md`
+- **训练指南**: `TRAINING_GUIDE.md`
+
+---
+
+## 更新日志
+
+### 2026-02-16 (V6m7)
+- ✅ 创建 V6m7 版本
+- ✅ 添加 Label Smoothing (0.1) 到 Focal Loss
+- ✅ 使用 PyTorch 内置 `F.cross_entropy(..., label_smoothing=0.1)`
+- ✅ 创建 `scripts/train_v6m7.py`
+- ✅ 防止过拟合，提高泛化能力
+- ✅ 与 V6m6 checkpoint 完全兼容
+
+### 2026-02-15 (V6m6)
+- ✅ 创建 V6m6 版本
+- ✅ 实现 3D Ligand GVP Encoder（使用真实 3D 坐标）
+- ✅ 移除 Distance-Aware Attention（避免数据泄漏风险）
+- ✅ 添加 PhysChem Modality Dropout（独立于 ESM dropout）
+- ✅ 创建 `src/models/ligand_encoder_3d.py`
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m6.py`
+- ✅ 修改 `src/data/collate.py` 支持 `ligand_pos`
+- ✅ 创建 `scripts/train_v6m6.py`
+- ✅ 更新 `configs/pocket_gvp_v6.yaml` 添加 `physchem_dropout_prob`
+- ✅ 数据泄漏风险分析和解决方案文档化
+
+### 2026-02-15 (V6m5)
+- ✅ 创建 V6m5 版本
+- ✅ 将 PhysChem Encoder 激活函数从 ReLU 改为 GELU
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m5.py`
+- ✅ 创建 `scripts/train_v6m5.py`
+- ✅ 保持其他架构与 V6m4 一致
+
+### 2026-02-14 (V6m4)
+- ✅ 创建 V6m4 版本
+- ✅ 在 PhysChem Encoder 中添加 LayerNorm
+- ✅ 修复特征尺度不匹配问题
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m4.py`
+- ✅ 创建 `scripts/train_v6m4.py`
+- ✅ 更新 VERSION.md 添加详细的痛点分析
+
+### 2026-02-13 (V6m3)
+- ✅ 创建 V6m3 版本
+- ✅ 实现 Dice Loss + Focal Loss 组合损失函数
+- ✅ 创建 `scripts/train_v6m3.py`
+- ✅ 添加损失权重配置（dice_weight, focal_weight）
+- ✅ 更新 TensorBoard 日志记录损失分量
+
+### 2026-02-11 (V6m2)
+- ✅ 创建 V6m2 版本
+- ✅ 实现 PhysChem MLP Encoder（35D -> 64D）
+- ✅ 创建 `src/models/pocket_gvp_fusion_v6m2.py`
+- ✅ 创建 `scripts/train_v6m2.py`
+- ✅ 捕捉理化特征的非线性交互
+
+### 2026-02-10 (V6)
+- ✅ 创建V6版本
+- ✅ 实现双向交叉注意力机制 (BidirectionalCrossAttentionBlock)
+- ✅ 蛋白质和配体特征相互增强
+- ✅ 更好地建模induced fit现象
+- ✅ 创建pocket_gvp_fusion_v6.py
+- ✅ 创建pocket_dataset_v6.py
+- ✅ 创建train_v6.py
+- ✅ 创建pocket_gvp_v6.yaml
+- ✅ 更新VERSION.md添加V6说明
+
+### 2026-02-08 (V5)
+- ✅ 创建V5版本
+- ✅ 实现BioLiP标准VDW半径距离计算
+- ✅ 使用所有原子（包括侧链）计算距离
+- ✅ 生成19,032个复合物的VDW距离标签
+- ✅ 创建pocket_dataset_v5.py
+- ✅ 创建train_v5.py
+- ✅ 创建pocket_gvp_v5.yaml
+- ✅ 验证所有蛋白质都有合理的结合位点比例
+
+### 2026-02-08 (V4)
+- ✅ 创建V4版本
+- ✅ 添加80维配体特征支持
+- ✅ 创建pocket_dataset_v4.py
+- ✅ 创建train_v4.py
+- ✅ 创建pocket_gvp_v4.yaml
+- ✅ 测试数据加载器对齐
+
+### 2026-02-07
+- ✅ 恢复TensorBoard完整日志
+- ✅ 清空文件黑名单
+- ✅ 创建数据加载器测试报告
+
+### 2026-02-06
+- ✅ ESM-2迁移完成
+- ✅ 修复134个损坏文件
+- ✅ 添加torch.compile支持
+- ✅ 修复AMP dtype问题
+
+---
+
+**当前推荐版本**: V7m3 (Cluster-Weighted Loss + MMseqs2 Strict Splits + Enhanced Features)
+**实验版本**: V7m2 (IoU Loss + Enhanced Features)
+**稳定版本**: V7 (Enhanced Features: Ligand V4 96D + Complete Features V2 94D)
+**历史稳定版本**: V6m9 (Channel-wise Gating + q_mask + Global Token + Gradient Checkpointing)

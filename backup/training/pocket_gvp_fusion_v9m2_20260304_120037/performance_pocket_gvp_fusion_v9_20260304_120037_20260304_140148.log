@@ -1,0 +1,76 @@
+
+[Performance Monitor] Epoch 2 Batch 9
+================================================================================
+Timing (ms):
+  backward            :  654.00 ±  54.49 (min:  510.71, max:  719.72)
+  data_loading        :  764.99 ± 224.94 (min:  377.10, max: 1133.00)
+  forward             :  537.17 ±  37.17 (min:  436.76, max:  567.42)
+  loss_computation    :    6.90 ±   2.03 (min:    0.93, max:    8.27)
+  optimizer_step      :   15.22 ±   8.15 (min:   12.23, max:   39.63)
+
+GPU Memory (GB):
+  Used: 8.42 / 43.04
+  Peak: 8.95
+  Utilization: 19.6%
+
+System:
+  CPU: 2.2%
+  RAM: 12.5%
+================================================================================
+
+[Performance Monitor] Epoch 2 Batch 19
+================================================================================
+Timing (ms):
+  backward            :  655.96 ±  47.51 (min:  510.71, max:  719.72)
+  data_loading        :  756.41 ± 206.30 (min:  377.10, max: 1133.00)
+  forward             :  539.44 ±  35.02 (min:  436.76, max:  567.42)
+  loss_computation    :    7.56 ±   2.10 (min:    0.93, max:   13.96)
+  optimizer_step      :   15.23 ±   8.13 (min:   12.23, max:   39.63)
+
+GPU Memory (GB):
+  Used: 8.50 / 43.04
+  Peak: 8.95
+  Utilization: 19.7%
+
+System:
+  CPU: 1.6%
+  RAM: 12.2%
+================================================================================
+
+[Performance Monitor] Epoch 2 Batch 29
+================================================================================
+Timing (ms):
+  backward            :  650.15 ±  52.29 (min:  510.71, max:  719.72)
+  data_loading        :  737.46 ± 184.43 (min:  377.10, max: 1133.00)
+  forward             :  535.46 ±  38.64 (min:  434.60, max:  567.42)
+  loss_computation    :    7.55 ±   1.72 (min:    0.93, max:   13.96)
+  optimizer_step      :   15.18 ±   8.13 (min:   12.21, max:   39.63)
+
+GPU Memory (GB):
+  Used: 8.40 / 43.04
+  Peak: 8.96
+  Utilization: 19.5%
+
+System:
+  CPU: 1.6%
+  RAM: 12.1%
+================================================================================
+
+[Performance Monitor] Epoch 2 Batch 39
+================================================================================
+Timing (ms):
+  backward            :  642.20 ±  62.35 (min:  436.32, max:  719.72)
+  data_loading        :  746.32 ± 191.10 (min:  377.10, max: 1133.00)
+  forward             :  528.67 ±  48.43 (min:  362.73, max:  567.42)
+  loss_computation    :    7.59 ±   1.53 (min:    0.93, max:   13.96)
+  optimizer_step      :   15.15 ±   8.13 (min:   12.21, max:   39.63)
+
+GPU Memory (GB):
+  Used: 8.23 / 43.04
+  Peak: 8.96
+  Utilization: 19.1%
+
+System:
+  CPU: 1.6%
+  RAM: 11.9%
+================================================================================

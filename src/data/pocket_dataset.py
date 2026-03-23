@@ -91,26 +91,78 @@ def save_splits(
 
 
 def load_splits(split_path: str) -> Tuple[List[str], List[str], List[str]]:
-    """Load data splits from a file."""
+    """
+    Load data splits from a file.
+
+    Supports two formats:
+    1. Legacy format (2 columns): split\tpdb_id
+    2. MMseqs2 format (3 columns): split\tpdb_id\trepresentative_id
+
+    The representative_id column (if present) is ignored for backward compatibility.
+    """
     train_ids, val_ids, test_ids = [], [], []
-    
+
     with open(split_path, 'r') as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
-            
+
             parts = line.split('\t')
-            if len(parts) == 2:
-                split, pdb_id = parts
+            if len(parts) >= 2:  # Support both 2-column and 3-column formats
+                split, pdb_id = parts[0], parts[1]
+                # parts[2] (representative_id) is ignored if present
+
                 if split == 'train':
                     train_ids.append(pdb_id)
                 elif split == 'val':
                     val_ids.append(pdb_id)
                 elif split == 'test':
                     test_ids.append(pdb_id)
-    
+
     return train_ids, val_ids, test_ids
+
+
+def load_splits_with_cluster_size(split_path: str) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
+    """
+    Load data splits with cluster size information.
+
+    Supports formats:
+    1. Legacy format (2 columns): split\tpdb_id
+    2. MMseqs2 format (3 columns): split\tpdb_id\trepresentative_id
+    3. MMseqs2 with cluster size (4 columns): split\tpdb_id\trepresentative_id\tcluster_size
+
+    Returns:
+        train_ids: List of training PDB IDs
+        val_ids: List of validation PDB IDs
+        test_ids: List of test PDB IDs
+        cluster_sizes: Dict mapping pdb_id -> cluster_size (default 1 if not provided)
+    """
+    train_ids, val_ids, test_ids = [], [], []
+    cluster_sizes = {}
+
+    with open(split_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                split, pdb_id = parts[0], parts[1]
+
+                # Extract cluster size if available (4th column)
+                cluster_size = int(parts[3]) if len(parts) >= 4 else 1
+                cluster_sizes[pdb_id] = cluster_size
+
+                if split == 'train':
+                    train_ids.append(pdb_id)
+                elif split == 'val':
+                    val_ids.append(pdb_id)
+                elif split == 'test':
+                    test_ids.append(pdb_id)
+
+    return train_ids, val_ids, test_ids, cluster_sizes
 
 
 class PocketDataset(Dataset):

@@ -1,0 +1,1672 @@
+
+[Performance Monitor] Epoch 4 Batch 9
+================================================================================
+Timing (ms):
+  backward            :  646.24 ±  40.65 (min:  527.45, max:  678.24)
+  data_loading        :  671.59 ± 202.20 (min:  456.52, max: 1109.98)
+  forward             :  545.18 ±  37.49 (min:  434.65, max:  569.16)
+  loss_computation    :    7.51 ±   2.29 (min:    0.93, max:    9.29)
+  optimizer_step      :   16.12 ±   8.36 (min:   12.74, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.61 / 44.20
+  Peak: 8.96
+  Utilization: 19.5%
+
+System:
+  CPU: 2.1%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 19
+================================================================================
+Timing (ms):
+  backward            :  644.84 ±  37.40 (min:  527.45, max:  691.56)
+  data_loading        :  661.35 ± 205.47 (min:  456.52, max: 1192.57)
+  forward             :  539.86 ±  33.57 (min:  434.65, max:  569.16)
+  loss_computation    :    7.80 ±   1.69 (min:    0.93, max:    9.29)
+  optimizer_step      :   16.08 ±   8.29 (min:   12.74, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.50 / 44.20
+  Peak: 8.96
+  Utilization: 19.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 29
+================================================================================
+Timing (ms):
+  backward            :  633.49 ±  54.59 (min:  514.11, max:  706.07)
+  data_loading        :  688.11 ± 193.17 (min:  456.52, max: 1192.57)
+  forward             :  526.88 ±  47.54 (min:  416.81, max:  570.68)
+  loss_computation    :    7.88 ±   1.40 (min:    0.93, max:    9.29)
+  optimizer_step      :   16.23 ±   8.30 (min:   12.74, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.14 / 44.20
+  Peak: 8.96
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 39
+================================================================================
+Timing (ms):
+  backward            :  621.35 ±  58.37 (min:  503.63, max:  706.07)
+  data_loading        :  677.20 ± 186.15 (min:  421.76, max: 1192.57)
+  forward             :  517.04 ±  50.54 (min:  411.30, max:  570.68)
+  loss_computation    :    7.94 ±   1.23 (min:    0.93, max:    9.29)
+  optimizer_step      :   16.16 ±   8.27 (min:   12.74, max:   41.09)
+
+GPU Memory (GB):
+  Used: 7.90 / 44.20
+  Peak: 8.96
+  Utilization: 17.9%
+
+System:
+  CPU: 1.7%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 49
+================================================================================
+Timing (ms):
+  backward            :  620.09 ±  62.89 (min:  469.74, max:  706.07)
+  data_loading        :  675.62 ± 190.94 (min:  305.02, max: 1192.57)
+  forward             :  516.37 ±  52.67 (min:  399.36, max:  570.68)
+  loss_computation    :    8.00 ±   1.16 (min:    0.93, max:   10.07)
+  optimizer_step      :   16.12 ±   8.28 (min:   12.74, max:   41.09)
+
+GPU Memory (GB):
+  Used: 7.89 / 44.20
+  Peak: 8.96
+  Utilization: 17.8%
+
+System:
+  CPU: 1.7%
+  RAM: 9.1%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 59
+================================================================================
+Timing (ms):
+  backward            :  624.36 ±  60.89 (min:  469.74, max:  706.07)
+  data_loading        :  683.23 ± 187.80 (min:  305.02, max: 1192.57)
+  forward             :  519.42 ±  50.69 (min:  399.36, max:  570.68)
+  loss_computation    :    8.06 ±   1.14 (min:    0.93, max:   10.94)
+  optimizer_step      :   16.08 ±   8.27 (min:   12.66, max:   41.09)
+
+GPU Memory (GB):
+  Used: 7.98 / 44.20
+  Peak: 8.96
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 69
+================================================================================
+Timing (ms):
+  backward            :  629.72 ±  60.18 (min:  469.74, max:  706.07)
+  data_loading        :  688.14 ± 191.17 (min:  305.02, max: 1192.57)
+  forward             :  522.82 ±  49.35 (min:  399.36, max:  570.68)
+  loss_computation    :    8.09 ±   1.08 (min:    0.93, max:   10.94)
+  optimizer_step      :   16.04 ±   8.25 (min:   12.66, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.08 / 44.20
+  Peak: 8.96
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 79
+================================================================================
+Timing (ms):
+  backward            :  629.44 ±  60.91 (min:  469.74, max:  708.83)
+  data_loading        :  699.32 ± 195.88 (min:  305.02, max: 1192.57)
+  forward             :  521.25 ±  50.29 (min:  399.36, max:  570.68)
+  loss_computation    :    8.07 ±   1.02 (min:    0.93, max:   10.94)
+  optimizer_step      :   16.02 ±   8.23 (min:   12.66, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.04 / 44.20
+  Peak: 8.96
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 89
+================================================================================
+Timing (ms):
+  backward            :  629.77 ±  58.24 (min:  469.74, max:  708.83)
+  data_loading        :  703.74 ± 200.49 (min:  305.02, max: 1192.57)
+  forward             :  522.02 ±  48.42 (min:  399.36, max:  570.68)
+  loss_computation    :    8.10 ±   1.05 (min:    0.93, max:   11.95)
+  optimizer_step      :   16.00 ±   8.25 (min:   12.66, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.05 / 44.20
+  Peak: 8.96
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 99
+================================================================================
+Timing (ms):
+  backward            :  628.42 ±  58.08 (min:  469.74, max:  708.83)
+  data_loading        :  702.50 ± 195.32 (min:  305.02, max: 1192.57)
+  forward             :  521.49 ±  48.32 (min:  399.36, max:  577.80)
+  loss_computation    :    8.14 ±   1.06 (min:    0.93, max:   11.95)
+  optimizer_step      :   15.99 ±   8.24 (min:   12.66, max:   41.09)
+
+GPU Memory (GB):
+  Used: 8.02 / 44.20
+  Peak: 8.96
+  Utilization: 18.1%
+
+System:
+  CPU: 1.7%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 109
+================================================================================
+Timing (ms):
+  backward            :  628.77 ±  59.42 (min:  469.74, max:  717.56)
+  data_loading        :  703.85 ± 193.32 (min:  305.02, max: 1192.57)
+  forward             :  520.45 ±  48.24 (min:  399.36, max:  577.80)
+  loss_computation    :    8.24 ±   0.82 (min:    7.54, max:   11.95)
+  optimizer_step      :   15.98 ±   8.23 (min:   12.66, max:   40.96)
+
+GPU Memory (GB):
+  Used: 7.99 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 119
+================================================================================
+Timing (ms):
+  backward            :  628.35 ±  62.53 (min:  469.74, max:  717.56)
+  data_loading        :  713.07 ± 191.61 (min:  305.02, max: 1174.32)
+  forward             :  519.07 ±  50.19 (min:  399.36, max:  577.80)
+  loss_computation    :    8.30 ±   0.89 (min:    7.54, max:   11.95)
+  optimizer_step      :   15.97 ±   8.22 (min:   12.66, max:   40.96)
+
+GPU Memory (GB):
+  Used: 7.95 / 44.20
+  Peak: 8.95
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 129
+================================================================================
+Timing (ms):
+  backward            :  630.77 ±  60.79 (min:  469.74, max:  717.56)
+  data_loading        :  711.93 ± 193.78 (min:  305.02, max: 1174.32)
+  forward             :  521.50 ±  49.35 (min:  374.22, max:  577.80)
+  loss_computation    :    8.29 ±   0.89 (min:    7.54, max:   11.95)
+  optimizer_step      :   15.91 ±   8.21 (min:   12.66, max:   40.96)
+
+GPU Memory (GB):
+  Used: 8.03 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 139
+================================================================================
+Timing (ms):
+  backward            :  634.43 ±  60.48 (min:  469.74, max:  717.56)
+  data_loading        :  713.59 ± 193.45 (min:  305.02, max: 1174.32)
+  forward             :  526.69 ±  58.41 (min:  374.22, max:  831.99)
+  loss_computation    :    8.29 ±   0.89 (min:    7.54, max:   11.95)
+  optimizer_step      :   15.91 ±   8.22 (min:   12.66, max:   40.96)
+
+GPU Memory (GB):
+  Used: 8.10 / 44.20
+  Peak: 8.95
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 149
+================================================================================
+Timing (ms):
+  backward            :  634.15 ±  58.96 (min:  465.69, max:  717.56)
+  data_loading        :  711.04 ± 188.78 (min:  400.54, max: 1174.32)
+  forward             :  525.81 ±  58.59 (min:  374.22, max:  831.99)
+  loss_computation    :    8.27 ±   0.87 (min:    7.54, max:   11.95)
+  optimizer_step      :   15.91 ±   8.23 (min:   12.66, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.08 / 44.20
+  Peak: 8.95
+  Utilization: 18.3%
+
+System:
+  CPU: 1.7%
+  RAM: 9.1%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 159
+================================================================================
+Timing (ms):
+  backward            :  636.30 ±  58.35 (min:  465.69, max:  717.56)
+  data_loading        :  708.78 ± 190.83 (min:  400.54, max: 1174.32)
+  forward             :  527.14 ±  57.97 (min:  374.22, max:  831.99)
+  loss_computation    :    8.28 ±   0.87 (min:    7.54, max:   11.95)
+  optimizer_step      :   15.91 ±   8.24 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.12 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 169
+================================================================================
+Timing (ms):
+  backward            :  634.04 ±  61.68 (min:  434.93, max:  717.56)
+  data_loading        :  701.99 ± 185.93 (min:  400.54, max: 1174.32)
+  forward             :  524.75 ±  60.45 (min:  348.47, max:  831.99)
+  loss_computation    :    8.26 ±   0.86 (min:    7.55, max:   11.95)
+  optimizer_step      :   15.92 ±   8.26 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.06 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.7%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 179
+================================================================================
+Timing (ms):
+  backward            :  636.80 ±  58.87 (min:  434.93, max:  717.56)
+  data_loading        :  697.00 ± 178.40 (min:  400.54, max: 1088.60)
+  forward             :  527.97 ±  58.63 (min:  348.47, max:  831.99)
+  loss_computation    :    8.27 ±   0.85 (min:    7.55, max:   11.95)
+  optimizer_step      :   15.93 ±   8.28 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.15 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 189
+================================================================================
+Timing (ms):
+  backward            :  636.90 ±  61.56 (min:  434.93, max:  717.56)
+  data_loading        :  692.13 ± 172.63 (min:  400.54, max: 1088.60)
+  forward             :  530.01 ±  67.29 (min:  348.47, max:  831.99)
+  loss_computation    :    8.30 ±   0.78 (min:    7.55, max:   11.47)
+  optimizer_step      :   15.94 ±   8.29 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.14 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 199
+================================================================================
+Timing (ms):
+  backward            :  641.19 ±  59.37 (min:  434.93, max:  717.56)
+  data_loading        :  688.32 ± 175.28 (min:  393.10, max: 1088.60)
+  forward             :  533.02 ±  65.79 (min:  348.47, max:  831.99)
+  loss_computation    :    8.31 ±   0.81 (min:    7.55, max:   11.47)
+  optimizer_step      :   15.94 ±   8.29 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.24 / 44.20
+  Peak: 8.95
+  Utilization: 18.6%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 209
+================================================================================
+Timing (ms):
+  backward            :  639.79 ±  59.18 (min:  434.93, max:  709.10)
+  data_loading        :  688.21 ± 173.80 (min:  393.10, max: 1088.60)
+  forward             :  532.25 ±  66.00 (min:  348.47, max:  831.99)
+  loss_computation    :    8.33 ±   0.84 (min:    7.55, max:   11.85)
+  optimizer_step      :   15.94 ±   8.29 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.23 / 44.20
+  Peak: 8.95
+  Utilization: 18.6%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 219
+================================================================================
+Timing (ms):
+  backward            :  639.70 ±  57.16 (min:  434.93, max:  709.10)
+  data_loading        :  684.57 ± 168.62 (min:  393.10, max: 1045.55)
+  forward             :  532.16 ±  65.45 (min:  348.47, max:  831.99)
+  loss_computation    :    8.33 ±   0.82 (min:    7.55, max:   11.85)
+  optimizer_step      :   15.94 ±   8.29 (min:   12.67, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.23 / 44.20
+  Peak: 8.95
+  Utilization: 18.6%
+
+System:
+  CPU: 1.6%
+  RAM: 9.2%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 229
+================================================================================
+Timing (ms):
+  backward            :  640.52 ±  56.80 (min:  434.93, max:  709.10)
+  data_loading        :  677.38 ± 167.89 (min:  393.10, max: 1045.55)
+  forward             :  532.69 ±  64.65 (min:  348.47, max:  831.99)
+  loss_computation    :    8.35 ±   0.82 (min:    7.55, max:   11.85)
+  optimizer_step      :   15.94 ±   8.28 (min:   12.81, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.24 / 44.20
+  Peak: 8.95
+  Utilization: 18.6%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 239
+================================================================================
+Timing (ms):
+  backward            :  645.43 ±  53.80 (min:  434.93, max:  709.10)
+  data_loading        :  677.22 ± 169.31 (min:  393.10, max: 1086.95)
+  forward             :  533.61 ±  54.15 (min:  348.47, max:  827.21)
+  loss_computation    :    8.35 ±   0.83 (min:    7.55, max:   11.85)
+  optimizer_step      :   15.94 ±   8.29 (min:   12.81, max:   41.24)
+
+GPU Memory (GB):
+  Used: 8.33 / 44.20
+  Peak: 8.95
+  Utilization: 18.8%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 249
+================================================================================
+Timing (ms):
+  backward            :  646.53 ±  54.49 (min:  434.93, max:  709.10)
+  data_loading        :  687.00 ± 176.38 (min:  393.10, max: 1086.95)
+  forward             :  534.01 ±  54.50 (min:  348.47, max:  827.21)
+  loss_computation    :    8.34 ±   0.83 (min:    7.59, max:   11.85)
+  optimizer_step      :   15.95 ±   8.26 (min:   12.81, max:   41.19)
+
+GPU Memory (GB):
+  Used: 8.34 / 44.20
+  Peak: 8.95
+  Utilization: 18.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 259
+================================================================================
+Timing (ms):
+  backward            :  641.33 ±  58.77 (min:  434.93, max:  709.10)
+  data_loading        :  686.57 ± 179.23 (min:  393.10, max: 1086.95)
+  forward             :  529.81 ±  57.50 (min:  348.47, max:  827.21)
+  loss_computation    :    8.30 ±   0.77 (min:    7.59, max:   11.85)
+  optimizer_step      :   15.95 ±   8.28 (min:   12.81, max:   41.19)
+
+GPU Memory (GB):
+  Used: 8.23 / 44.20
+  Peak: 8.95
+  Utilization: 18.6%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 269
+================================================================================
+Timing (ms):
+  backward            :  643.23 ±  53.54 (min:  458.21, max:  708.58)
+  data_loading        :  695.57 ± 177.90 (min:  393.10, max: 1086.95)
+  forward             :  532.60 ±  54.10 (min:  364.80, max:  827.21)
+  loss_computation    :    8.33 ±   0.78 (min:    7.61, max:   11.85)
+  optimizer_step      :   15.96 ±   8.28 (min:   12.81, max:   41.30)
+
+GPU Memory (GB):
+  Used: 8.30 / 44.20
+  Peak: 8.95
+  Utilization: 18.8%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 279
+================================================================================
+Timing (ms):
+  backward            :  639.97 ±  60.68 (min:  353.41, max:  708.58)
+  data_loading        :  690.46 ± 181.10 (min:  393.10, max: 1086.95)
+  forward             :  530.16 ±  58.47 (min:  300.27, max:  827.21)
+  loss_computation    :    8.38 ±   0.83 (min:    7.61, max:   11.85)
+  optimizer_step      :   15.96 ±   8.27 (min:   12.81, max:   41.30)
+
+GPU Memory (GB):
+  Used: 8.23 / 44.20
+  Peak: 8.95
+  Utilization: 18.6%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 289
+================================================================================
+Timing (ms):
+  backward            :  636.37 ±  62.56 (min:  353.41, max:  708.58)
+  data_loading        :  692.09 ± 178.34 (min:  393.10, max: 1086.95)
+  forward             :  524.40 ±  52.35 (min:  300.27, max:  569.25)
+  loss_computation    :    8.36 ±   0.84 (min:    7.61, max:   11.85)
+  optimizer_step      :   16.03 ±   8.26 (min:   12.98, max:   41.30)
+
+GPU Memory (GB):
+  Used: 8.15 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 299
+================================================================================
+Timing (ms):
+  backward            :  630.83 ±  67.34 (min:  353.41, max:  708.58)
+  data_loading        :  686.05 ± 182.15 (min:  363.29, max: 1086.95)
+  forward             :  519.76 ±  56.62 (min:  300.27, max:  569.25)
+  loss_computation    :    8.31 ±   0.76 (min:    7.61, max:   11.85)
+  optimizer_step      :   16.04 ±   8.26 (min:   12.99, max:   41.30)
+
+GPU Memory (GB):
+  Used: 8.03 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 309
+================================================================================
+Timing (ms):
+  backward            :  631.36 ±  67.82 (min:  353.41, max:  708.58)
+  data_loading        :  684.67 ± 181.40 (min:  363.29, max: 1086.95)
+  forward             :  520.70 ±  56.91 (min:  300.27, max:  569.25)
+  loss_computation    :    8.33 ±   0.73 (min:    7.61, max:   10.84)
+  optimizer_step      :   16.04 ±   8.25 (min:   12.99, max:   41.30)
+
+GPU Memory (GB):
+  Used: 8.04 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.7%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 319
+================================================================================
+Timing (ms):
+  backward            :  628.70 ±  69.04 (min:  353.41, max:  708.58)
+  data_loading        :  680.76 ± 184.07 (min:  363.29, max: 1086.95)
+  forward             :  520.12 ±  58.01 (min:  300.27, max:  569.25)
+  loss_computation    :    8.27 ±   0.67 (min:    7.56, max:   10.84)
+  optimizer_step      :   16.04 ±   8.25 (min:   12.99, max:   41.30)
+
+GPU Memory (GB):
+  Used: 8.02 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 329
+================================================================================
+Timing (ms):
+  backward            :  625.77 ±  69.51 (min:  353.41, max:  708.58)
+  data_loading        :  687.66 ± 186.72 (min:  363.29, max: 1086.95)
+  forward             :  518.19 ±  58.65 (min:  300.27, max:  571.24)
+  loss_computation    :    8.25 ±   0.67 (min:    7.56, max:   10.84)
+  optimizer_step      :   16.03 ±   8.25 (min:   12.94, max:   41.30)
+
+GPU Memory (GB):
+  Used: 7.95 / 44.20
+  Peak: 8.95
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 339
+================================================================================
+Timing (ms):
+  backward            :  623.23 ±  68.53 (min:  353.41, max:  708.58)
+  data_loading        :  686.05 ± 186.43 (min:  363.29, max: 1073.54)
+  forward             :  517.02 ±  58.68 (min:  300.27, max:  571.32)
+  loss_computation    :    8.24 ±   0.67 (min:    7.56, max:   10.84)
+  optimizer_step      :   16.02 ±   8.24 (min:   12.92, max:   41.30)
+
+GPU Memory (GB):
+  Used: 7.92 / 44.20
+  Peak: 8.95
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 349
+================================================================================
+Timing (ms):
+  backward            :  621.71 ±  68.89 (min:  353.41, max:  708.58)
+  data_loading        :  678.86 ± 179.64 (min:  363.29, max: 1065.47)
+  forward             :  516.64 ±  59.53 (min:  300.27, max:  571.32)
+  loss_computation    :    8.28 ±   0.71 (min:    7.56, max:   10.84)
+  optimizer_step      :   16.04 ±   8.25 (min:   12.92, max:   41.30)
+
+GPU Memory (GB):
+  Used: 7.90 / 44.20
+  Peak: 8.95
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 359
+================================================================================
+Timing (ms):
+  backward            :  624.13 ±  66.82 (min:  353.41, max:  695.45)
+  data_loading        :  675.83 ± 179.75 (min:  352.72, max: 1042.89)
+  forward             :  518.77 ±  58.32 (min:  300.27, max:  571.32)
+  loss_computation    :    8.30 ±   0.71 (min:    7.56, max:   10.84)
+  optimizer_step      :   16.03 ±   8.23 (min:   12.92, max:   41.30)
+
+GPU Memory (GB):
+  Used: 7.95 / 44.20
+  Peak: 8.95
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 369
+================================================================================
+Timing (ms):
+  backward            :  622.51 ±  66.87 (min:  353.41, max:  695.45)
+  data_loading        :  674.04 ± 184.09 (min:  352.72, max: 1070.87)
+  forward             :  517.46 ±  58.26 (min:  300.27, max:  571.32)
+  loss_computation    :    8.29 ±   0.74 (min:    7.56, max:   10.84)
+  optimizer_step      :   16.01 ±   8.22 (min:   12.92, max:   41.03)
+
+GPU Memory (GB):
+  Used: 7.92 / 44.20
+  Peak: 8.95
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 379
+================================================================================
+Timing (ms):
+  backward            :  621.26 ±  64.05 (min:  424.73, max:  695.45)
+  data_loading        :  676.97 ± 183.06 (min:  352.72, max: 1070.87)
+  forward             :  515.56 ±  56.32 (min:  342.32, max:  571.32)
+  loss_computation    :    8.25 ±   0.71 (min:    7.56, max:   10.78)
+  optimizer_step      :   16.02 ±   8.24 (min:   12.92, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.88 / 44.20
+  Peak: 8.95
+  Utilization: 17.8%
+
+System:
+  CPU: 1.7%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 389
+================================================================================
+Timing (ms):
+  backward            :  626.13 ±  62.12 (min:  424.73, max:  706.27)
+  data_loading        :  674.91 ± 186.80 (min:  352.72, max: 1070.87)
+  forward             :  519.83 ±  54.05 (min:  342.32, max:  576.34)
+  loss_computation    :    8.26 ±   0.76 (min:    7.56, max:   10.78)
+  optimizer_step      :   15.95 ±   8.23 (min:   12.92, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.99 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 399
+================================================================================
+Timing (ms):
+  backward            :  629.19 ±  60.06 (min:  439.60, max:  706.27)
+  data_loading        :  685.73 ± 183.65 (min:  352.72, max: 1070.87)
+  forward             :  523.15 ±  51.64 (min:  342.32, max:  576.34)
+  loss_computation    :    8.25 ±   0.75 (min:    7.56, max:   10.78)
+  optimizer_step      :   15.94 ±   8.23 (min:   12.92, max:   41.05)
+
+GPU Memory (GB):
+  Used: 8.05 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 409
+================================================================================
+Timing (ms):
+  backward            :  626.70 ±  63.13 (min:  439.60, max:  706.27)
+  data_loading        :  695.94 ± 187.27 (min:  352.72, max: 1070.87)
+  forward             :  520.27 ±  54.57 (min:  342.32, max:  576.34)
+  loss_computation    :    8.16 ±   0.66 (min:    7.56, max:   10.78)
+  optimizer_step      :   15.93 ±   8.26 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.99 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 419
+================================================================================
+Timing (ms):
+  backward            :  633.44 ±  61.92 (min:  439.60, max:  710.11)
+  data_loading        :  698.97 ± 183.43 (min:  352.72, max: 1070.87)
+  forward             :  524.21 ±  52.39 (min:  342.32, max:  576.34)
+  loss_computation    :    8.19 ±   0.71 (min:    7.61, max:   10.78)
+  optimizer_step      :   15.92 ±   8.26 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 8.09 / 44.20
+  Peak: 8.95
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 429
+================================================================================
+Timing (ms):
+  backward            :  630.11 ±  65.75 (min:  439.60, max:  710.11)
+  data_loading        :  693.82 ± 180.23 (min:  352.72, max: 1070.87)
+  forward             :  521.07 ±  55.80 (min:  342.32, max:  576.34)
+  loss_computation    :    8.22 ±   0.76 (min:    7.60, max:   10.91)
+  optimizer_step      :   15.95 ±   8.26 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 8.02 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 439
+================================================================================
+Timing (ms):
+  backward            :  626.60 ±  67.08 (min:  439.60, max:  710.11)
+  data_loading        :  696.23 ± 181.98 (min:  352.72, max: 1070.87)
+  forward             :  517.35 ±  57.00 (min:  342.32, max:  576.34)
+  loss_computation    :    8.24 ±   0.77 (min:    7.60, max:   10.91)
+  optimizer_step      :   15.96 ±   8.27 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.92 / 44.20
+  Peak: 8.95
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 449
+================================================================================
+Timing (ms):
+  backward            :  626.31 ±  67.84 (min:  441.08, max:  710.11)
+  data_loading        :  704.04 ± 184.51 (min:  352.72, max: 1070.87)
+  forward             :  516.80 ±  57.00 (min:  370.93, max:  576.34)
+  loss_computation    :    8.25 ±   0.78 (min:    7.60, max:   10.91)
+  optimizer_step      :   15.94 ±   8.28 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.91 / 44.20
+  Peak: 8.95
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 459
+================================================================================
+Timing (ms):
+  backward            :  624.66 ±  69.34 (min:  441.08, max:  710.11)
+  data_loading        :  702.00 ± 181.53 (min:  381.36, max: 1070.87)
+  forward             :  516.43 ±  57.47 (min:  370.93, max:  576.34)
+  loss_computation    :    8.31 ±   0.85 (min:    7.60, max:   11.23)
+  optimizer_step      :   15.95 ±   8.28 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.88 / 44.20
+  Peak: 8.95
+  Utilization: 17.8%
+
+System:
+  CPU: 1.7%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 469
+================================================================================
+Timing (ms):
+  backward            :  619.79 ±  73.29 (min:  441.08, max:  710.11)
+  data_loading        :  697.64 ± 178.43 (min:  381.36, max: 1070.50)
+  forward             :  512.43 ±  61.24 (min:  361.39, max:  579.91)
+  loss_computation    :    8.38 ±   0.88 (min:    7.60, max:   11.39)
+  optimizer_step      :   15.96 ±   8.28 (min:   12.79, max:   41.05)
+
+GPU Memory (GB):
+  Used: 7.75 / 44.20
+  Peak: 8.95
+  Utilization: 17.5%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 479
+================================================================================
+Timing (ms):
+  backward            :  624.20 ±  73.00 (min:  441.08, max:  710.11)
+  data_loading        :  697.89 ± 178.47 (min:  381.36, max: 1070.50)
+  forward             :  516.54 ±  60.65 (min:  361.39, max:  579.91)
+  loss_computation    :    8.40 ±   0.87 (min:    7.60, max:   11.39)
+  optimizer_step      :   15.96 ±   8.27 (min:   12.79, max:   41.04)
+
+GPU Memory (GB):
+  Used: 7.85 / 44.20
+  Peak: 8.95
+  Utilization: 17.8%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 489
+================================================================================
+Timing (ms):
+  backward            :  624.90 ±  72.80 (min:  441.08, max:  710.11)
+  data_loading        :  702.12 ± 176.65 (min:  388.38, max: 1070.50)
+  forward             :  517.40 ±  60.86 (min:  361.39, max:  579.91)
+  loss_computation    :    8.45 ±   0.89 (min:    7.60, max:   11.39)
+  optimizer_step      :   15.97 ±   8.27 (min:   12.79, max:   41.04)
+
+GPU Memory (GB):
+  Used: 7.87 / 44.20
+  Peak: 8.95
+  Utilization: 17.8%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 499
+================================================================================
+Timing (ms):
+  backward            :  626.49 ±  72.46 (min:  441.08, max:  710.11)
+  data_loading        :  700.93 ± 175.85 (min:  388.38, max: 1055.06)
+  forward             :  517.57 ±  60.11 (min:  361.39, max:  579.91)
+  loss_computation    :    8.44 ±   0.89 (min:    7.60, max:   11.39)
+  optimizer_step      :   18.60 ±  29.93 (min:   12.79, max:  305.86)
+
+GPU Memory (GB):
+  Used: 7.89 / 44.20
+  Peak: 8.96
+  Utilization: 17.8%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 509
+================================================================================
+Timing (ms):
+  backward            :  629.67 ±  69.22 (min:  448.17, max:  711.46)
+  data_loading        :  691.24 ± 171.13 (min:  388.38, max: 1029.40)
+  forward             :  520.34 ±  56.99 (min:  361.39, max:  579.91)
+  loss_computation    :    8.47 ±   0.90 (min:    7.60, max:   11.39)
+  optimizer_step      :   18.61 ±  29.92 (min:   12.81, max:  305.86)
+
+GPU Memory (GB):
+  Used: 7.96 / 44.20
+  Peak: 8.96
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 519
+================================================================================
+Timing (ms):
+  backward            :  624.71 ±  69.35 (min:  448.17, max:  711.46)
+  data_loading        :  689.36 ± 171.15 (min:  388.38, max: 1029.40)
+  forward             :  516.96 ±  57.37 (min:  361.39, max:  579.91)
+  loss_computation    :    8.44 ±   0.86 (min:    7.60, max:   11.39)
+  optimizer_step      :   18.62 ±  29.92 (min:   12.85, max:  305.86)
+
+GPU Memory (GB):
+  Used: 7.87 / 44.20
+  Peak: 8.96
+  Utilization: 17.8%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 529
+================================================================================
+Timing (ms):
+  backward            :  628.72 ±  65.37 (min:  448.17, max:  711.46)
+  data_loading        :  694.73 ± 174.16 (min:  388.38, max: 1029.40)
+  forward             :  520.36 ±  53.72 (min:  361.39, max:  579.91)
+  loss_computation    :    8.48 ±   0.88 (min:    7.60, max:   11.39)
+  optimizer_step      :   18.60 ±  29.93 (min:   12.85, max:  305.86)
+
+GPU Memory (GB):
+  Used: 7.97 / 44.20
+  Peak: 8.96
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.6%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 539
+================================================================================
+Timing (ms):
+  backward            :  632.19 ±  64.52 (min:  448.17, max:  711.46)
+  data_loading        :  697.58 ± 172.37 (min:  388.38, max: 1029.40)
+  forward             :  523.43 ±  52.36 (min:  361.39, max:  579.91)
+  loss_computation    :    8.45 ±   0.87 (min:    7.60, max:   11.39)
+  optimizer_step      :   18.60 ±  29.93 (min:   12.85, max:  305.86)
+
+GPU Memory (GB):
+  Used: 8.05 / 44.20
+  Peak: 8.96
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 549
+================================================================================
+Timing (ms):
+  backward            :  634.42 ±  62.33 (min:  448.17, max:  711.46)
+  data_loading        :  693.54 ± 173.36 (min:  388.38, max: 1059.17)
+  forward             :  525.36 ±  50.29 (min:  361.39, max:  579.91)
+  loss_computation    :    8.43 ±   0.85 (min:    7.60, max:   11.39)
+  optimizer_step      :   18.60 ±  29.93 (min:   12.84, max:  305.86)
+
+GPU Memory (GB):
+  Used: 8.11 / 44.20
+  Peak: 8.96
+  Utilization: 18.3%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 559
+================================================================================
+Timing (ms):
+  backward            :  628.20 ±  69.31 (min:  448.17, max:  711.46)
+  data_loading        :  702.27 ± 173.75 (min:  388.38, max: 1059.62)
+  forward             :  518.90 ±  57.82 (min:  361.39, max:  579.91)
+  loss_computation    :    8.37 ±   0.79 (min:    7.62, max:   11.39)
+  optimizer_step      :   18.58 ±  29.93 (min:   12.77, max:  305.86)
+
+GPU Memory (GB):
+  Used: 7.95 / 44.20
+  Peak: 8.96
+  Utilization: 18.0%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 569
+================================================================================
+Timing (ms):
+  backward            :  633.69 ±  65.53 (min:  452.71, max:  711.46)
+  data_loading        :  708.81 ± 180.71 (min:  388.38, max: 1059.62)
+  forward             :  523.32 ±  54.23 (min:  363.25, max:  579.56)
+  loss_computation    :    8.34 ±   0.77 (min:    7.62, max:   11.07)
+  optimizer_step      :   18.56 ±  29.93 (min:   12.77, max:  305.86)
+
+GPU Memory (GB):
+  Used: 8.08 / 44.20
+  Peak: 8.96
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 579
+================================================================================
+Timing (ms):
+  backward            :  631.00 ±  65.22 (min:  452.71, max:  711.46)
+  data_loading        :  707.99 ± 180.46 (min:  388.38, max: 1059.62)
+  forward             :  522.06 ±  54.53 (min:  363.25, max:  579.56)
+  loss_computation    :    8.37 ±   0.80 (min:    7.62, max:   11.07)
+  optimizer_step      :   18.65 ±  30.00 (min:   12.77, max:  305.86)
+
+GPU Memory (GB):
+  Used: 8.04 / 44.20
+  Peak: 8.96
+  Utilization: 18.2%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 589
+================================================================================
+Timing (ms):
+  backward            :  628.13 ±  65.76 (min:  452.71, max:  711.46)
+  data_loading        :  701.22 ± 175.47 (min:  411.26, max: 1059.62)
+  forward             :  519.68 ±  55.02 (min:  363.25, max:  577.50)
+  loss_computation    :    8.35 ±   0.85 (min:    7.62, max:   12.08)
+  optimizer_step      :   18.71 ±  29.99 (min:   12.77, max:  305.86)
+
+GPU Memory (GB):
+  Used: 7.98 / 44.20
+  Peak: 8.96
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 599
+================================================================================
+Timing (ms):
+  backward            :  626.66 ±  65.95 (min:  452.71, max:  724.47)
+  data_loading        :  700.69 ± 177.76 (min:  411.26, max: 1059.62)
+  forward             :  517.83 ±  55.21 (min:  363.25, max:  577.50)
+  loss_computation    :    8.36 ±   0.88 (min:    7.60, max:   12.08)
+  optimizer_step      :   16.08 ±   8.53 (min:   12.77, max:   49.00)
+
+GPU Memory (GB):
+  Used: 7.94 / 44.20
+  Peak: 8.96
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 609
+================================================================================
+Timing (ms):
+  backward            :  625.01 ±  67.05 (min:  452.71, max:  724.47)
+  data_loading        :  703.36 ± 177.04 (min:  407.67, max: 1059.62)
+  forward             :  516.55 ±  56.33 (min:  363.25, max:  577.50)
+  loss_computation    :    8.37 ±   0.90 (min:    7.60, max:   12.08)
+  optimizer_step      :   16.07 ±   8.52 (min:   12.77, max:   49.00)
+
+GPU Memory (GB):
+  Used: 7.91 / 44.20
+  Peak: 8.96
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 619
+================================================================================
+Timing (ms):
+  backward            :  628.72 ±  65.86 (min:  452.71, max:  724.47)
+  data_loading        :  706.66 ± 175.13 (min:  407.67, max: 1059.62)
+  forward             :  520.21 ±  55.98 (min:  363.25, max:  577.50)
+  loss_computation    :    8.42 ±   0.93 (min:    7.60, max:   12.08)
+  optimizer_step      :   16.06 ±   8.54 (min:   12.71, max:   49.00)
+
+GPU Memory (GB):
+  Used: 8.01 / 44.20
+  Peak: 8.96
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 629
+================================================================================
+Timing (ms):
+  backward            :  628.41 ±  67.12 (min:  452.71, max:  724.47)
+  data_loading        :  698.46 ± 171.32 (min:  407.67, max: 1059.62)
+  forward             :  519.62 ±  56.94 (min:  363.25, max:  577.50)
+  loss_computation    :    8.37 ±   0.91 (min:    7.59, max:   12.08)
+  optimizer_step      :   16.05 ±   8.53 (min:   12.66, max:   49.00)
+
+GPU Memory (GB):
+  Used: 7.99 / 44.20
+  Peak: 8.96
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 639
+================================================================================
+Timing (ms):
+  backward            :  625.37 ±  68.54 (min:  452.71, max:  724.47)
+  data_loading        :  698.36 ± 166.71 (min:  407.67, max: 1059.62)
+  forward             :  517.41 ±  58.28 (min:  363.25, max:  577.50)
+  loss_computation    :    8.40 ±   0.94 (min:    7.58, max:   12.08)
+  optimizer_step      :   16.05 ±   8.53 (min:   12.66, max:   49.00)
+
+GPU Memory (GB):
+  Used: 7.94 / 44.20
+  Peak: 8.96
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 649
+================================================================================
+Timing (ms):
+  backward            :  624.53 ±  68.03 (min:  452.71, max:  724.47)
+  data_loading        :  698.65 ± 169.38 (min:  365.24, max: 1134.37)
+  forward             :  516.53 ±  57.77 (min:  363.25, max:  577.50)
+  loss_computation    :    8.38 ±   0.94 (min:    7.58, max:   12.08)
+  optimizer_step      :   16.07 ±   8.54 (min:   12.66, max:   49.00)
+
+GPU Memory (GB):
+  Used: 7.91 / 44.20
+  Peak: 8.96
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.3%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 659
+================================================================================
+Timing (ms):
+  backward            :  631.87 ±  61.44 (min:  489.25, max:  724.47)
+  data_loading        :  695.88 ± 169.51 (min:  365.24, max: 1134.37)
+  forward             :  522.70 ±  50.89 (min:  399.73, max:  577.50)
+  loss_computation    :    8.38 ±   0.93 (min:    7.58, max:   12.08)
+  optimizer_step      :   16.08 ±   8.53 (min:   12.66, max:   49.00)
+
+GPU Memory (GB):
+  Used: 8.08 / 44.20
+  Peak: 8.96
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 669
+================================================================================
+Timing (ms):
+  backward            :  633.19 ±  60.31 (min:  489.25, max:  724.47)
+  data_loading        :  694.82 ± 161.77 (min:  365.24, max: 1134.37)
+  forward             :  523.26 ±  50.13 (min:  399.73, max:  577.50)
+  loss_computation    :    8.40 ±   0.94 (min:    7.58, max:   12.08)
+  optimizer_step      :   16.11 ±   8.54 (min:   12.66, max:   49.00)
+
+GPU Memory (GB):
+  Used: 8.10 / 44.20
+  Peak: 8.96
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 679
+================================================================================
+Timing (ms):
+  backward            :  632.92 ±  60.67 (min:  489.25, max:  724.47)
+  data_loading        :  694.43 ± 158.29 (min:  365.24, max: 1134.37)
+  forward             :  522.21 ±  50.69 (min:  399.73, max:  564.35)
+  loss_computation    :    8.33 ±   0.90 (min:    7.58, max:   12.08)
+  optimizer_step      :   16.02 ±   8.24 (min:   12.66, max:   41.22)
+
+GPU Memory (GB):
+  Used: 8.09 / 44.20
+  Peak: 8.95
+  Utilization: 18.3%
+
+System:
+  CPU: 1.7%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 689
+================================================================================
+Timing (ms):
+  backward            :  634.61 ±  60.74 (min:  489.25, max:  724.47)
+  data_loading        :  697.90 ± 165.12 (min:  365.24, max: 1134.37)
+  forward             :  523.25 ±  50.49 (min:  399.73, max:  566.18)
+  loss_computation    :    8.29 ±   0.81 (min:    7.58, max:   10.86)
+  optimizer_step      :   15.94 ±   8.25 (min:   12.66, max:   41.22)
+
+GPU Memory (GB):
+  Used: 8.11 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 699
+================================================================================
+Timing (ms):
+  backward            :  634.70 ±  60.27 (min:  489.25, max:  716.19)
+  data_loading        :  699.77 ± 162.38 (min:  365.24, max: 1134.37)
+  forward             :  524.13 ±  50.70 (min:  399.73, max:  566.52)
+  loss_computation    :    8.30 ±   0.81 (min:    7.58, max:   10.86)
+  optimizer_step      :   15.94 ±   8.24 (min:   12.66, max:   41.22)
+
+GPU Memory (GB):
+  Used: 8.13 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 709
+================================================================================
+Timing (ms):
+  backward            :  631.92 ±  62.18 (min:  459.00, max:  716.19)
+  data_loading        :  704.57 ± 163.59 (min:  365.24, max: 1134.37)
+  forward             :  521.24 ±  53.05 (min:  368.92, max:  566.52)
+  loss_computation    :    8.28 ±   0.79 (min:    7.58, max:   10.86)
+  optimizer_step      :   15.95 ±   8.25 (min:   12.66, max:   41.22)
+
+GPU Memory (GB):
+  Used: 8.04 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 719
+================================================================================
+Timing (ms):
+  backward            :  626.18 ±  65.18 (min:  459.00, max:  716.19)
+  data_loading        :  702.67 ± 165.95 (min:  365.24, max: 1134.37)
+  forward             :  516.40 ±  54.58 (min:  368.92, max:  566.52)
+  loss_computation    :    8.27 ±   0.79 (min:    7.58, max:   10.86)
+  optimizer_step      :   15.96 ±   8.24 (min:   12.66, max:   41.22)
+
+GPU Memory (GB):
+  Used: 7.91 / 44.20
+  Peak: 8.95
+  Utilization: 17.9%
+
+System:
+  CPU: 1.6%
+  RAM: 9.6%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 729
+================================================================================
+Timing (ms):
+  backward            :  629.31 ±  64.16 (min:  459.00, max:  711.29)
+  data_loading        :  714.15 ± 163.75 (min:  365.24, max: 1134.37)
+  forward             :  518.47 ±  53.51 (min:  368.92, max:  566.52)
+  loss_computation    :    8.27 ±   0.78 (min:    7.58, max:   10.86)
+  optimizer_step      :   15.95 ±   8.23 (min:   12.91, max:   41.22)
+
+GPU Memory (GB):
+  Used: 7.96 / 44.20
+  Peak: 8.95
+  Utilization: 18.0%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 739
+================================================================================
+Timing (ms):
+  backward            :  630.74 ±  65.26 (min:  454.31, max:  711.29)
+  data_loading        :  707.99 ± 169.62 (min:  365.24, max: 1134.37)
+  forward             :  519.52 ±  54.73 (min:  366.89, max:  570.71)
+  loss_computation    :    8.30 ±   0.80 (min:    7.58, max:   11.20)
+  optimizer_step      :   15.94 ±   8.22 (min:   12.91, max:   41.22)
+
+GPU Memory (GB):
+  Used: 7.99 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 749
+================================================================================
+Timing (ms):
+  backward            :  633.55 ±  64.21 (min:  454.31, max:  711.29)
+  data_loading        :  710.06 ± 168.98 (min:  417.98, max: 1096.98)
+  forward             :  521.88 ±  53.92 (min:  366.89, max:  570.71)
+  loss_computation    :    8.27 ±   0.80 (min:    7.58, max:   11.20)
+  optimizer_step      :   15.93 ±   8.23 (min:   12.91, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.04 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 759
+================================================================================
+Timing (ms):
+  backward            :  633.63 ±  63.58 (min:  454.31, max:  711.29)
+  data_loading        :  710.29 ± 166.60 (min:  417.98, max: 1096.98)
+  forward             :  522.53 ±  54.36 (min:  366.89, max:  572.65)
+  loss_computation    :    8.32 ±   0.86 (min:    7.58, max:   11.20)
+  optimizer_step      :   15.93 ±   8.24 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.06 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 769
+================================================================================
+Timing (ms):
+  backward            :  630.96 ±  65.80 (min:  454.31, max:  711.29)
+  data_loading        :  711.80 ± 170.41 (min:  417.98, max: 1096.98)
+  forward             :  520.22 ±  56.06 (min:  366.89, max:  572.65)
+  loss_computation    :    8.28 ±   0.84 (min:    7.58, max:   11.20)
+  optimizer_step      :   15.91 ±   8.23 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 7.99 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 779
+================================================================================
+Timing (ms):
+  backward            :  633.81 ±  65.28 (min:  454.31, max:  711.29)
+  data_loading        :  717.03 ± 172.48 (min:  417.98, max: 1096.98)
+  forward             :  521.93 ±  54.99 (min:  366.89, max:  572.65)
+  loss_computation    :    8.30 ±   0.87 (min:    7.58, max:   11.20)
+  optimizer_step      :   15.90 ±   8.24 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.04 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 789
+================================================================================
+Timing (ms):
+  backward            :  631.48 ±  67.27 (min:  454.31, max:  711.29)
+  data_loading        :  709.67 ± 173.39 (min:  424.46, max: 1096.98)
+  forward             :  520.51 ±  56.36 (min:  366.89, max:  572.65)
+  loss_computation    :    8.32 ±   0.88 (min:    7.58, max:   11.27)
+  optimizer_step      :   15.90 ±   8.23 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.02 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 799
+================================================================================
+Timing (ms):
+  backward            :  631.54 ±  67.24 (min:  454.31, max:  711.29)
+  data_loading        :  711.16 ± 177.41 (min:  424.46, max: 1096.98)
+  forward             :  520.40 ±  56.35 (min:  366.89, max:  572.65)
+  loss_computation    :    8.32 ±   0.89 (min:    7.58, max:   11.27)
+  optimizer_step      :   15.91 ±   8.23 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.01 / 44.20
+  Peak: 8.95
+  Utilization: 18.1%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 809
+================================================================================
+Timing (ms):
+  backward            :  632.58 ±  68.58 (min:  421.52, max:  711.29)
+  data_loading        :  704.71 ± 180.48 (min:  424.46, max: 1096.98)
+  forward             :  521.55 ±  56.86 (min:  338.34, max:  572.65)
+  loss_computation    :    8.33 ±   0.88 (min:    7.58, max:   11.27)
+  optimizer_step      :   15.91 ±   8.23 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.06 / 44.20
+  Peak: 8.95
+  Utilization: 18.2%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 819
+================================================================================
+Timing (ms):
+  backward            :  634.95 ±  66.46 (min:  421.52, max:  708.34)
+  data_loading        :  706.90 ± 181.65 (min:  424.46, max: 1096.98)
+  forward             :  523.20 ±  55.92 (min:  338.34, max:  572.65)
+  loss_computation    :    8.29 ±   0.85 (min:    7.58, max:   11.27)
+  optimizer_step      :   15.90 ±   8.22 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.11 / 44.20
+  Peak: 8.95
+  Utilization: 18.3%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 829
+================================================================================
+Timing (ms):
+  backward            :  635.30 ±  67.30 (min:  421.52, max:  708.34)
+  data_loading        :  702.11 ± 185.76 (min:  424.46, max: 1096.98)
+  forward             :  524.20 ±  57.08 (min:  338.34, max:  572.65)
+  loss_computation    :    8.32 ±   0.81 (min:    7.58, max:   11.27)
+  optimizer_step      :   15.93 ±   8.22 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.13 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 839
+================================================================================
+Timing (ms):
+  backward            :  636.16 ±  65.42 (min:  421.52, max:  708.34)
+  data_loading        :  710.54 ± 191.43 (min:  405.39, max: 1100.00)
+  forward             :  524.26 ±  55.32 (min:  338.34, max:  572.65)
+  loss_computation    :    8.28 ±   0.75 (min:    7.58, max:   11.27)
+  optimizer_step      :   15.95 ±   8.24 (min:   12.79, max:   41.21)
+
+GPU Memory (GB):
+  Used: 8.12 / 44.20
+  Peak: 8.95
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 849
+================================================================================
+Timing (ms):
+  backward            :  636.12 ±  65.79 (min:  421.52, max:  708.34)
+  data_loading        :  712.72 ± 189.02 (min:  405.39, max: 1100.00)
+  forward             :  524.37 ±  55.62 (min:  338.34, max:  572.65)
+  loss_computation    :    8.30 ±   0.76 (min:    7.63, max:   11.27)
+  optimizer_step      :   16.00 ±   8.22 (min:   12.79, max:   40.79)
+
+GPU Memory (GB):
+  Used: 8.13 / 44.20
+  Peak: 8.96
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 859
+================================================================================
+Timing (ms):
+  backward            :  636.03 ±  65.49 (min:  421.52, max:  708.34)
+  data_loading        :  710.18 ± 190.80 (min:  405.39, max: 1100.00)
+  forward             :  524.21 ±  54.59 (min:  338.34, max:  567.30)
+  loss_computation    :    8.26 ±   0.68 (min:    7.63, max:   11.27)
+  optimizer_step      :   16.01 ±   8.21 (min:   12.85, max:   40.79)
+
+GPU Memory (GB):
+  Used: 8.13 / 44.20
+  Peak: 8.96
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.5%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 869
+================================================================================
+Timing (ms):
+  backward            :  638.59 ±  63.15 (min:  421.52, max:  708.34)
+  data_loading        :  697.66 ± 187.51 (min:  405.39, max: 1100.00)
+  forward             :  526.68 ±  52.24 (min:  338.34, max:  567.30)
+  loss_computation    :    8.25 ±   0.64 (min:    7.63, max:   11.27)
+  optimizer_step      :   16.04 ±   8.21 (min:   12.85, max:   40.79)
+
+GPU Memory (GB):
+  Used: 8.20 / 44.20
+  Peak: 8.96
+  Utilization: 18.5%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================
+
+[Performance Monitor] Epoch 4 Batch 879
+================================================================================
+Timing (ms):
+  backward            :  634.91 ±  67.88 (min:  421.52, max:  704.00)
+  data_loading        :  697.58 ± 188.77 (min:  405.39, max: 1100.00)
+  forward             :  523.63 ±  56.51 (min:  338.34, max:  567.30)
+  loss_computation    :    8.22 ±   0.60 (min:    7.63, max:   11.27)
+  optimizer_step      :   16.06 ±   8.27 (min:   12.85, max:   42.23)
+
+GPU Memory (GB):
+  Used: 8.12 / 44.20
+  Peak: 8.96
+  Utilization: 18.4%
+
+System:
+  CPU: 1.6%
+  RAM: 9.4%
+================================================================================

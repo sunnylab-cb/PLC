@@ -1,0 +1,134 @@
+# Pocket-GVP-Fusion V9m2 Configuration
+# V9m2 over V9: Flash Attention + Enhanced Label Smoothing + Boundary Loss
+# ===================================
+
+# Experiment settings
+experiment:
+  name: "pocket_gvp_fusion_v9"
+  seed: 42
+  output_dir: "outputs"
+
+# Data settings
+data:
+  data_root: "data"
+  ligand_features_dir: "ligand_features_v4"
+  protein_features_dir: "complete_features_v3"          # fallback base (conf0)
+  nma_features_dir: "complete_features_v3_nma"          # V9: NMA augmentation dir
+  nma_n_confs: 3            # V9: confs per protein per epoch (incl. conf0); range 1–10
+  nma_max_conf: 9           # V9: max available conf index
+  distances_file: "data/residue_ligand_distances_vdw.pt"
+  distances_file_original: "data/residue_ligand_distances_poc_style.pt"
+  split_file: "configs/splits/splits.txt"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1500
+  max_atoms: 100
+
+# Model architecture
+model:
+  # Dimensions (same as V8)
+  d_esm: 1280
+  d_phys: 62
+  d_spatial_scalar: 72
+  d_phys_encoded: 128
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 96
+  n_gvp_vectors: 10
+  n_gvp_vector_hidden: 20
+
+  # Layers
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4
+
+  # Base dropout
+  dropout: 0.1
+
+  # V9: Regularization additions
+  attn_dropout: 0.1          # V9: attention weight dropout (separate from FFN)
+  classifier_dropout: 0.2    # V9: classifier head dropout (up from 0.1)
+  stochastic_depth_prob: 0.1 # V9: max drop_path prob (linearly scaled per layer)
+
+  # V9m2: Flash Attention
+  use_flash_attn: false      # Disabled: Flash Attention can be slower than standard attention in some cases
+
+  # Modality dropout
+  esm_dropout_prob: 0.1
+  physchem_dropout_prob: 0.2
+
+  # Settings
+  use_gated_attn: true
+  use_swiglu: true
+  gvp_radius: 10.0
+  gvp_k_neighbors: 20
+  use_gradient_checkpointing: false
+
+  # Output
+  n_classes: 3
+  edge_dim: 6
+
+# Training settings
+training:
+  batch_size: 24
+  num_epochs: 100
+  num_workers: 16             # Restored after fixing corrupted file
+
+  # Optimizer
+  optimizer: "adamw"
+  learning_rate: 1.0e-4
+  weight_decay: 0.05         # V9: increased from 0.01 (excludes LayerNorm/bias via param groups)
+  betas: [0.9, 0.999]
+
+  # Learning rate schedule (unchanged from V8)
+  scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+
+  # Loss
+  loss_type: "focal"
+  focal_gamma: 2.0
+  class_weights: [7.0, 1.0, 2.2]
+  dice_weight: 0.4           # V9m2: adjusted for boundary loss
+  focal_weight: 0.4          # V9m2: adjusted for boundary loss
+
+  # V7m2: IoU Loss (Intersection over Union)
+  iou_weight: 0.0            # V7m2: IoU loss weight (0.0 = disabled, try 0.1-0.3)
+  iou_component_weight: 1.0  # V7m2: weight for IoU component in combined IoU loss
+  iou_dist_weight: 0.2       # V7m2: weight for distance component in combined IoU loss
+  iou_power: 1.5             # V7m2: power for distance weighting
+  iou_d_max: 10.0            # V7m2: maximum distance (Å) for IoU calculation
+
+  # V9m2: Boundary Loss
+  use_boundary_loss: false    # V9m2: enable boundary loss
+  boundary_weight: 0.2       # V9m2: boundary loss weight in total loss
+  boundary_multiplier: 2.0   # V9m2: weight multiplier for boundary residues
+  boundary_distance_threshold: 8.0  # V9m2: distance threshold (Å) for boundary detection
+
+  # V9m2: Enhanced Label Smoothing
+  label_smoothing: 0.15      # V9m2: increased from 0.1
+
+  # Regularization
+  gradient_clip: 1.0
+
+  # V9m2: Performance Monitoring
+  enable_profiling: false     # V9m2: enable detailed performance profiling (set to true for diagnosis)
+
+  # Checkpointing
+  save_every: 5
+  early_stopping_patience: 30
+
+  # Precision and DataLoader
+  use_amp: false
+  pin_memory: true           # Pin memory for faster GPU transfer
+  prefetch_factor: 2         # Number of batches to prefetch (increase if data loading is slow)
+
+# Logging
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false

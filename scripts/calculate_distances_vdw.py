@@ -39,6 +39,10 @@ VDW_RADII = {
 # 容差值 (Å)
 TOLERANCE = 0.5
 
+# 默认特征目录（与 V8 训练保持一致）
+DEFAULT_PROTEIN_FEATURES_DIR = 'complete_features_v3'
+DEFAULT_LIGAND_FEATURES_DIR = 'ligand_features_v4'
+
 
 def get_vdw_radius(atom_symbol: str) -> float:
     """
@@ -218,14 +222,14 @@ def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
     Returns:
         (success, message, result_dict)
     """
-    pdb_id, data_root, year_range = args_tuple
+    pdb_id, data_root, year_range, protein_features_dir, ligand_features_dir = args_tuple
 
     try:
         data_root = Path(data_root)
 
         # 文件路径
-        protein_file = data_root / 'complete_features' / year_range / pdb_id / f'{pdb_id}_protein.pt'
-        ligand_file = data_root / 'ligand_features_v3' / year_range / pdb_id / f'{pdb_id}_ligand.pt'
+        protein_file = data_root / protein_features_dir / year_range / pdb_id / f'{pdb_id}_protein.pt'
+        ligand_file = data_root / ligand_features_dir / year_range / pdb_id / f'{pdb_id}_ligand.pt'
 
         if not protein_file.exists() or not ligand_file.exists():
             return (False, f"{pdb_id}: 文件不存在", None)
@@ -281,7 +285,9 @@ def batch_calculate_distances(
     output_file: Path,
     n_workers: int = None,
     max_complexes: int = None,
-    specific_ids: list = None
+    specific_ids: list = None,
+    protein_features_dir: str = DEFAULT_PROTEIN_FEATURES_DIR,
+    ligand_features_dir: str = DEFAULT_LIGAND_FEATURES_DIR,
 ):
     """
     批量计算所有复合物的距离
@@ -304,9 +310,9 @@ def batch_calculate_distances(
             # 查找该ID所在的年份范围
             found = False
             for year_range in year_ranges:
-                protein_file = data_root / 'complete_features' / year_range / pdb_id / f'{pdb_id}_protein.pt'
+                protein_file = data_root / protein_features_dir / year_range / pdb_id / f'{pdb_id}_protein.pt'
                 if protein_file.exists():
-                    complex_list.append((pdb_id, str(data_root), year_range))
+                    complex_list.append((pdb_id, str(data_root), year_range, protein_features_dir, ligand_features_dir))
                     found = True
                     break
             if not found:
@@ -314,7 +320,7 @@ def batch_calculate_distances(
     else:
         # 处理所有复合物
         for year_range in year_ranges:
-            protein_year_dir = data_root / 'complete_features' / year_range
+            protein_year_dir = data_root / protein_features_dir / year_range
             if not protein_year_dir.exists():
                 continue
 
@@ -323,12 +329,14 @@ def batch_calculate_distances(
                     continue
 
                 pdb_id = complex_dir.name
-                complex_list.append((pdb_id, str(data_root), year_range))
+                complex_list.append((pdb_id, str(data_root), year_range, protein_features_dir, ligand_features_dir))
 
         if max_complexes:
             complex_list = complex_list[:max_complexes]
 
     print(f"找到 {len(complex_list)} 个复合物")
+    print(f"蛋白特征目录: data/{protein_features_dir}")
+    print(f"配体特征目录: data/{ligand_features_dir}")
 
     # 确定进程数
     if n_workers is None:
@@ -426,6 +434,18 @@ def main():
         default=None,
         help="指定要处理的PDB ID列表（例如: --ids 1lvk 2pll 3vjs）"
     )
+    parser.add_argument(
+        "--protein-features-dir",
+        type=str,
+        default=DEFAULT_PROTEIN_FEATURES_DIR,
+        help=f"蛋白特征目录名（默认: {DEFAULT_PROTEIN_FEATURES_DIR}）"
+    )
+    parser.add_argument(
+        "--ligand-features-dir",
+        type=str,
+        default=DEFAULT_LIGAND_FEATURES_DIR,
+        help=f"配体特征目录名（默认: {DEFAULT_LIGAND_FEATURES_DIR}）"
+    )
 
     args = parser.parse_args()
 
@@ -440,7 +460,9 @@ def main():
         output_file=output_file,
         n_workers=args.workers,
         max_complexes=args.max,
-        specific_ids=args.ids
+        specific_ids=args.ids,
+        protein_features_dir=args.protein_features_dir,
+        ligand_features_dir=args.ligand_features_dir,
     )
 
 

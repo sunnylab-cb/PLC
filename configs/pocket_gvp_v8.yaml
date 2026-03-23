@@ -1,0 +1,101 @@
+# Pocket-GVP-Fusion V8 Configuration (Complete Features V3 Integration)
+# ===================================
+
+# Experiment settings
+experiment:
+  name: "pocket_gvp_fusion_v8"
+  seed: 42
+  output_dir: "outputs"
+
+# Data settings
+data:
+  data_root: "data"                 # Root directory with nested structure
+  ligand_features_dir: "ligand_features_v4"  # V7: 96-dim features
+  protein_features_dir: "complete_features_v3"  # V8: V3 features (62D PhysChem + 72D Spatial Scalar + 6×3D Spatial Vectors)
+  distances_file: "data/residue_ligand_distances_vdw.pt"  # VDW-based distance labels
+  distances_file_original: "data/residue_ligand_distances_poc_style.pt"  # Original fixed-threshold labels for comparison
+  split_file: "configs/splits/mmseqs_splits_strict.csv"  # MMseqs2 30% sequence identity clustering
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1500                 # Maximum protein sequence length
+  max_atoms: 100                    # Maximum ligand atoms
+
+# Model architecture
+model:
+  # Dimensions
+  d_esm: 1280                       # ESM-2 embedding size (1280-dim)
+  d_phys: 62                        # V8: Physical-chemical features only (down from 94D)
+  d_spatial_scalar: 72              # V8: Spatial scalar features for GVP node_s
+  d_phys_encoded: 128               # PhysChem MLP output dimension
+  d_gvp_internal: 256               # GVP hidden dimension
+  d_model: 512                      # Transformer dimension
+  d_ligand_atom: 96                 # V7: 96-dim ligand features
+  n_gvp_vectors: 10                 # V8: 4 GVP + 6 V3 chemical vectors (up from 4)
+  n_gvp_vector_hidden: 20           # V8: Increased capacity (up from 16)
+
+  # Layers
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4       # Number of bidirectional cross-attention layers
+
+  # Settings
+  dropout: 0.1
+  use_gated_attn: true              # Qwen-style gated attention
+  use_swiglu: true                  # LLaMA-style SwiGLU FFN
+  gvp_radius: 10.0                  # GVP neighbor radius (Angstroms)
+  gvp_k_neighbors: 20               # GVP k-nearest neighbors
+  esm_dropout_prob: 0.1             # Probability of dropping ESM during training
+  physchem_dropout_prob: 0.2        # Probability of dropping PhysChem features
+  use_gradient_checkpointing: false # Gradient checkpointing for memory efficiency
+
+  # Output
+  n_classes: 3                      # Contact, Near, Far
+  edge_dim: 6                       # Ligand edge features
+
+# Training settings
+training:
+  batch_size: 24                     # Batch size
+  num_epochs: 100
+  num_workers: 24                    # DataLoader workers
+
+  # Optimizer
+  optimizer: "adamw"
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+  # Learning rate schedule
+  scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+
+  # Loss
+  loss_type: "focal"                # "focal" or "cross_entropy"
+  focal_gamma: 2.0
+  class_weights: [7.0, 1.0, 2.2]    # Contact, Near, Far
+
+  # Combined loss weights
+  dice_weight: 0.5                  # Dice Loss weight
+  focal_weight: 0.5                 # Focal Loss weight
+
+  # Regularization
+  gradient_clip: 1.0
+
+  # Checkpointing
+  save_every: 5                     # Save checkpoint every N epochs
+  early_stopping_patience: 30       # Stop if val loss doesn't improve
+
+  # Precision
+  use_amp: false                    # Use full precision for stability
+  pin_memory: true                  # Pin memory for faster GPU transfer (disable if using shared memory or CPU)
+  prefetch_factor: 2                # DataLoader prefetch factor (batches per worker, null to disable)
+
+# Logging
+logging:
+  log_every: 10                     # Log every N batches
+  tensorboard: true
+  tensorboard_dir: "runs"           # TensorBoard log directory
+  wandb: false                      # Weights & Biases (optional)

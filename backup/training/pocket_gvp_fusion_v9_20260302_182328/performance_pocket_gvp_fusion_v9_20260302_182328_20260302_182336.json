@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "experiment": "pocket_gvp_fusion_v9_20260302_182328",
+    "timestamp": "20260302_182336",
+    "device_id": 0
+  },
+  "records": [
+    {
+      "timestamp": "2026-03-02T18:24:17.627271",
+      "epoch": 0,
+      "batch_idx": 9,
+      "stats": {
+        "data_loading_mean": 660.452151298523,
+        "data_loading_std": 271.52610168457403,
+        "data_loading_min": 435.49108505249023,
+        "data_loading_max": 1433.9029788970947,
+        "forward_mean": 906.2362194061279,
+        "forward_std": 1193.388025416892,
+        "forward_min": 405.775785446167,
+        "forward_max": 4480.134010314941,
+        "loss_computation_mean": 1279.0466785430908,
+        "loss_computation_std": 240.2408247507185,
+        "loss_computation_min": 961.4241123199463,
+        "loss_computation_max": 1697.0694065093994,
+        "backward_mean": 725.0683546066284,
+        "backward_std": 413.7452530918008,
+        "backward_min": 489.94922637939453,
+        "backward_max": 1956.360101699829,
+        "optimizer_step_mean": 55.46002388000488,
+        "optimizer_step_std": 124.00762771346204,
+        "optimizer_step_min": 10.950803756713867,
+        "optimizer_step_max": 426.67341232299805,
+        "gpu_mem_mean": 7.5381875991821286,
+        "gpu_mem_max": 8.954421043395996,
+        "gpu_mem_total": 31.576171875,
+        "cpu_percent": 2.9,
+        "ram_percent": 18.9
+      }
+    }
+  ]
+}

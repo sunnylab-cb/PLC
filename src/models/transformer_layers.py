@@ -6,6 +6,7 @@ Implements:
 - Gated Attention (Qwen-style)
 - GatedTransformerBlock combining both
 - Positional Encoding (sinusoidal and learnable)
+- Flash Attention support (V9m2)
 """
 
 import math
@@ -13,6 +14,30 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+
+# V9m2: Flash Attention support (triton version for ROCm)
+try:
+    from flash_attn import flash_attn_func
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
+    flash_attn_func = None
+
+
+def drop_path(x: torch.Tensor, drop_prob: float, training: bool) -> torch.Tensor:
+    """
+    Stochastic Depth: randomly drop residual paths during training.
+    Each sample in the batch is independently dropped with probability drop_prob.
+    Dropped paths are scaled by 1/(1-drop_prob) to maintain expected value.
+    """
+    if drop_prob == 0.0 or not training:
+        return x
+    keep_prob = 1.0 - drop_prob
+    # Shape: [B, 1, 1, ...] — broadcast over all dimensions except batch
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    rand_tensor = torch.rand(shape, dtype=x.dtype, device=x.device)
+    rand_tensor = torch.floor(rand_tensor + keep_prob)  # 0 or 1
+    return x / keep_prob * rand_tensor
 
 
 class SwiGLU(nn.Module):
@@ -82,30 +107,37 @@ class GatedMultiHeadAttention(nn.Module):
         d_model: int,
         n_heads: int = 8,
         dropout: float = 0.1,
-        use_gate: bool = True
+        use_gate: bool = True,
+        attn_dropout: Optional[float] = None,   # V9: separate attn weight dropout (default=dropout)
+        use_flash_attn: bool = False  # V9m2: enable Flash Attention
     ):
         super().__init__()
-        
+
         assert d_model % n_heads == 0, f"d_model ({d_model}) must be divisible by n_heads ({n_heads})"
-        
+
         self.d_model = d_model
         self.n_heads = n_heads
         self.d_head = d_model // n_heads
         self.scale = self.d_head ** -0.5
         self.use_gate = use_gate
-        
+        self.use_flash_attn = use_flash_attn and FLASH_ATTN_AVAILABLE  # V9m2
+
         # Q, K, V projections
         self.w_q = nn.Linear(d_model, d_model, bias=False)
         self.w_k = nn.Linear(d_model, d_model, bias=False)
         self.w_v = nn.Linear(d_model, d_model, bias=False)
-        
+
         # Output projection
         self.w_o = nn.Linear(d_model, d_model, bias=False)
-        
+
         # Gating mechanism (Qwen-style)
         if use_gate:
             self.gate = nn.Linear(d_model, d_model, bias=False)
-        
+
+        # V9: separate dropout for attention weights vs output
+        _attn_dropout = attn_dropout if attn_dropout is not None else dropout
+        self.attn_dropout_p = _attn_dropout  # V9m2: store dropout prob for flash_attn
+        self.attn_dropout = nn.Dropout(_attn_dropout)
         self.dropout = nn.Dropout(dropout)
         
     def forward(
@@ -116,42 +148,95 @@ class GatedMultiHeadAttention(nn.Module):
     ) -> torch.Tensor:
         """
         Forward pass.
-        
+
         Args:
             x: Query tensor [B, L, d_model]
             mask: Attention mask [B, L] or [B, L, L] (True = attend, False = mask)
             kv: Optional key/value tensor for cross-attention [B, S, d_model]
-            
+
         Returns:
             Output tensor [B, L, d_model]
         """
         B, L, _ = x.shape
-        
+
         # Use x for both K, V if not cross-attention
         if kv is None:
             kv = x
         S = kv.size(1)
-        
+
         # Project Q, K, V
-        q = self.w_q(x).view(B, L, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, L, D]
-        k = self.w_k(kv).view(B, S, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, S, D]
-        v = self.w_v(kv).view(B, S, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, S, D]
-        
+        q = self.w_q(x)  # [B, L, d_model]
+        k = self.w_k(kv)  # [B, S, d_model]
+        v = self.w_v(kv)  # [B, S, d_model]
+
+        # V9m2: Use Flash Attention if enabled and available
+        if self.use_flash_attn and self.training:
+            # Flash Attention requires [B, L, H, D] format
+            q = q.view(B, L, self.n_heads, self.d_head)
+            k = k.view(B, S, self.n_heads, self.d_head)
+            v = v.view(B, S, self.n_heads, self.d_head)
+
+            # Flash Attention doesn't support arbitrary masks well, only causal
+            # For now, use flash_attn only for self-attention without mask
+            if mask is None and kv is None:
+                out = flash_attn_func(
+                    q, k, v,
+                    dropout_p=self.attn_dropout_p if self.training else 0.0,
+                    softmax_scale=self.scale,
+                    causal=False
+                )  # [B, L, H, D]
+                out = out.reshape(B, L, self.d_model)
+            else:
+                # Fallback to standard attention if mask is present
+                q = q.transpose(1, 2)  # [B, H, L, D]
+                k = k.transpose(1, 2)  # [B, H, S, D]
+                v = v.transpose(1, 2)  # [B, H, S, D]
+                out = self._standard_attention(q, k, v, mask, B, L)
+        else:
+            # Standard attention
+            q = q.view(B, L, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, L, D]
+            k = k.view(B, S, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, S, D]
+            v = v.view(B, S, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, S, D]
+            out = self._standard_attention(q, k, v, mask, B, L)
+
+        # Output projection
+        out = self.w_o(out)
+
+        # Apply gating
+        if self.use_gate:
+            gate = torch.sigmoid(self.gate(x))
+            # Diagnostic tracking: cache gate openness
+            with torch.no_grad():
+                self._last_gate_openness = gate.mean()
+            out = out * gate
+
+        return out
+
+    def _standard_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        B: int,
+        L: int
+    ) -> torch.Tensor:
+        """Standard scaled dot-product attention"""
         # Compute attention scores
         attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, L, S]
-        
+
         # Apply mask
         if mask is not None:
             if mask.dim() == 2:  # [B, S] -> [B, 1, 1, S]
                 mask = mask.unsqueeze(1).unsqueeze(2)
             elif mask.dim() == 3:  # [B, L, S] -> [B, 1, L, S]
                 mask = mask.unsqueeze(1)
-            
+
             attn = attn.masked_fill(~mask, float('-inf'))
-        
+
         # Softmax and dropout
         attn = F.softmax(attn, dim=-1)
-        
+
         # Diagnostic tracking: cache attention weights for entropy computation
         # Store before dropout for accurate entropy calculation
         with torch.no_grad():
@@ -160,24 +245,14 @@ class GatedMultiHeadAttention(nn.Module):
             eps = 1e-8
             attn_clamped = attn.clamp(min=eps)
             self._last_attn_entropy = -(attn_clamped * attn_clamped.log()).sum(dim=-1).mean()
-        
-        attn = self.dropout(attn)
-        
+
+        # V9: use separate attn_dropout for attention weights
+        attn = self.attn_dropout(attn)
+
         # Apply attention to values
         out = torch.matmul(attn, v)  # [B, H, L, D]
         out = out.transpose(1, 2).contiguous().view(B, L, self.d_model)  # [B, L, d_model]
-        
-        # Output projection
-        out = self.w_o(out)
-        
-        # Apply gating
-        if self.use_gate:
-            gate = torch.sigmoid(self.gate(x))
-            # Diagnostic tracking: cache gate openness
-            with torch.no_grad():
-                self._last_gate_openness = gate.mean()
-            out = out * gate
-        
+
         return out
 
 
@@ -203,19 +278,26 @@ class GatedTransformerBlock(nn.Module):
         n_heads: int = 8,
         dropout: float = 0.1,
         use_gated_attn: bool = True,
-        use_swiglu: bool = True
+        use_swiglu: bool = True,
+        drop_path_prob: float = 0.0,    # V9: stochastic depth probability
+        attn_dropout: Optional[float] = None,  # V9: separate attn weight dropout
+        use_flash_attn: bool = False  # V9m2: enable Flash Attention
     ):
         super().__init__()
-        
+
+        self.drop_path_prob = drop_path_prob
+
         # Attention
         self.norm1 = nn.LayerNorm(d_model)
         self.attn = GatedMultiHeadAttention(
             d_model=d_model,
             n_heads=n_heads,
             dropout=dropout,
-            use_gate=use_gated_attn
+            use_gate=use_gated_attn,
+            attn_dropout=attn_dropout,  # V9
+            use_flash_attn=use_flash_attn  # V9m2
         )
-        
+
         # Feedforward
         self.norm2 = nn.LayerNorm(d_model)
         if use_swiglu:
@@ -228,7 +310,7 @@ class GatedTransformerBlock(nn.Module):
                 nn.Linear(d_model * 4, d_model),
                 nn.Dropout(dropout)
             )
-        
+
         self.dropout = nn.Dropout(dropout)
         
     def forward(
@@ -246,17 +328,17 @@ class GatedTransformerBlock(nn.Module):
         Returns:
             Output tensor [B, L, d_model]
         """
-        # Self-attention with residual
+        # Self-attention with residual + stochastic depth
         residual = x
         x = self.norm1(x)
         x = self.attn(x, mask=mask)
-        x = self.dropout(x) + residual
-        
-        # FFN with residual
+        x = drop_path(self.dropout(x), self.drop_path_prob, self.training) + residual
+
+        # FFN with residual + stochastic depth
         residual = x
         x = self.norm2(x)
         x = self.ffn(x)
-        x = self.dropout(x) + residual
+        x = drop_path(self.dropout(x), self.drop_path_prob, self.training) + residual
         
         return x
 
@@ -279,10 +361,14 @@ class CrossAttentionBlock(nn.Module):
         self,
         d_model: int,
         n_heads: int = 8,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        drop_path_prob: float = 0.0,    # V9: stochastic depth
+        attn_dropout: Optional[float] = None  # V9: separate attn weight dropout
     ):
         super().__init__()
-        
+
+        self.drop_path_prob = drop_path_prob
+
         # Cross-attention
         self.norm_q = nn.LayerNorm(d_model)
         self.norm_kv = nn.LayerNorm(d_model)
@@ -290,13 +376,14 @@ class CrossAttentionBlock(nn.Module):
             d_model=d_model,
             n_heads=n_heads,
             dropout=dropout,
-            use_gate=True
+            use_gate=True,
+            attn_dropout=attn_dropout  # V9
         )
-        
+
         # Feedforward
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = SwiGLU(d_model, dropout=dropout)
-        
+
         self.dropout = nn.Dropout(dropout)
         
     def forward(
@@ -318,28 +405,28 @@ class CrossAttentionBlock(nn.Module):
         Returns:
             Output tensor [B, L_q, d_model]
         """
-        # Cross-attention with residual
+        # Cross-attention with residual + stochastic depth
         residual = q
         q_normed = self.norm_q(q)
         kv_normed = self.norm_kv(kv)
-        
+
         # Build cross-attention mask
         cross_mask = None
         if kv_mask is not None:
             cross_mask = kv_mask  # [B, L_kv]
-        
+
         out = self.cross_attn(q_normed, mask=cross_mask, kv=kv_normed)
-        out = self.dropout(out) + residual
+        out = drop_path(self.dropout(out), self.drop_path_prob, self.training) + residual
 
         # V6m9: Apply q_mask to output to reduce padding noise propagation
         if q_mask is not None:
             out = out * q_mask.unsqueeze(-1).float()  # [B, L_q, d_model]
 
-        # FFN with residual
+        # FFN with residual + stochastic depth
         residual = out
         out = self.norm2(out)
         out = self.ffn(out)
-        out = self.dropout(out) + residual
+        out = drop_path(self.dropout(out), self.drop_path_prob, self.training) + residual
 
         # V6m9: Apply q_mask again after FFN
         if q_mask is not None:
@@ -452,7 +539,9 @@ class BidirectionalCrossAttentionBlock(nn.Module):
         self,
         d_model: int,
         n_heads: int = 8,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        drop_path_prob: float = 0.0,    # V9: stochastic depth
+        attn_dropout: Optional[float] = None  # V9: separate attn weight dropout
     ):
         super().__init__()
 
@@ -460,14 +549,18 @@ class BidirectionalCrossAttentionBlock(nn.Module):
         self.prot_to_lig = CrossAttentionBlock(
             d_model=d_model,
             n_heads=n_heads,
-            dropout=dropout
+            dropout=dropout,
+            drop_path_prob=drop_path_prob,
+            attn_dropout=attn_dropout
         )
 
         # Lig -> Prot: Ligand queries Protein
         self.lig_to_prot = CrossAttentionBlock(
             d_model=d_model,
             n_heads=n_heads,
-            dropout=dropout
+            dropout=dropout,
+            drop_path_prob=drop_path_prob,
+            attn_dropout=attn_dropout
         )
 
     def forward(
@@ -530,16 +623,26 @@ class ProteinContextEncoder(nn.Module):
         n_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 2000,
-        pe_type: str = 'sinusoidal'
+        pe_type: str = 'sinusoidal',
+        stochastic_depth_prob: float = 0.0,  # V9: max drop path prob (linearly scaled per layer)
+        attn_dropout: Optional[float] = None,  # V9: separate attn weight dropout
+        use_flash_attn: bool = False  # V9m2: enable Flash Attention
     ):
         super().__init__()
-        
+
         # Positional encoding
         if pe_type == 'sinusoidal':
             self.pe = SinusoidalPositionalEncoding(d_model, max_len, dropout)
         else:
             self.pe = LearnablePositionalEncoding(d_model, max_len, dropout)
-        
+
+        # V9: linearly increase drop_path_prob from 0 to stochastic_depth_prob across layers
+        # (DeiT/Swin convention: first layer gets 0, last gets max)
+        drop_path_probs = [
+            stochastic_depth_prob * i / max(n_layers - 1, 1)
+            for i in range(n_layers)
+        ]
+
         # Transformer layers
         self.layers = nn.ModuleList([
             GatedTransformerBlock(
@@ -547,11 +650,14 @@ class ProteinContextEncoder(nn.Module):
                 n_heads=n_heads,
                 dropout=dropout,
                 use_gated_attn=True,
-                use_swiglu=True
+                use_swiglu=True,
+                drop_path_prob=drop_path_probs[i],
+                attn_dropout=attn_dropout,
+                use_flash_attn=use_flash_attn  # V9m2
             )
-            for _ in range(n_layers)
+            for i in range(n_layers)
         ])
-        
+
         # Final normalization
         self.norm = nn.LayerNorm(d_model)
         

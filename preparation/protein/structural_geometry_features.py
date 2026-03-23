@@ -109,9 +109,10 @@ def compute_dssp_features(
     """
     n_residues = len(residue_indices)
     dssp_features = np.zeros((n_residues, 8), dtype=np.float32)
+    dssp_bin = shutil.which('mkdssp') or shutil.which('dssp')
 
-    # 优先尝试 pyDSSP (最稳健，纯Python实现)
-    if PYDSSP_AVAILABLE and BIOTITE_AVAILABLE:
+    # 优先尝试 DSSP 二进制（8类）；无二进制时再尝试 pyDSSP（3类）
+    if (not dssp_bin) and PYDSSP_AVAILABLE and BIOTITE_AVAILABLE:
         try:
             pdb_file = PDBFile.read(str(pdb_path))
             structure = pdb_file.get_structure(model=1)
@@ -177,9 +178,8 @@ def compute_dssp_features(
             pass
 
     # ==========================================
-    # 备选方案：调用 DSSP 二进制文件并原生解析
+    # 优先方案：调用 DSSP 二进制文件并原生解析
     # ==========================================
-    dssp_bin = shutil.which('mkdssp') or shutil.which('dssp')
     if not dssp_bin:
         dssp_features[:, 7] = 1.0
         return dssp_features
@@ -198,11 +198,10 @@ def compute_dssp_features(
             # 添加必要的 PDB 头
             pdb_name = pdb_path.stem[:4].upper()
             f.write(f"HEADER    PROTEIN                                 01-JAN-00   {pdb_name}\n")
-            f.write("CRYST1  100.000  100.000  100.000  90.00  90.00  90.00 P 1           1\n")
 
             # 只保留 ATOM/TER/END 记录
             for line in lines:
-                if line.startswith(('ATOM', 'TER', 'END', 'HETATM')):
+                if line.startswith(('ATOM', 'TER', 'END')):
                     f.write(line)
 
         target_pdb_file = tmp_file
