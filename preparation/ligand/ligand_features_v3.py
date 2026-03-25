@@ -254,12 +254,16 @@ def extract_ligand_features_from_file(
     include_conformers: bool = True,
     num_conformers: int = 50,
     strict: bool = True,
+    verbose: bool = False,
+    num_threads: int = 0,
 ) -> Dict[str, np.ndarray]:
     base_features = extract_v2_features(
         ligand_file,
         include_conformers=include_conformers,
         num_conformers=num_conformers,
         strict=strict,
+        verbose=verbose,
+        num_threads=num_threads,
     )
 
     base_atom_features = np.asarray(base_features['atom_features'], dtype=np.float32)
@@ -348,10 +352,14 @@ def extract_ligand_features_v3(
     include_conformers: bool = True,
     num_conformers: int = 50,
     strict: bool = True,
+    verbose: bool = False,
+    num_threads: int = 0,
 ) -> Dict[str, np.ndarray]:
     return extract_ligand_features_from_file(
         ligand_file,
         include_conformers=include_conformers,
         num_conformers=num_conformers,
         strict=strict,
+        verbose=verbose,
+        num_threads=num_threads,
     )

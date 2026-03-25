@@ -61,6 +61,14 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
+    ligand_edge_index_list = []
+    ligand_edge_attr_list = []
+    ligand_edge_index_list = []
+    ligand_edge_attr_list = []
+    ligand_edge_index_list = []
+    ligand_edge_attr_list = []
+    ligand_edge_index_list = []
+    ligand_edge_attr_list = []
 
     # Fill in data
     for i, sample in enumerate(batch):
@@ -84,6 +92,14 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
         ligand_mask[i, :n_atm] = True
+        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
+        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
+        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
+        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
+        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
+        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
+        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
+        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
 
     result = {
         'pdb_ids': pdb_ids,
@@ -95,6 +111,8 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'ligand_features': ligand_features,
         'ligand_coords': ligand_coords,
         'ligand_mask': ligand_mask,
+        'ligand_edge_index_list': ligand_edge_index_list,
+        'ligand_edge_attr_list': ligand_edge_attr_list,
         'labels': labels,
         'n_residues': torch.tensor(n_residues_list),
         'n_atoms': torch.tensor(n_atoms_list),
@@ -334,6 +352,8 @@ def pocket_collate_fn_v8(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
+    ligand_edge_index_list = []
+    ligand_edge_attr_list = []
 
     # Fill in data
     for i, sample in enumerate(batch):
@@ -357,6 +377,8 @@ def pocket_collate_fn_v8(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
         ligand_mask[i, :n_atm] = True
+        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
+        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
 
     result = {
         'pdb_ids': pdb_ids,
@@ -370,6 +392,8 @@ def pocket_collate_fn_v8(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'ligand_features': ligand_features,
         'ligand_coords': ligand_coords,
         'ligand_mask': ligand_mask,
+        'ligand_edge_index_list': ligand_edge_index_list,
+        'ligand_edge_attr_list': ligand_edge_attr_list,
         'labels': labels,
         'n_residues': torch.tensor(n_residues_list),
         'n_atoms': torch.tensor(n_atoms_list),
@@ -401,7 +425,7 @@ def prepare_model_inputs_v8(
     Returns:
         Dictionary of model inputs ready for forward pass
     """
-    # Build ligand graph
+    # Build ligand graph from pre-computed bond graph if available.
     ligand_data_list = []
     B = len(batch['pdb_ids'])
 
@@ -412,24 +436,9 @@ def prepare_model_inputs_v8(
 
         x = batch['ligand_features'][i, :n_atoms]
         pos = batch['ligand_coords'][i, :n_atoms]
-
-        # Build edges (fully connected within ligand)
-        edge_index = []
-        edge_attr = []
-        for src in range(n_atoms):
-            for dst in range(n_atoms):
-                if src != dst:
-                    edge_index.append([src, dst])
-                    # Edge features: [bond_type (4), is_close, distance_normalized]
-                    # 与原始 build_ligand_graphs 保持一致
-                    vec = pos[dst] - pos[src]
-                    dist = torch.norm(vec).item()
-                    edge_feat = [1.0, 0.0, 0.0, 0.0, 1.0, dist / 2.0]
-                    edge_attr.append(edge_feat)
-
-        if len(edge_index) > 0:
-            edge_index = torch.tensor(edge_index, dtype=torch.long).t()
-            edge_attr = torch.tensor(edge_attr, dtype=torch.float32)  # V8: 使用 tensor 而不是 stack
+        if 'ligand_edge_index_list' in batch and 'ligand_edge_attr_list' in batch:
+            edge_index = batch['ligand_edge_index_list'][i]
+            edge_attr = batch['ligand_edge_attr_list'][i]
         else:
             edge_index = torch.zeros((2, 0), dtype=torch.long)
             edge_attr = torch.zeros((0, 6), dtype=torch.float32)
@@ -476,4 +485,3 @@ def prepare_model_inputs_v8(
     }
 
     return model_inputs
-

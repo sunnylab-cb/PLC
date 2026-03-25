@@ -28,10 +28,6 @@ import multiprocessing as mp
 import torch
 import numpy as np
 
-pypropel_path = Path(__file__).parent / 'pypropel_unibio'
-if pypropel_path.exists():
-    sys.path.insert(0, str(pypropel_path))
-
 try:
     from tqdm import tqdm
     TQDM_AVAILABLE = True
@@ -43,10 +39,23 @@ try:
     from rdkit import Chem
     PYPROPEL_AVAILABLE = True
 except ImportError as e:
-    print(f"❌ pypropel或RDKit不可用: {e}")
-    import traceback
-    traceback.print_exc()
-    PYPROPEL_AVAILABLE = False
+    pypropel_path = Path(__file__).parent / 'pypropel_unibio'
+    if pypropel_path.exists():
+        sys.path.insert(0, str(pypropel_path))
+        try:
+            import pypropel.mol as ppmol
+            from rdkit import Chem
+            PYPROPEL_AVAILABLE = True
+        except ImportError as fallback_error:
+            print(f"❌ pypropel或RDKit不可用: {fallback_error}")
+            import traceback
+            traceback.print_exc()
+            PYPROPEL_AVAILABLE = False
+    else:
+        print(f"❌ pypropel或RDKit不可用: {e}")
+        import traceback
+        traceback.print_exc()
+        PYPROPEL_AVAILABLE = False
 
 try:
     from ligand_features_v3 import extract_ligand_features_from_file as extract_v3_features
@@ -129,6 +138,8 @@ def extract_ligand_features_v4(
     include_conformers: bool = True,
     num_conformers: int = 50,
     strict: bool = True,
+    verbose: bool = False,
+    num_threads: int = 0,
 ) -> dict:
     if not PYPROPEL_AVAILABLE or not V3_AVAILABLE:
         raise ImportError("pypropel、RDKit和ligand_features_v3是必需的")
@@ -138,11 +149,12 @@ def extract_ligand_features_v4(
         include_conformers=include_conformers,
         num_conformers=num_conformers,
         strict=strict,
+        verbose=verbose,
+        num_threads=num_threads,
     )
 
     mol = _load_mol_for_global_features(ligand_file)
     global_features = np.asarray(ppmol.get_global_tag(mol, output_dim=45), dtype=np.float32)
-
     shape_features = _shape_feature_vector(v3_features)
 
     v3_atom_features = np.asarray(v3_features['atom_features'], dtype=np.float32)
@@ -187,10 +199,14 @@ def extract_ligand_features_single(
             include_conformers=(not no_conformers and num_conformers > 0),
             num_conformers=num_conformers,
             strict=strict,
+            verbose=False,
+            num_threads=0,
         )
 
         data = {
             'atom_features': torch.from_numpy(features['atom_features']),
+            'edge_index': torch.from_numpy(features['edge_index']).long(),
+            'edge_attr': torch.from_numpy(features['edge_attr']).float(),
             'coords': torch.from_numpy(features['coords']),
             'coords_heavy_current': torch.from_numpy(features['coords_heavy_current']),
             'gasteiger_charges': torch.from_numpy(features['gasteiger_charges']),

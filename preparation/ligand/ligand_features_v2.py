@@ -125,6 +125,73 @@ def get_atom_degree_features(atom: Chem.Atom) -> List[float]:
     ]
 
 
+def get_bond_type_features(bond: Chem.Bond) -> List[float]:
+    """
+    键特征 (6维)
+    - single
+    - double
+    - triple
+    - aromatic
+    - conjugated
+    - in_ring
+    """
+    bond_type = bond.GetBondType()
+    return [
+        float(bond_type == Chem.BondType.SINGLE),
+        float(bond_type == Chem.BondType.DOUBLE),
+        float(bond_type == Chem.BondType.TRIPLE),
+        float(bond.GetIsAromatic()),
+        float(bond.GetIsConjugated()),
+        float(bond.IsInRing()),
+    ]
+
+
+def extract_bond_graph(mol: Chem.Mol) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    基于当前工作分子提取 bond graph。
+
+    该函数必须作用在最终用于生成 atom_features/coords 的同一个 mol 上，
+    才能保证 edge_index 与 atom_features 的原子顺序严格对齐。
+    """
+    edge_pairs = []
+    edge_attrs = []
+
+    for bond in mol.GetBonds():
+        begin = bond.GetBeginAtomIdx()
+        end = bond.GetEndAtomIdx()
+        attr = np.asarray(get_bond_type_features(bond), dtype=np.float32)
+
+        edge_pairs.append([begin, end])
+        edge_pairs.append([end, begin])
+        edge_attrs.append(attr)
+        edge_attrs.append(attr.copy())
+
+    if not edge_pairs:
+        return np.zeros((2, 0), dtype=np.int64), np.zeros((0, 6), dtype=np.float32)
+
+    edge_index = np.asarray(edge_pairs, dtype=np.int64).T
+    edge_attr = np.asarray(edge_attrs, dtype=np.float32)
+    return edge_index, edge_attr
+
+
+def make_sanitized_descriptor_mol(mol: Chem.Mol) -> Chem.Mol:
+    """
+    为电子描述符计算创建一个 sanitize 后的副本。
+
+    目的：
+    - 不修改主流程里用于坐标、原子顺序和 bond graph 的工作分子
+    - 让 Gasteiger charge / Crippen 等依赖 RDKit 原子类型感知的描述符
+      在稳定、可比较的分子对象上计算
+    """
+    mol_copy = Chem.Mol(mol)
+    try:
+        Chem.SanitizeMol(mol_copy)
+        return mol_copy
+    except Exception as e:
+        warnings.warn(f"Sanitize failed for descriptor mol, fallback to raw mol: {e}")
+        return mol
+
+
 # ============================================================================
 # 电子效应特征
 # ============================================================================
@@ -184,6 +251,7 @@ def generate_conformer_ensemble(
     max_attempts: int = 1000,
     prune_rms_thresh: float = 0.5,
     strict: bool = True,
+    num_threads: int = 0,
 ) -> Chem.Mol:
     """
     生成构象系综
@@ -201,7 +269,7 @@ def generate_conformer_ensemble(
     params = AllChem.ETKDGv3()
     params.randomSeed = 42
     params.pruneRmsThresh = prune_rms_thresh
-    params.numThreads = 0
+    params.numThreads = num_threads
 
     try:
         conf_ids = AllChem.EmbedMultipleConfs(
@@ -215,7 +283,7 @@ def generate_conformer_ensemble(
             numConfs=num_confs,
             randomSeed=42,
             pruneRmsThresh=prune_rms_thresh,
-            numThreads=0,
+            numThreads=num_threads,
             maxAttempts=max_attempts
         )
     except Exception as e:
@@ -237,7 +305,7 @@ def generate_conformer_ensemble(
         return work_mol
 
     try:
-        results = AllChem.MMFFOptimizeMoleculeConfs(work_mol, numThreads=0)
+        results = AllChem.MMFFOptimizeMoleculeConfs(work_mol, numThreads=num_threads)
     except Exception as e:
         if strict:
             raise
@@ -319,6 +387,8 @@ def extract_ligand_atom_features(
     num_conformers: int = 50,
     use_existing_coords: bool = True,
     strict: bool = True,
+    verbose: bool = False,
+    num_threads: int = 0,
 ) -> Dict[str, np.ndarray]:
     """
     提取完整的配体原子特征 (V2 - 修复版)
@@ -373,10 +443,11 @@ def extract_ligand_atom_features(
                 original_coords_heavy.append(original_coords_all[idx])
         original_coords_heavy = np.array(original_coords_heavy, dtype=np.float32)
 
-        if original_has_hydrogens:
-            print(f"  ✅ 保存原始坐标: {num_heavy_atoms}个重原子 + {num_atoms_original - num_heavy_atoms}个氢原子")
-        else:
-            print(f"  ✅ 保存原始坐标: {num_heavy_atoms}个重原子（无氢）")
+        if verbose:
+            if original_has_hydrogens:
+                print(f"  ✅ 保存原始坐标: {num_heavy_atoms}个重原子 + {num_atoms_original - num_heavy_atoms}个氢原子")
+            else:
+                print(f"  ✅ 保存原始坐标: {num_heavy_atoms}个重原子（无氢）")
 
     # ========================================================================
     # 步骤2: 处理氢原子（如果原始文件已有氢，则不添加）
@@ -384,12 +455,14 @@ def extract_ligand_atom_features(
     if original_has_hydrogens:
         # 原始文件已包含氢原子，直接使用
         num_atoms_with_h = num_atoms_original
-        print(f"  ✅ 使用原始氢原子: 保持原子顺序不变")
+        if verbose:
+            print(f"  ✅ 使用原始氢原子: 保持原子顺序不变")
     else:
         # 原始文件没有氢原子，需要添加
         mol = Chem.AddHs(mol, addCoords=has_3d_coords)
         num_atoms_with_h = mol.GetNumAtoms()
-        print(f"  ⚠️  添加氢原子: {num_atoms_original} -> {num_atoms_with_h} 原子")
+        if verbose:
+            print(f"  ⚠️  添加氢原子: {num_atoms_original} -> {num_atoms_with_h} 原子")
 
         # 恢复重原子的原始坐标（因为AddHs可能改变坐标）
         if has_3d_coords and use_existing_coords and original_coords_heavy is not None:
@@ -400,7 +473,8 @@ def extract_ligand_atom_features(
                     if heavy_idx < len(original_coords_heavy):
                         conf.SetAtomPosition(atom.GetIdx(), original_coords_heavy[heavy_idx].tolist())
                     heavy_idx += 1
-            print(f"  ✅ 恢复原始坐标: 重原子坐标已恢复")
+            if verbose:
+                print(f"  ✅ 恢复原始坐标: 重原子坐标已恢复")
 
     # ========================================================================
     # 步骤3: 柔性分析（使用深拷贝，完全独立）
@@ -411,14 +485,20 @@ def extract_ligand_atom_features(
     if include_conformers and has_3d_coords:
         # 创建深拷贝用于柔性分析（不影响原始分子）
         mol_copy = Chem.Mol(mol.ToBinary())  # 深拷贝
-        mol_copy = generate_conformer_ensemble(mol_copy, num_confs=num_conformers, strict=strict)
+        mol_copy = generate_conformer_ensemble(
+            mol_copy,
+            num_confs=num_conformers,
+            strict=strict,
+            num_threads=num_threads,
+        )
         rmsf, flexibility_flag = compute_conformer_flexibility(mol_copy)
         num_generated_confs = mol_copy.GetNumConformers()
 
         if num_generated_confs < 2:
             if strict:
                 raise ValueError(f"Insufficient conformers generated: {num_generated_confs}")
-            print(f"  ⚠️  柔性分析降级: 仅{num_generated_confs}个构象")
+            if verbose:
+                print(f"  ⚠️  柔性分析降级: 仅{num_generated_confs}个构象")
 
         # 只保留重原子的柔性信息
         heavy_atom_indices = [atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1]
@@ -427,17 +507,24 @@ def extract_ligand_atom_features(
                 rmsf_full[idx] = rmsf[i]
                 flexibility_flag_full[idx] = flexibility_flag[i]
 
-        print(f"  ✅ 柔性分析完成: {num_generated_confs}个构象")
+        if verbose:
+            print(f"  ✅ 柔性分析完成: {num_generated_confs}个构象")
         del mol_copy  # 释放内存
     elif not has_3d_coords:
         # 没有原始坐标，生成新的
         if include_conformers:
-            mol = generate_conformer_ensemble(mol, num_confs=num_conformers, strict=strict)
+            mol = generate_conformer_ensemble(
+                mol,
+                num_confs=num_conformers,
+                strict=strict,
+                num_threads=num_threads,
+            )
         else:
             AllChem.EmbedMolecule(mol, randomSeed=42)
             AllChem.MMFFOptimizeMolecule(mol)
 
-        print(f"  ⚠️  生成新坐标: 无原始实验坐标")
+        if verbose:
+            print(f"  ⚠️  生成新坐标: 无原始实验坐标")
 
     if mol.GetNumConformers() == 0:
         if strict:
@@ -474,9 +561,10 @@ def extract_ligand_atom_features(
     # ========================================================================
     # 步骤6: 电子效应特征
     # ========================================================================
-    gasteiger_charges = compute_gasteiger_charges(mol)  # [N_atoms]
-    logp_contribs = compute_crippen_logp_contributions(mol)  # [N_atoms]
-    tpsa_contribs = compute_tpsa_contributions(mol)  # [N_atoms]
+    descriptor_mol = make_sanitized_descriptor_mol(mol)
+    gasteiger_charges = compute_gasteiger_charges(descriptor_mol)  # [N_atoms]
+    logp_contribs = compute_crippen_logp_contributions(descriptor_mol)  # [N_atoms]
+    tpsa_contribs = compute_tpsa_contributions(descriptor_mol)  # [N_atoms]
 
     # ========================================================================
     # 步骤7: 提取坐标
@@ -497,6 +585,11 @@ def extract_ligand_atom_features(
     molecular_descriptors = compute_molecular_descriptors(mol)
 
     # ========================================================================
+    # 步骤8.5: 提取真实化学键图
+    # ========================================================================
+    edge_index, edge_attr = extract_bond_graph(mol)
+
+    # ========================================================================
     # 步骤9: 拼接所有特征
     # ========================================================================
     # 总维度: 30 (原子特征) + 3 (电子效应) + 2 (柔性) = 35维
@@ -512,6 +605,8 @@ def extract_ligand_atom_features(
     return {
         # 原子级别特征
         'atom_features': complete_features,  # [N_atoms, 35]
+        'edge_index': edge_index,  # [2, E]
+        'edge_attr': edge_attr,  # [E, 6]
 
         # 坐标信息（多个版本）
         'coords': coords_current,  # [N_atoms, 3] 当前坐标（包含氢）
@@ -543,6 +638,8 @@ def extract_ligand_features_from_file(
     include_conformers: bool = True,
     num_conformers: int = 50,
     strict: bool = True,
+    verbose: bool = False,
+    num_threads: int = 0,
 ) -> Dict[str, np.ndarray]:
     """
     从文件提取配体特征
@@ -568,7 +665,14 @@ def extract_ligand_features_from_file(
     if mol is None:
         raise ValueError(f"Failed to read molecule from {ligand_file}")
 
-    return extract_ligand_atom_features(mol, include_conformers, num_conformers, strict=strict)
+    return extract_ligand_atom_features(
+        mol,
+        include_conformers=include_conformers,
+        num_conformers=num_conformers,
+        strict=strict,
+        verbose=verbose,
+        num_threads=num_threads,
+    )
 
 
 def extract_ligand_features_from_smiles(
@@ -576,6 +680,8 @@ def extract_ligand_features_from_smiles(
     include_conformers: bool = True,
     num_conformers: int = 50,
     strict: bool = True,
+    verbose: bool = False,
+    num_threads: int = 0,
 ) -> Dict[str, np.ndarray]:
     """
     从SMILES字符串提取配体特征
@@ -587,7 +693,14 @@ def extract_ligand_features_from_smiles(
     if mol is None:
         raise ValueError(f"Invalid SMILES: {smiles}")
 
-    return extract_ligand_atom_features(mol, include_conformers, num_conformers, strict=strict)
+    return extract_ligand_atom_features(
+        mol,
+        include_conformers=include_conformers,
+        num_conformers=num_conformers,
+        strict=strict,
+        verbose=verbose,
+        num_threads=num_threads,
+    )
 
 
 # ============================================================================
