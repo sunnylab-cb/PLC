@@ -1,0 +1,112 @@
+# Pocket-GVP-Fusion V10 Configuration
+# Uses:
+# - protein complete_features_v4
+# - ligand_features_v5
+
+experiment:
+  name: "pocket_gvp_fusion_v10"
+  seed: 42
+  output_dir: "outputs"
+
+data:
+  data_root: "data"
+  ligand_features_dir: "ligand_features_v5"
+  protein_features_dir: "complete_features_v4"
+  nma_features_dir: "complete_features_v4_nma"
+  nma_n_confs: 3
+  nma_max_conf: 9
+  distances_file: "data/residue_ligand_distances_vdw.pt"
+  distances_file_original: "data/residue_ligand_distances_poc_style.pt"
+  split_file: "configs/splits/splits.txt"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1500
+  max_atoms: 128
+
+model:
+  d_esm: 1280
+  d_phys: 62
+  d_spatial_scalar: 89
+  d_phys_encoded: 128
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 109
+  n_gvp_vectors: 12
+  n_gvp_vector_hidden: 20
+
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4
+
+  dropout: 0.1
+  attn_dropout: 0.1
+  classifier_dropout: 0.2
+  stochastic_depth_prob: 0.1
+
+  use_flash_attn: false
+
+  esm_dropout_prob: 0.1
+  physchem_dropout_prob: 0.2
+
+  use_gated_attn: true
+  use_swiglu: true
+  gvp_radius: 10.0
+  gvp_k_neighbors: 20
+  use_gradient_checkpointing: false
+
+  n_classes: 3
+  edge_dim: 6
+
+training:
+  batch_size: 18
+  num_epochs: 100
+  num_workers: 8
+
+  optimizer: "adamw"
+  learning_rate: 5.0e-5 #primary lr
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+
+  scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+
+  loss_type: "focal"
+  focal_gamma: 2.0
+  class_weights: [7.0, 1.0, 2.2]
+  dice_weight: 0.4
+  focal_weight: 0.4
+
+  iou_weight: 0.0
+  iou_component_weight: 1.0
+  iou_dist_weight: 0.2
+  iou_power: 1.5
+  iou_d_max: 10.0
+
+  use_boundary_loss: false
+  boundary_weight: 0.2
+  boundary_multiplier: 2.0
+  boundary_distance_threshold: 8.0
+
+  label_smoothing: 0.15
+  gradient_clip: 0.5
+  enable_profiling: false
+
+  save_every: 5
+  early_stopping_patience: 30
+
+  use_amp: false
+  use_bf16: true          # BF16 more stable than FP16; enable if GPU supports it (Ampere+/ROCm)
+  accumulation_steps: 1    # Gradient accumulation steps; effective batch = batch_size * accumulation_steps
+  cudnn_benchmark: false   # cuDNN/MIOpen benchmark mode; False for variable-length inputs (dynamic padding)
+  pin_memory: true
+  prefetch_factor: 2
+
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false

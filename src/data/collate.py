@@ -63,12 +63,6 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
     ligand_edge_index_list = []
     ligand_edge_attr_list = []
-    ligand_edge_index_list = []
-    ligand_edge_attr_list = []
-    ligand_edge_index_list = []
-    ligand_edge_attr_list = []
-    ligand_edge_index_list = []
-    ligand_edge_attr_list = []
 
     # Fill in data
     for i, sample in enumerate(batch):
@@ -92,12 +86,6 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
         ligand_mask[i, :n_atm] = True
-        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
-        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
-        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
-        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
-        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
-        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
         ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
         ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
 
@@ -485,3 +473,216 @@ def prepare_model_inputs_v8(
     }
 
     return model_inputs
+
+
+def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
+    """
+    Collate function for protein complete features v4 + ligand features v5.
+
+    Differences from v8:
+    - protein_spatial_scalar dimension is inferred dynamically (v4 default: 89D)
+    - protein_spatial_vector channel count is inferred dynamically (v4 default: 8x3)
+    - ligand atom feature dimension is inferred dynamically (v5 default: 109D)
+    """
+    if len(batch) == 0:
+        return {}
+
+    pdb_ids = [sample['pdb_id'] for sample in batch]
+    n_residues_list = [sample['n_residues'] for sample in batch]
+    n_atoms_list = [sample['n_atoms'] for sample in batch]
+
+    max_residues = max(n_residues_list)
+    max_atoms = max(n_atoms_list)
+    B = len(batch)
+
+    esm_dim = batch[0]['esm'].shape[-1]
+    physchem_dim = batch[0]['protein_physchem'].shape[-1]
+    spatial_scalar_dim = batch[0]['protein_spatial_scalar'].shape[-1]
+    spatial_vector_channels = batch[0]['protein_spatial_vector'].shape[1]
+    ligand_dim = batch[0]['ligand_features'].shape[-1]
+
+    esm_embeddings = torch.zeros(B, max_residues, esm_dim)
+    protein_physchem = torch.zeros(B, max_residues, physchem_dim)
+    protein_spatial_scalar = torch.zeros(B, max_residues, spatial_scalar_dim)
+    protein_spatial_vector = torch.zeros(B, max_residues, spatial_vector_channels, 3)
+    protein_coords = torch.zeros(B, max_residues, 3)
+    protein_vectors = torch.zeros(B, max_residues, 4, 3)
+    protein_mask = torch.zeros(B, max_residues, dtype=torch.bool)
+    labels = torch.zeros(B, max_residues, dtype=torch.long)
+
+    has_labels_original = any('labels_original' in sample for sample in batch)
+    if has_labels_original:
+        labels_original = torch.zeros(B, max_residues, dtype=torch.long)
+
+    ligand_features = torch.zeros(B, max_atoms, ligand_dim)
+    ligand_coords = torch.zeros(B, max_atoms, 3)
+    ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
+    ligand_edge_index_list = []
+    ligand_edge_attr_list = []
+
+    for i, sample in enumerate(batch):
+        n_res = sample['n_residues']
+        n_atm = sample['n_atoms']
+
+        esm_embeddings[i, :n_res] = sample['esm'][:n_res]
+        protein_physchem[i, :n_res] = sample['protein_physchem'][:n_res]
+        protein_spatial_scalar[i, :n_res] = sample['protein_spatial_scalar'][:n_res]
+        protein_spatial_vector[i, :n_res] = sample['protein_spatial_vector'][:n_res]
+        protein_coords[i, :n_res] = sample['gvp_coords'][:n_res]
+        protein_vectors[i, :n_res] = sample['gvp_vectors'][:n_res]
+        protein_mask[i, :n_res] = True
+        labels[i, :n_res] = sample['labels'][:n_res]
+
+        if has_labels_original and 'labels_original' in sample:
+            labels_orig = sample['labels_original']
+            n_orig = min(len(labels_orig), n_res)
+            labels_original[i, :n_orig] = labels_orig[:n_orig]
+
+        ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
+        ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
+        ligand_mask[i, :n_atm] = True
+        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
+        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
+
+    result = {
+        'pdb_ids': pdb_ids,
+        'esm_embeddings': esm_embeddings,
+        'protein_physchem': protein_physchem,
+        'protein_spatial_scalar': protein_spatial_scalar,
+        'protein_spatial_vector': protein_spatial_vector,
+        'protein_coords': protein_coords,
+        'protein_vectors': protein_vectors,
+        'protein_mask': protein_mask,
+        'ligand_features': ligand_features,
+        'ligand_coords': ligand_coords,
+        'ligand_mask': ligand_mask,
+        'ligand_edge_index_list': ligand_edge_index_list,
+        'ligand_edge_attr_list': ligand_edge_attr_list,
+        'labels': labels,
+        'n_residues': torch.tensor(n_residues_list),
+        'n_atoms': torch.tensor(n_atoms_list),
+    }
+
+    if has_labels_original:
+        result['labels_original'] = labels_original
+
+    return result
+
+
+def prepare_model_inputs_v10(
+    batch: Dict[str, torch.Tensor],
+    device: torch.device,
+    non_blocking: bool = True
+) -> Dict[str, torch.Tensor]:
+    """
+    Prepare model inputs for v10.
+
+    Dynamic dimensions:
+    - protein_spatial_scalar from complete_features_v4
+    - protein_spatial_vector from complete_features_v4
+    - ligand_features from ligand_features_v5
+    """
+    ligand_data_list = []
+    B = len(batch['pdb_ids'])
+
+    for i in range(B):
+        n_atoms = batch['n_atoms'][i].item()
+        if n_atoms == 0:
+            continue
+
+        x = batch['ligand_features'][i, :n_atoms]
+        pos = batch['ligand_coords'][i, :n_atoms]
+        if 'ligand_edge_index_list' in batch and 'ligand_edge_attr_list' in batch:
+            edge_index = batch['ligand_edge_index_list'][i]
+            edge_attr = batch['ligand_edge_attr_list'][i]
+        else:
+            edge_index = torch.zeros((2, 0), dtype=torch.long)
+            edge_attr = torch.zeros((0, 6), dtype=torch.float32)
+
+        ligand_data_list.append(Data(
+            x=x,
+            pos=pos,
+            edge_index=edge_index,
+            edge_attr=edge_attr
+        ))
+
+    if len(ligand_data_list) > 0:
+        ligand_batch_graph = Batch.from_data_list(ligand_data_list)
+    else:
+        ligand_batch_graph = Data(
+            x=torch.zeros((0, batch['ligand_features'].shape[-1])),
+            pos=torch.zeros((0, 3)),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            edge_attr=torch.zeros((0, 6)),
+            batch=torch.zeros((0,), dtype=torch.long)
+        )
+
+    model_inputs = {
+        'esm_embeddings': batch['esm_embeddings'].to(device, non_blocking=non_blocking),
+        'protein_physchem': batch['protein_physchem'].to(device, non_blocking=non_blocking),
+        'protein_spatial_scalar': batch['protein_spatial_scalar'].to(device, non_blocking=non_blocking),
+        'protein_spatial_vector': batch['protein_spatial_vector'].to(device, non_blocking=non_blocking),
+        'protein_gvp_vectors': batch['protein_vectors'].to(device, non_blocking=non_blocking),
+        'protein_coords': batch['protein_coords'].to(device, non_blocking=non_blocking),
+        'protein_mask': batch['protein_mask'].to(device, non_blocking=non_blocking),
+        'ligand_x': ligand_batch_graph.x.to(device, non_blocking=non_blocking),
+        'ligand_pos': ligand_batch_graph.pos.to(device, non_blocking=non_blocking),
+        'ligand_edge_index': ligand_batch_graph.edge_index.to(device, non_blocking=non_blocking),
+        'ligand_edge_attr': ligand_batch_graph.edge_attr.to(device, non_blocking=non_blocking),
+        'ligand_batch': ligand_batch_graph.batch.to(device, non_blocking=non_blocking),
+        'ligand_to_protein': torch.zeros(B, batch['ligand_features'].shape[1], 512).to(device, non_blocking=non_blocking),
+        'ligand_mask': batch['ligand_mask'].to(device, non_blocking=non_blocking),
+    }
+    return model_inputs
+
+
+def pocket_collate_fn_auto(batch: List[Dict]) -> Dict[str, torch.Tensor]:
+    """
+    Automatically dispatch to the appropriate collate function.
+
+    Routing:
+    - legacy samples with `protein_scalar` -> `pocket_collate_fn`
+    - v8/v9 samples with `protein_physchem` + 72D scalar + 6x3 vector + <=96D ligand -> `pocket_collate_fn_v8`
+    - newer samples (e.g. complete_features_v4 / ligand_features_v5) -> `pocket_collate_fn_v10`
+    """
+    if len(batch) == 0:
+        return {}
+
+    sample = batch[0]
+    if 'protein_scalar' in sample:
+        return pocket_collate_fn(batch)
+
+    if 'protein_physchem' not in sample or 'protein_spatial_scalar' not in sample or 'protein_spatial_vector' not in sample:
+        raise KeyError("Unknown batch schema for automatic collate dispatch")
+
+    spatial_scalar_dim = int(sample['protein_spatial_scalar'].shape[-1])
+    spatial_vector_channels = int(sample['protein_spatial_vector'].shape[1])
+    ligand_dim = int(sample['ligand_features'].shape[-1])
+
+    if spatial_scalar_dim == 72 and spatial_vector_channels == 6 and ligand_dim <= 96:
+        return pocket_collate_fn_v8(batch)
+
+    return pocket_collate_fn_v10(batch)
+
+
+def prepare_model_inputs_auto(
+    batch: Dict[str, torch.Tensor],
+    device: torch.device
+) -> Dict[str, torch.Tensor]:
+    """
+    Automatically dispatch to the appropriate model-input preparation function.
+    """
+    if 'protein_scalar' in batch:
+        return prepare_model_inputs(batch, device)
+
+    if 'protein_physchem' not in batch or 'protein_spatial_scalar' not in batch or 'protein_spatial_vector' not in batch:
+        raise KeyError("Unknown batched schema for automatic input preparation")
+
+    spatial_scalar_dim = int(batch['protein_spatial_scalar'].shape[-1])
+    spatial_vector_channels = int(batch['protein_spatial_vector'].shape[2])
+    ligand_dim = int(batch['ligand_features'].shape[-1])
+
+    if spatial_scalar_dim == 72 and spatial_vector_channels == 6 and ligand_dim <= 96:
+        return prepare_model_inputs_v8(batch, device)
+
+    return prepare_model_inputs_v10(batch, device)

@@ -119,6 +119,12 @@ class PocketGVPFusionV9m2(nn.Module):
         self.config = {**self.DEFAULT_CONFIG, **(config or {})}
         c = self.config
 
+        # Input normalization layers
+        self.esm_norm = nn.LayerNorm(c['d_esm'])
+        self.physchem_norm = nn.LayerNorm(c['d_phys'])
+        self.spatial_norm = nn.LayerNorm(c['d_spatial_scalar'])
+        self.ligand_norm = nn.LayerNorm(c['d_ligand_atom'])
+
         # Module 1: PhysChem MLP Encoder
         self.physchem_encoder = nn.Sequential(
             nn.Linear(c['d_phys'], 128),
@@ -262,6 +268,12 @@ class PocketGVPFusionV9m2(nn.Module):
         B, L, _ = esm_embeddings.shape
         device = esm_embeddings.device
         c = self.config
+
+        # Normalize input features
+        esm_embeddings = self.esm_norm(esm_embeddings)
+        protein_physchem = self.physchem_norm(protein_physchem)
+        protein_spatial_scalar = self.spatial_norm(protein_spatial_scalar)
+        ligand_x = self.ligand_norm(ligand_x)
 
         # ============================================================
         # Module 1: PhysChem MLP Encoder with Modality Dropout
