@@ -53,7 +53,6 @@ class Ligand3DEncoder(nn.Module):
         self.radius = radius
         self.max_neighbors = max_neighbors
         self.n_vec_channels = n_vec_channels
-        self.edge_in_dim = edge_in_dim
 
         # Initial node projection (scalar only)
         self.node_proj = nn.Linear(node_in_dim, node_h_dim)
@@ -102,18 +101,14 @@ class Ligand3DEncoder(nn.Module):
             edge_index: [2, E]
             edge_vectors: [E, 3] normalized direction vectors
         """
-        # Use radius graph for spatial connectivity. Fall back to a pure PyTorch
-        # implementation when torch-cluster is unavailable.
-        try:
-            edge_index = radius_graph(
-                pos,
-                r=self.radius,
-                batch=batch,
-                max_num_neighbors=self.max_neighbors,
-                loop=False
-            )
-        except ImportError:
-            edge_index = self._build_edges_fallback(pos, batch)
+        # Use radius graph for spatial connectivity
+        edge_index = radius_graph(
+            pos,
+            r=self.radius,
+            batch=batch,
+            max_num_neighbors=self.max_neighbors,
+            loop=False
+        )
 
         # Compute edge vectors
         row, col = edge_index
@@ -124,39 +119,6 @@ class Ligand3DEncoder(nn.Module):
         edge_vectors_normalized = edge_vectors / (edge_lengths + 1e-8)  # [E, 3]
 
         return edge_index, edge_vectors_normalized
-
-    def _build_edges_fallback(
-        self,
-        pos: torch.Tensor,
-        batch: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        if batch is None:
-            batch = pos.new_zeros(pos.size(0), dtype=torch.long)
-
-        edge_chunks = []
-        for batch_id in batch.unique(sorted=True):
-            node_indices = (batch == batch_id).nonzero(as_tuple=True)[0]
-            if node_indices.numel() <= 1:
-                continue
-
-            coords = pos[node_indices]
-            dist = torch.cdist(coords, coords)
-            for local_src in range(coords.size(0)):
-                valid = ((dist[local_src] <= self.radius) & (dist[local_src] > 0)).nonzero(as_tuple=True)[0]
-                if valid.numel() == 0:
-                    continue
-
-                if valid.numel() > self.max_neighbors:
-                    order = torch.argsort(dist[local_src, valid])[:self.max_neighbors]
-                    valid = valid[order]
-
-                src_global = node_indices[local_src].repeat(valid.numel())
-                dst_global = node_indices[valid]
-                edge_chunks.append(torch.stack([src_global, dst_global], dim=0))
-
-        if edge_chunks:
-            return torch.cat(edge_chunks, dim=1)
-        return pos.new_zeros((2, 0), dtype=torch.long)
 
     def forward(
         self,
@@ -183,48 +145,11 @@ class Ligand3DEncoder(nn.Module):
         N = x.size(0)
         device = x.device
 
-        # Build spatial edges if not provided. If a bond graph is provided, merge it
-        # with a radius graph so the encoder sees both chemical topology and 3D proximity.
+        # Build spatial edges if not provided
         if edge_index is None:
             edge_index, edge_vectors = self._build_edges(pos, batch)
-            if edge_attr is None:
-                edge_attr = torch.zeros((edge_index.size(1), self.edge_in_dim), device=device, dtype=pos.dtype)
         else:
-            bond_edge_index = edge_index
-            bond_edge_attr = edge_attr
-
-            spatial_edge_index, _ = self._build_edges(pos, batch)
-
-            if bond_edge_index.numel() == 0:
-                edge_index = spatial_edge_index
-                edge_attr = torch.zeros((edge_index.size(1), self.edge_in_dim), device=device, dtype=pos.dtype)
-            else:
-                if bond_edge_attr is None:
-                    bond_edge_attr = torch.zeros(
-                        (bond_edge_index.size(1), self.edge_in_dim),
-                        device=device,
-                        dtype=pos.dtype
-                    )
-                else:
-                    bond_edge_attr = bond_edge_attr.to(device=device, dtype=pos.dtype)
-
-                bond_ids = bond_edge_index[0] * N + bond_edge_index[1]
-                spatial_ids = spatial_edge_index[0] * N + spatial_edge_index[1]
-                keep_spatial = ~torch.isin(spatial_ids, bond_ids)
-
-                if keep_spatial.any():
-                    extra_spatial_edges = spatial_edge_index[:, keep_spatial]
-                    extra_spatial_attr = torch.zeros(
-                        (extra_spatial_edges.size(1), self.edge_in_dim),
-                        device=device,
-                        dtype=pos.dtype
-                    )
-                    edge_index = torch.cat([bond_edge_index, extra_spatial_edges], dim=1)
-                    edge_attr = torch.cat([bond_edge_attr, extra_spatial_attr], dim=0)
-                else:
-                    edge_index = bond_edge_index
-                    edge_attr = bond_edge_attr
-
+            # Compute edge vectors from provided edge_index
             row, col = edge_index
             edge_vectors = pos[col] - pos[row]
             edge_lengths = torch.norm(edge_vectors, dim=-1, keepdim=True)

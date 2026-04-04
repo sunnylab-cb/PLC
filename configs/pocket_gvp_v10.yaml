@@ -13,7 +13,7 @@ data:
   ligand_features_dir: "ligand_features_v5"
   protein_features_dir: "complete_features_v4"
   nma_features_dir: "complete_features_v4_nma"
-  nma_n_confs: 3
+  nma_n_confs: 1
   nma_max_conf: 9
   distances_file: "data/residue_ligand_distances_vdw.pt"
   distances_file_original: "data/residue_ligand_distances_poc_style.pt"
@@ -66,7 +66,7 @@ training:
   num_workers: 8
 
   optimizer: "adamw"
-  learning_rate: 5.0e-5 #primary lr
+  learning_rate: 1.0e-4 #primary lr
   weight_decay: 0.05
   betas: [0.9, 0.999]
 
@@ -92,14 +92,14 @@ training:
   boundary_distance_threshold: 8.0
 
   label_smoothing: 0.15
-  gradient_clip: 0.5
+  gradient_clip: 1.0
   enable_profiling: false
 
   save_every: 5
   early_stopping_patience: 30
 
   use_amp: false
-  use_bf16: true          # BF16 more stable than FP16; enable if GPU supports it (Ampere+/ROCm)
+  use_bf16: false          # BF16 more stable than FP16; enable if GPU supports it (Ampere+/ROCm)
   accumulation_steps: 1    # Gradient accumulation steps; effective batch = batch_size * accumulation_steps
   cudnn_benchmark: false   # cuDNN/MIOpen benchmark mode; False for variable-length inputs (dynamic padding)
   pin_memory: true

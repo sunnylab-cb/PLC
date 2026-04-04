@@ -7,6 +7,7 @@ Implements:
 - GatedTransformerBlock combining both
 - Positional Encoding (sinusoidal and learnable)
 - Flash Attention support (V9m2)
+- Inter-Block Attention Residuals (AttnRes, Kimi 2025)
 """
 
 import math
@@ -682,8 +683,74 @@ class ProteinContextEncoder(nn.Module):
         # Apply transformer layers
         for layer in self.layers:
             x = layer(x, mask=mask)
-        
+
         # Final normalization
         x = self.norm(x)
-        
+
         return x
+
+
+class InterBlockAttnRes(nn.Module):
+    """
+    Inter-Block Attention Residuals (AttnRes), Kimi 2025.
+
+    Replaces the fixed-weight residual sum between blocks with a learnable,
+    input-dependent softmax attention over completed block representations.
+
+    Given completed block representations b_0, b_1, ..., b_{N-1} and the
+    current partial sum h, computes:
+
+        logits_i = w · RMSNorm(b_i)          (scalar per position)
+        alpha    = softmax([logits_0, ..., logits_{N-1}, logit_h])
+        output   = sum_i alpha_i * b_i  +  alpha_h * h
+
+    The pseudo-query vector w is initialised to zero so that at the start of
+    training all block representations (including the partial sum) are weighted
+    equally (uniform softmax), matching the behaviour of a regular mean pool
+    and avoiding early instability.
+
+    Args:
+        d_model: Feature dimension.
+    """
+
+    def __init__(self, d_model: int):
+        super().__init__()
+        # Pseudo-query: scalar projection w ∈ R^d, init=0 (critical)
+        self.proj = nn.Linear(d_model, 1, bias=False)
+        nn.init.zeros_(self.proj.weight)
+        # RMSNorm on keys to prevent magnitude-dominant blocks hijacking softmax
+        self.key_norm = nn.RMSNorm(d_model)
+
+    def forward(
+        self,
+        blocks: list,           # list of [B, L, D] completed block tensors
+        partial: torch.Tensor,  # [B, L, D] current partial block sum
+    ) -> torch.Tensor:
+        """
+        Args:
+            blocks:  List of N tensors [B, L, D] — completed block representations.
+            partial: Tensor [B, L, D] — intra-block partial sum up to current layer.
+
+        Returns:
+            Tensor [B, L, D] — attended combination of all sources.
+        """
+        # Stack all sources: shape [N+1, B, L, D]
+        sources = torch.stack(blocks + [partial], dim=0)
+
+        # Apply RMSNorm to keys (along D) — prevents large-magnitude blocks from
+        # monopolising the softmax probability mass
+        keys = self.key_norm(sources)  # [N+1, B, L, D]
+
+        # Compute scalar logit per source per position:
+        #   logit_i[b, l] = w · RMSNorm(sources[i, b, l])
+        # proj maps D -> 1, so logits shape: [N+1, B, L, 1] -> squeeze -> [N+1, B, L]
+        logits = self.proj(keys).squeeze(-1)  # [N+1, B, L]
+
+        # Softmax over the source dimension
+        alpha = logits.softmax(dim=0)  # [N+1, B, L]
+
+        # Weighted sum: alpha[n, b, l] * sources[n, b, l, d] -> [B, L, D]
+        out = (alpha.unsqueeze(-1) * sources).sum(dim=0)
+
+        return out
+

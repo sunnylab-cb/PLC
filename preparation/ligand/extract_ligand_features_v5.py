@@ -111,7 +111,7 @@ def extract_ligand_features_v5(
     ligand_file: str,
     include_conformers: bool = True,
     num_conformers: int = 50,
-    strict: bool = False,
+    strict: bool = True,
     verbose: bool = False,
     num_threads: int = 0,
 ) -> dict:
@@ -158,7 +158,7 @@ def extract_ligand_features_single(
     num_conformers: int,
     overwrite: bool,
     no_conformers: bool = False,
-    strict: bool = False,
+    strict: bool = True,
     num_threads: int = 0,
 ) -> tuple:
     try:
@@ -235,7 +235,7 @@ def batch_extract_ligand_features(
     n_workers: int = None,
     no_conformers: bool = False,
     only_ids: Optional[Iterable[str]] = None,
-    strict: bool = False,
+    strict: bool = True,
     num_threads: int = 0,
 ) -> None:
     only_ids_set = {s.lower() for s in only_ids} if only_ids else None
@@ -335,7 +335,7 @@ def main():
     parser.add_argument("--workers", type=int, default=None, help="并行进程数")
     parser.add_argument("--rdkit-threads", type=int, default=0, help="每个任务内部 RDKit 线程数，0=全部线程")
     parser.add_argument("--ids", nargs="*", default=None, help="只处理指定PDB ID")
-    parser.add_argument("--strict", action="store_true", help="严格模式：构象/MMFF失败时中止样本")
+    parser.add_argument("--loose", action="store_true", help="宽松模式：允许构象/MMFF降级")
 
     args = parser.parse_args()
 
@@ -361,7 +361,7 @@ def main():
         n_workers=args.workers,
         no_conformers=args.no_conformers,
         only_ids=args.ids,
-        strict=args.strict,
+        strict=not args.loose,
         num_threads=args.rdkit_threads,
     )
 

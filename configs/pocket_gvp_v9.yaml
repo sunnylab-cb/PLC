@@ -14,7 +14,7 @@ data:
   ligand_features_dir: "ligand_features_v4"
   protein_features_dir: "complete_features_v3"          # fallback base (conf0)
   nma_features_dir: "complete_features_v3_nma"          # V9: NMA augmentation dir
-  nma_n_confs: 3            # V9: confs per protein per epoch (incl. conf0); range 1–10
+  nma_n_confs: 1            # V9: confs per protein per epoch (incl. conf0); range 1–10
   nma_max_conf: 9           # V9: max available conf index
   distances_file: "data/residue_ligand_distances_vdw.pt"
   distances_file_original: "data/residue_ligand_distances_poc_style.pt"

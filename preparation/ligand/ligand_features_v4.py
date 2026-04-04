@@ -241,7 +241,7 @@ def generate_conformer_ensemble(
         return work_mol
 
     try:
-        results = AllChem.MMFFOptimizeMoleculeConfs(work_mol, numThreads=num_threads)
+        results = AllChem.MMFFOptimizeMoleculeConfs(work_mol, numThreads=num_threads, maxIters=100000)
     except Exception as e:
         if strict:
             raise
@@ -307,17 +307,34 @@ def _get_hbond_feature_factory() -> Optional["ChemicalFeatures.MolChemicalFeatur
 
 
 def compute_atom_sasa(mol: "Chem.Mol") -> np.ndarray:
+    """
+    计算原子SASA
+
+    处理重合氢原子：使用力场优化修复坐标重合问题
+    """
     num_atoms = mol.GetNumAtoms()
     if num_atoms == 0:
         return np.zeros(0, dtype=np.float32)
     if not RDFREESASA_AVAILABLE or mol.GetNumConformers() == 0:
         return np.zeros(num_atoms, dtype=np.float32)
 
+    # 创建副本用于优化，避免修改原始mol
+    mol_copy = Chem.Mol(mol)
+
+    # 力场优化修复重合原子
     try:
-        radii = rdFreeSASA.classifyAtoms(mol)
-        rdFreeSASA.CalcSASA(mol, radii)
+        AllChem.MMFFOptimizeMolecule(mol_copy, maxIters=100000)
+    except:
+        try:
+            AllChem.UFFOptimizeMolecule(mol_copy, maxIters=100000)
+        except:
+            pass
+
+    try:
+        radii = rdFreeSASA.classifyAtoms(mol_copy)
+        rdFreeSASA.CalcSASA(mol_copy, radii)
         sasa = np.zeros(num_atoms, dtype=np.float32)
-        for atom in mol.GetAtoms():
+        for atom in mol_copy.GetAtoms():
             idx = atom.GetIdx()
             value = 0.0
             if atom.HasProp("SASA"):

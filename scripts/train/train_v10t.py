@@ -146,11 +146,11 @@ def setup_experiment(config: Dict, rank: int, resume_path: str = None) -> Path:
 
     # Create new experiment directory
     raw_exp_name = config['experiment']['name']
-    # V9m2: normalize experiment name
-    version_tokens = {'v6', 'v7', 'v7m1', 'v7m2', 'v7m3', 'v8', 'v9', 'v9m2'}
+    # Normalize experiment name: strip known version tokens, then append current version
+    version_tokens = {'v6', 'v7', 'v7m1', 'v7m2', 'v7m3', 'v8', 'v9', 'v9m2', 'v10', 'v10t'}
     exp_tokens = [token for token in raw_exp_name.split('_') if token]
     normalized_tokens = [token for token in exp_tokens if token not in version_tokens]
-    exp_name = '_'.join(normalized_tokens + ['v9m2'])
+    exp_name = '_'.join(normalized_tokens + ['v10t'])
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     exp_dir = Path(config['experiment']['output_dir']) / f"{exp_name}_{timestamp}"
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -992,15 +992,15 @@ def train_epoch(
                     for key, value in feature_stats.items():
                         writer.add_scalar(f'Health/{key}', value, global_step)
 
-    # Aggregate metrics
-    avg_loss = total_loss / max(total_samples, 1)
-    avg_dice_loss = total_dice_loss / max(total_samples, 1)
-    avg_focal_loss = total_focal_loss / max(total_samples, 1)
-    avg_iou_loss = total_iou_loss / max(total_samples, 1)  # V7m2
-    avg_iou_component = total_iou_component / max(total_samples, 1)  # V7m2
-    avg_iou_dist = total_iou_dist / max(total_samples, 1)  # V7m2
-    avg_boundary_loss = total_boundary_loss / max(total_samples, 1)  # V9m2
-    avg_boundary_ratio = total_boundary_ratio / max(total_samples, 1)  # V9m2
+    # V10: Aggregate metrics - convert tensors to scalars
+    avg_loss = (total_loss / max(total_samples, 1)).item()
+    avg_dice_loss = (total_dice_loss / max(total_samples, 1)).item()
+    avg_focal_loss = (total_focal_loss / max(total_samples, 1)).item()
+    avg_iou_loss = (total_iou_loss / max(total_samples, 1)).item()
+    avg_iou_component = (total_iou_component / max(total_samples, 1)).item()
+    avg_iou_dist = (total_iou_dist / max(total_samples, 1)).item()
+    avg_boundary_loss = (total_boundary_loss / max(total_samples, 1)).item()
+    avg_boundary_ratio = total_boundary_ratio / max(total_samples, 1)
     avg_metrics = {
         'loss': avg_loss,
         'dice_loss': avg_dice_loss,
@@ -1055,8 +1055,8 @@ def evaluate(
 
     for batch in dataloader:
         inputs = prepare_model_inputs_v10(batch, device, non_blocking=True)
-        labels = batch['labels'].to(device)  # VDW labels
-        mask = batch['protein_mask'].to(device)
+        labels = batch['labels'].to(device, non_blocking=True)  # VDW labels
+        mask = batch['protein_mask'].to(device, non_blocking=True)
 
         # Forward pass with AMP
         with torch.amp.autocast("cuda", enabled=use_amp):
@@ -1222,6 +1222,9 @@ def main():
     else:
         device = torch.device('cpu')
     print_rank0(f"Device: {device}")
+
+    # V10: Enable cuDNN/MIOpen benchmark (configurable)
+    torch.backends.cudnn.benchmark = config['training'].get('cudnn_benchmark', False)
 
     # AMP setup
     use_amp = args.amp or config['training'].get('use_amp', False)
@@ -1594,7 +1597,8 @@ def main():
             boundary_distance_threshold=train_cfg.get('boundary_distance_threshold', 8.0),  # V9m2
             label_smoothing=train_cfg.get('label_smoothing', 0.15),  # V9m2
             enable_profiling=train_cfg.get('enable_profiling', False),  # V9m2: 性能分析
-            exp_dir=exp_dir  # V9m2: 实验目录
+            exp_dir=exp_dir,  # V9m2: 实验目录
+            use_bf16=train_cfg.get('use_bf16', False)  # V10: BF16 support
         )
 
         # Evaluate

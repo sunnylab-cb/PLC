@@ -119,11 +119,9 @@ class PocketGVPFusionV9m2(nn.Module):
         self.config = {**self.DEFAULT_CONFIG, **(config or {})}
         c = self.config
 
-        # Input normalization layers
-        self.esm_norm = nn.LayerNorm(c['d_esm'])
-        self.physchem_norm = nn.LayerNorm(c['d_phys'])
-        self.spatial_norm = nn.LayerNorm(c['d_spatial_scalar'])
-        self.ligand_norm = nn.LayerNorm(c['d_ligand_atom'])
+        # V10: Input normalization removed - features are pre-normalized during extraction
+        # physchem and spatial_scalar are already normalized (mean≈0, std≈1)
+        # Adding LayerNorm here causes double normalization and gradient vanishing
 
         # Module 1: PhysChem MLP Encoder
         self.physchem_encoder = nn.Sequential(
@@ -269,11 +267,7 @@ class PocketGVPFusionV9m2(nn.Module):
         device = esm_embeddings.device
         c = self.config
 
-        # Normalize input features
-        esm_embeddings = self.esm_norm(esm_embeddings)
-        protein_physchem = self.physchem_norm(protein_physchem)
-        protein_spatial_scalar = self.spatial_norm(protein_spatial_scalar)
-        ligand_x = self.ligand_norm(ligand_x)
+        # V10: Features are pre-normalized during extraction, no need to normalize again
 
         # ============================================================
         # Module 1: PhysChem MLP Encoder with Modality Dropout
