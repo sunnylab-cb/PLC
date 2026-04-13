@@ -75,6 +75,51 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 
 ---
 
+## V10m7 - 2026-04-13
+
+### 主要特性
+- ✅ **Confident Negative Clipping (CNC)**：對 c_2 (far) 標籤的 noisy negative 進行置信度感知的 loss 降權
+
+### 关键改进/变化
+- **動機**：PDBbind 中同一蛋白有多配體 entry，殘基被標為 c_2 (far) 僅代表「不接觸此配體」，不代表「永不結合」。模型偵測到 binding-capable 區域但被錯誤懲罰。
+- **機制**：當模型高置信（≥ clip_thresh）預測 c_2 標籤殘基為 positive 時，該殘基的 loss 權重降至 clip_ratio
+- **CNC 同時作用於三個 loss**：
+  - Focal Loss：per-residue loss × cnc_weights
+  - Tversky Loss：FP 項 × cnc_weights（降低 clipped 殘基的 false positive 懲罰）
+  - Weighted Dice Loss：pred_sum × cnc_weights（降低 clipped 殘基的分母貢獻）
+- **防 collapse 機制**：warmup epochs、max_clip_frac 上限、clip_ratio > 0 保留微弱約束
+- **理論基礎**：Confident Learning (Northcutt et al., JAIR 2021) + Bootstrap Loss (Reed et al., 2015)
+
+### 新增文件
+- `src/losses/confident_negative_clip.py`：CNC 獨立模組
+- `scripts/train/train_v10m7.py`：訓練腳本（基於 v10m6）
+- `configs/pocket_gvp_v10m7.yaml`：配置文件
+
+### 配置参数
+```yaml
+cnc:
+  enabled: true
+  clip_thresh: 0.85       # positive 置信度閾值
+  clip_ratio: 0.1         # 降權乘數
+  warmup_epochs: 5        # 前 N epochs 不啟用
+  max_clip_frac: 0.3      # 每 sample 最多 clip 30% 殘基
+```
+
+### TensorBoard 监控
+- `CNC/batch_clip_fraction`：每 batch 被 clip 的殘基比例
+- `CNC/epoch_clip_fraction`：每 epoch 被 clip 的殘基比例
+
+### 复现命令
+```bash
+python scripts/train/train_v10m7.py --config configs/pocket_gvp_v10m7.yaml
+```
+
+### 模型架構
+- 無架構改動，使用 V10m6 模型（`PocketGVPFusionV10m6`）
+- 改動純在 loss 層面
+
+---
+
 ## V10m6 - 2026-04-12
 
 ### 主要特性

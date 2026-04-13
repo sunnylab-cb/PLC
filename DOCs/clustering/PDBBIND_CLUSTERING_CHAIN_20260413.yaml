@@ -1,0 +1,251 @@
+version: "2026-04-13"
+project: "ProtBind PLC"
+topic: "PDBbind single-protein multi-ligand clustering and filtering chain"
+language: "zh-Hant"
+status: "research_snapshot"
+
+scope:
+  dataset_root: "/home/husrcf/Code/ProtBind/New"
+  dataset_policy:
+    read_only: true
+    note: "嚴禁修改資料集本體；所有分析僅讀取原始檔案。"
+  report_path: "/home/husrcf/Code/ProtBind/PLC/DOCs/clustering/PDBBIND_CLUSTERING_STATE_REPORT_20260413.md"
+  references_path: "/home/husrcf/Code/ProtBind/PLC/DOCs/PDBBIND_DEDUP_SPLIT_REFERENCES_APA.md"
+
+research_questions:
+  - "有多少 protein-ligand entry pairs 共享同一個蛋白質上下文。"
+  - "exact protein-context grouping 與 95% sequence clustering 分別壓縮了多少資料。"
+  - "對 binding prediction 訓練而言，合理的篩選鏈條應該如何分層。"
+
+key_decisions:
+  level_1_exact_key:
+    name: "contact_unique_chain_signature"
+    rationale:
+      - "只保留 ligand-contacting chains，符合 PLC 對 binding-site context 的任務關心。"
+      - "忽略相同接觸鏈的重複拷貝數，可合併 stoichiometry 不同但接觸上下文相同的 entries。"
+      - "比完整 entry exact match 更能覆蓋 single-protein multi-ligand 的真實重複。"
+    consequence:
+      - "5qa4、5qa7、5qb0 這類接觸鏈序列相同的 entry 會落在同一個 L1 group。"
+  level_2_near_duplicate_key:
+    name: "MMseqs2 95% on representative all_unique_contact_chains"
+    rationale:
+      - "exact grouping 無法覆蓋大量突變體與近似序列。"
+      - "以 representative 的所有唯一接觸鏈為輸入，比只取最長鏈更完整地保留 pocket context。"
+      - "先做鏈級聚類，再折回 group 級 signature，可保留多接觸鏈蛋白的結構訊息。"
+  split_principle:
+    note:
+      - "L1/L2 目前用於研究與 manifest 物化，不應在 loader 內即時計算。"
+      - "後續 train/val/test split 至少應滿足 L1 group-aware；若要進一步防 leakage，應升到 L2 cluster-aware。"
+
+artifacts:
+  scripts:
+    exact_analysis: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/pdbbind_exact_multiligand_analysis.py"
+    l1_manifest: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/build_l1_manifest.py"
+    l2_input: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/build_l2_mmseqs_input.py"
+    l2_mmseqs95: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/run_l2_mmseqs95.py"
+  runtime_outputs:
+    exact_analysis_dir: "/tmp/pdbbind_multiligand_exact_v2"
+    l1_dir: "/tmp/plc_l1_manifest"
+    l2_input_dir: "/tmp/plc_l2_mmseqs_input"
+    l2_mmseqs95_dir: "/tmp/plc_l2_mmseqs95"
+
+pipeline:
+  - step_id: "L0_inventory"
+    name: "Raw entry inventory"
+    purpose: "確認資料集結構與可直接使用的檔案型態。"
+    inputs:
+      - "/home/husrcf/Code/ProtBind/New/*/*"
+    operations:
+      - "遍歷所有 *_protein.pdb"
+      - "匹配對應的 *_pocket.pdb"
+      - "確認 ligand 檔存在為 *_ligand.mol2 或 *_ligand.sdf"
+      - "確認 .pt 並非每個 entry 都存在，因此不作為主資料來源"
+    outputs:
+      - "entry inventory implicit in downstream manifests"
+    findings:
+      total_entries: 19037
+      entry_layout: "{pdb_id}_protein.pdb, {pdb_id}_pocket.pdb, {pdb_id}_ligand.mol2/sdf"
+      note:
+        - "protein PDB 為預處理檔，缺少完整原始 header；resolution / method 不應假設可直接從檔頭穩定取得。"
+
+  - step_id: "L0_exact_research"
+    name: "Exact duplicate research"
+    script: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/pdbbind_exact_multiligand_analysis.py"
+    purpose: "比較多種 exact grouping 定義，找出最合理的 L1 key。"
+    inputs:
+      dataset_root: "/home/husrcf/Code/ProtBind/New"
+      required_files:
+        - "*_protein.pdb"
+        - "*_pocket.pdb"
+    operations:
+      - "從 *_protein.pdb 解析各 chain sequence"
+      - "從 *_pocket.pdb 取得 ligand-contacting chain IDs"
+      - "建立 all_chain_signature"
+      - "建立 contact_chain_signature"
+      - "建立 contact_unique_chain_signature"
+      - "建立 contact_chain_overlap_components 作為研究比較"
+    outputs:
+      summary_json: "/tmp/pdbbind_multiligand_exact_v2/summary.json"
+      analysis_md: "/tmp/pdbbind_multiligand_exact_v2/ANALYSIS.md"
+      entry_table_tsv: "/tmp/pdbbind_multiligand_exact_v2/entry_table.tsv"
+    findings:
+      total_entries: 19037
+      duplicated_entries_by_definition:
+        all_chain_signature: 12646
+        contact_chain_signature: 13205
+        contact_unique_chain_signature: 13660
+        contact_chain_overlap_components: 13933
+      selected_key: "contact_unique_chain_signature"
+      rejection_note:
+        - "contact_chain_overlap_components 會產生 transitive closure 過度串群，不適合作為自動 dedup key。"
+
+  - step_id: "L1_manifest"
+    name: "Exact protein-context manifest"
+    script: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/build_l1_manifest.py"
+    purpose: "把 exact grouping 物化成 entry-level 與 group-level manifest。"
+    inputs:
+      dataset_root: "/home/husrcf/Code/ProtBind/New"
+      grouping_key: "contact_unique_chain_signature"
+      representative_policy:
+        - "prefer entries with more populated label columns"
+        - "prefer entries with numeric label values when available"
+        - "prefer X-ray over EM over NMR over unknown methods"
+        - "prefer better (smaller) resolution when available"
+        - "prefer fewer total chains"
+        - "prefer fewer contacting chains"
+        - "prefer smaller total residue count"
+        - "tie-break by entry_key"
+    outputs:
+      summary_json: "/tmp/plc_l1_manifest/summary.json"
+      entry_manifest: "/tmp/plc_l1_manifest/l1_manifest.tsv"
+      group_manifest: "/tmp/plc_l1_manifest/l1_groups.tsv"
+      group_members: "/tmp/plc_l1_manifest/l1_group_members.tsv"
+      representative_sequences_tsv: "/tmp/plc_l1_manifest/l1_representative_sequences.tsv"
+      representative_sequences_fasta: "/tmp/plc_l1_manifest/l1_representative_sequences.fasta"
+    findings:
+      total_entries: 19037
+      total_groups: 8291
+      duplicate_groups: 2914
+      singleton_groups: 5377
+      entries_in_duplicate_groups: 13660
+      entries_in_duplicate_groups_ratio: 0.7176
+      largest_group_size: 178
+      duplicate_group_median_size: 3
+      shared_entry_pairs_within_l1_groups: 103087
+      representative_example:
+        group_example:
+          members:
+            - "2011-2019/5qa4"
+            - "2011-2019/5qa7"
+            - "2011-2019/5qb0"
+          selected_representative: "2011-2019/5qa4"
+    schema_notes:
+      entry_manifest_key_fields:
+        - "entry_key"
+        - "group_id"
+        - "group_size"
+        - "is_group_representative"
+        - "representative_entry_key"
+        - "contact_unique_chain_signature"
+      group_manifest_key_fields:
+        - "group_id"
+        - "group_size"
+        - "representative_entry_key"
+        - "contact_unique_chain_count"
+        - "member_entry_keys"
+
+  - step_id: "L2_input_build"
+    name: "MMseqs2-ready representative sequence export"
+    script: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/build_l2_mmseqs_input.py"
+    purpose: "把 L1 representative 轉成可送入 MMseqs2 的鏈序列 FASTA 與對照表。"
+    inputs:
+      l1_dir: "/tmp/plc_l1_manifest"
+      sequence_modes:
+        - "all_unique_contact_chains"
+        - "longest_contact_chain"
+      selected_mode_for_execution: "all_unique_contact_chains"
+    outputs:
+      summary_json: "/tmp/plc_l2_mmseqs_input/summary.json"
+      all_unique_fasta: "/tmp/plc_l2_mmseqs_input/l2_all_unique_contact_chains.fasta"
+      all_unique_tsv: "/tmp/plc_l2_mmseqs_input/l2_all_unique_contact_chains.tsv"
+      longest_fasta: "/tmp/plc_l2_mmseqs_input/l2_longest_contact_chain.fasta"
+      longest_tsv: "/tmp/plc_l2_mmseqs_input/l2_longest_contact_chain.tsv"
+      group_catalog: "/tmp/plc_l2_mmseqs_input/l2_group_catalog.tsv"
+      command_template: "/tmp/plc_l2_mmseqs_input/run_mmseqs2_95.sh"
+    findings:
+      source_total_entries: 19037
+      source_total_groups: 8291
+      all_unique_contact_chains_records: 9361
+      longest_contact_chain_records: 8291
+      groups_with_multiple_unique_contact_chains: 878
+      suggested_mmseqs2_min_seq_id: 0.95
+      suggested_mmseqs2_coverage: 0.8
+    rationale:
+      - "保留 representative 的所有唯一接觸鏈，可以避免多鏈 pocket 被過度簡化。"
+      - "longest_contact_chain 只作比較基線，不作正式執行主路線。"
+
+  - step_id: "L2_mmseqs95"
+    name: "95% sequence clustering and backfill"
+    script: "/home/husrcf/Code/ProtBind/PLC/preparation/cluster/run_l2_mmseqs95.py"
+    purpose: "對 L1 representative 的接觸鏈序列做近似聚類，再回填為 group/entry 級 L2 cluster。"
+    inputs:
+      l1_dir: "/tmp/plc_l1_manifest"
+      l2_input_dir: "/tmp/plc_l2_mmseqs_input"
+      fasta: "/tmp/plc_l2_mmseqs_input/l2_all_unique_contact_chains.fasta"
+      mmseqs2:
+        command: "mmseqs easy-cluster"
+        min_seq_id: 0.95
+        coverage: 0.8
+    operations:
+      - "對 all_unique_contact_chains FASTA 執行 mmseqs easy-cluster"
+      - "解析 mmseqs95_all_unique_cluster.tsv 取得 member -> representative 對應"
+      - "將鏈級 cluster representative 集合折回每個 L1 group"
+      - "對鏈級 representative 集合做 hash，生成 mmseqs95_l2_cluster_signature"
+      - "回填至 l2_groups_mmseqs95.tsv 與 l2_manifest_mmseqs95.tsv"
+    outputs:
+      summary_json: "/tmp/plc_l2_mmseqs95/summary.json"
+      raw_cluster_tsv: "/tmp/plc_l2_mmseqs95/mmseqs95_all_unique_cluster.tsv"
+      chain_clusters_tsv: "/tmp/plc_l2_mmseqs95/mmseqs95_chain_clusters.tsv"
+      l2_groups_tsv: "/tmp/plc_l2_mmseqs95/l2_groups_mmseqs95.tsv"
+      l2_manifest_tsv: "/tmp/plc_l2_mmseqs95/l2_manifest_mmseqs95.tsv"
+    findings:
+      input_groups: 8291
+      input_chain_sequences: 9361
+      unique_chain_clusters: 4309
+      unique_l2_cluster_signatures: 4080
+      groups_in_merged_l2_clusters: 5518
+      groups_in_merged_l2_clusters_ratio_vs_l1_groups: 0.6655
+      entries_in_merged_l2_clusters: 16985
+      entries_in_merged_l2_clusters_ratio_vs_all_entries: 0.8922
+      largest_l2_cluster_signature_size_in_groups: 66
+      largest_l2_cluster_size_in_entries: 425
+      shared_group_pairs_within_l2_clusters: 24769
+      shared_entry_pairs_within_l2_clusters: 441573
+      checked_example:
+        members:
+          - "2011-2019/5qa4"
+          - "2011-2019/5qa7"
+          - "2011-2019/5qb0"
+        l2_cluster_signature: "c3c1439daa8f56029c6bbd2292fb110921c68cf9"
+    interpretation:
+      - "只做 L1 exact 不足以切斷大量高同源序列。"
+      - "L2 已顯示 89.22% 的 entries 位於非 singleton 近似 cluster，leakage 風險非常高。"
+
+summary_metrics:
+  raw_entries: 19037
+  l1_groups: 8291
+  l1_duplicate_groups: 2914
+  l1_entries_in_duplicate_groups: 13660
+  l1_shared_entry_pairs: 103087
+  l2_cluster_signatures: 4080
+  l2_entries_in_merged_clusters: 16985
+  l2_shared_entry_pairs: 441573
+  headline_interpretation:
+    - "single-protein multi-ligand 在本資料集中不是邊緣現象，而是主體結構。"
+    - "L1 適合定義 exact protein context；L2 適合定義近似序列家族與 split 風險。"
+    - "binding prediction 訓練不應採 random split，至少需要 group-aware 約束。"
+
+downstream_recommendations:
+  - "報告與後續實驗應以 L1 與 L2 都提供 pair-share 與 cluster-size 視角。"
+  - "若進一步做 train/val/test，應新增 L3 低同源 split，但不應回頭改寫資料集原始檔。"
+  - "若保留組內多 ligand 進入訓練，建議同步研究 per-group cap 或 reweighting。"

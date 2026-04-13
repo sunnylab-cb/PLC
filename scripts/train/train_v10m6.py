@@ -145,10 +145,10 @@ def setup_experiment(config: Dict, rank: int, resume_path: str = None) -> Path:
     # Create new experiment directory
     raw_exp_name = config['experiment']['name']
     # Normalize experiment name: strip known version tokens, then append current version
-    version_tokens = {'v6', 'v7', 'v7m1', 'v7m2', 'v7m3', 'v8', 'v9', 'v9m2', 'v10', 'v10t', 'v10m3', 'v10m4'}
+    version_tokens = {'v6', 'v7', 'v7m1', 'v7m2', 'v7m3', 'v8', 'v9', 'v9m2', 'v10', 'v10t', 'v10m3', 'v10m4', 'v10m5', 'v10m6'}
     exp_tokens = [token for token in raw_exp_name.split('_') if token]
     normalized_tokens = [token for token in exp_tokens if token not in version_tokens]
-    exp_name = '_'.join(normalized_tokens + ['v10m4'])
+    exp_name = '_'.join(normalized_tokens + ['v10m6'])
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     exp_dir = Path(config['experiment']['output_dir']) / f"{exp_name}_{timestamp}"
     exp_dir.mkdir(parents=True, exist_ok=True)
