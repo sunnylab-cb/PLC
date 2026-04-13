@@ -511,6 +511,8 @@ class PocketGVPFusionV10m2(nn.Module):
 
         h_s_gvp = torch.stack(h_s_gvp_list, dim=0)
         h_v_gvp = torch.stack(h_v_gvp_list, dim=0)
+        self._cached_gvp_scalar = h_s_gvp
+        self._cached_gvp_vector = h_v_gvp
 
         # V10m2: b_gvp = pure GVP scalar output projected to d_model (512)
         b_gvp = self.b_gvp_proj(h_s_gvp)
@@ -518,18 +520,23 @@ class PocketGVPFusionV10m2(nn.Module):
         # Module 3: Bridge & Gating Fusion
         v_inv = self.pairwise_bridge(h_v_gvp)
         h_geo = torch.cat([h_s_gvp, v_inv, protein_physchem_encoded], dim=-1)
+        self._cached_h_geo = h_geo
 
         current_esm = esm_embeddings
         if self.training:
             p_drop_esm = c.get('esm_dropout_prob', 0.3)
             esm_dropout_mask = torch.bernoulli(torch.full((B, 1, 1), 1 - p_drop_esm, device=device))
             current_esm = current_esm * esm_dropout_mask
+        self._cached_current_esm = current_esm
 
         h_gvp_proj = self.gvp_proj(h_geo)
         h_esm_proj = self.esm_proj(current_esm)
         h_concat = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
         gate = self.modality_gate(h_concat)
         h_seq = torch.cat([gate * h_gvp_proj, (1 - gate) * h_esm_proj], dim=-1)
+        self._cached_h_gvp_proj = h_gvp_proj
+        self._cached_h_esm_proj = h_esm_proj
+        self._cached_gate = gate
 
         # b0: block before Transformer
         b0 = h_seq

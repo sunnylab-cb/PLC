@@ -19,7 +19,7 @@ def compute_boundary_mask(
     distance_threshold: float = 8.0
 ) -> torch.Tensor:
     """
-    计算边界残基的mask
+    计算边界残基的mask（向量化版本，V10m6）
 
     边界残基定义：在distance_threshold范围内存在不同类别的残基
 
@@ -34,34 +34,26 @@ def compute_boundary_mask(
     """
     B, N = labels.shape
     device = labels.device
+    mask_f = mask.float()
 
-    boundary_mask = torch.zeros_like(labels, dtype=torch.float32)
+    # Pairwise distances: [B, N, N]
+    # Use large value for invalid positions so they never count as neighbours
+    dist_matrix = torch.cdist(coords, coords, p=2)                      # [B, N, N]
 
-    for b in range(B):
-        # 获取有效残基
-        valid_indices = mask[b].nonzero(as_tuple=True)[0]
-        if len(valid_indices) == 0:
-            continue
+    # Mask out invalid pairs: set dist to inf where either i or j is padded
+    invalid_pair = ~(mask_f.unsqueeze(2) * mask_f.unsqueeze(1)).bool()   # [B, N, N]
+    dist_matrix = dist_matrix.masked_fill(invalid_pair, float('inf'))
 
-        # 获取有效残基的坐标和标签
-        valid_coords = coords[b, valid_indices]  # [n_valid, 3]
-        valid_labels = labels[b, valid_indices]  # [n_valid]
+    # Neighbours within threshold (excluding self via diagonal)
+    neighbours = dist_matrix < distance_threshold                        # [B, N, N]
+    neighbours.diagonal(dim1=1, dim2=2).fill_(False)
 
-        # 计算距离矩阵
-        dist_matrix = torch.cdist(valid_coords, valid_coords, p=2)  # [n_valid, n_valid]
+    # For each residue i, check if any neighbour j has a different label
+    # labels_i: [B, N, 1], labels_j: [B, 1, N]
+    diff_label = (labels.unsqueeze(2) != labels.unsqueeze(1))            # [B, N, N]
+    has_diff_neighbour = (neighbours & diff_label).any(dim=2)            # [B, N]
 
-        # 找到距离阈值内的邻居
-        neighbors = dist_matrix < distance_threshold  # [n_valid, n_valid]
-
-        # 对每个残基，检查是否有不同类别的邻居
-        for i, idx in enumerate(valid_indices):
-            # 获取邻居的标签
-            neighbor_labels = valid_labels[neighbors[i]]
-
-            # 如果存在不同类别的邻居，则为边界残基
-            if len(neighbor_labels) > 0 and (neighbor_labels != valid_labels[i]).any():
-                boundary_mask[b, idx] = 1.0
-
+    boundary_mask = (has_diff_neighbour & mask.bool()).float()
     return boundary_mask
 
 

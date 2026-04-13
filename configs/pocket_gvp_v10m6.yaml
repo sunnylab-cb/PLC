@@ -1,0 +1,172 @@
+# Pocket-GVP-Fusion V10m6 Configuration
+# V10m6 vs V10m5: Batched GVP Graph + Vectorized Boundary Loss
+#
+# 核心改動:
+#   - GVP graph construction 從 per-sample for loop 改為 batched graph（2-4x 加速）
+#   - Boundary loss compute_boundary_mask 向量化（eval 2-5x 加速）
+#
+# 其餘設定繼承 V10m5
+#
+# Label scheme: Contact < 4.0Å, Near 4.0-6.0Å, Far > 6.0Å (PoC 對齊)
+#               (d_min: minimum heavy-atom pairwise distance, residue vs ligand)
+#               注意: distances 文件名含 "dcenter" 为历史遗留误称，实际存储的是 d_min
+
+experiment:
+  name: "pocket_gvp_fusion_v10m6"
+  seed: 42
+  output_dir: "outputs"
+
+data:
+  data_root: "data"
+  ligand_features_dir: "ligand_features_v5"
+  protein_features_dir: "complete_features_v4"
+  nma_features_dir: "complete_features_v4_nma"
+  nma_n_confs: 1
+  nma_max_conf: 9
+  distances_file: "data/residue_ligand_distances_dcenter.pt"
+  split_file: "configs/splits/splits.txt"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1800
+  max_atoms: 128
+  # 改回 PoC 設定，對齊 benchmark 標準
+  label_contact_thresh: 4.0   # Contact: d_min < 4.0Å
+  label_near_thresh: 6.0      # Near: 4.0–6.0Å; Far: > 6.0Å
+
+model:
+  d_esm: 1280
+  d_phys: 62
+  d_spatial_scalar: 89
+  d_phys_encoded: 128
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 109
+  n_gvp_vectors: 12
+  n_gvp_vector_hidden: 20
+
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4
+
+  dropout: 0.15
+  attn_dropout: 0.15
+  classifier_dropout: 0.2
+  stochastic_depth_prob: 0.15
+
+  use_flash_attn: false
+
+  esm_dropout_prob: 0.05         # v10m4.1: 0.15→0.05 (CVPR2024: simultaneous modality dropout causes bias)
+  physchem_dropout_prob: 0.05   # v10m4.1: 0.20→0.05 (same reason)
+
+  # V10m4: GVP Dropout (三層正則化)
+  # L1: internal GVP Dropout    = dropout (0.1, existing, layer-level)
+  # L2: GVP Output Dropout      = gvp_dropout_prob (sample-level mask)
+  # L3: Coordinate Noise        = coord_noise_std (input CA noise in Å)
+  gvp_dropout_prob: 0.0         # v10m4.1: 0.15→0.0 (no protein ML precedent; L1 layer dropout sufficient)
+  coord_noise_std: 0.2          # v10m4.1: 0.5→0.2 (ProteinMPNN/LigandMPNN max tested = 0.3 Å)
+
+  # V10m4: Enriched protein GVP edges (real chemical topology)
+  # edge_s: [E, rbf_bins + 4]  = RBF(CA-CA dist) + seq offset 4-class
+  # edge_v: [E, 2, 3]          = global dir + N-CA-C local backbone frame dir
+  # edge_in_dim derived: (gvp_edge_rbf_bins + 4, 2) = (20, 2)
+  gvp_edge_rbf_bins: 16         # RBF bins for CA-CA distance
+  gvp_edge_rbf_dmax: 20.0       # RBF max distance (Å)
+
+  # V10m4: Ligand edge enrichment
+  # Combines RDKit chemical bond (6D) + RBF(inter-atom dist, 8D) = 14D
+  ligand_edge_rbf_bins: 8
+
+  # V10m4: 3D Distance-Biased Attention (protein self-attention only)
+  # Bias = f(CA-CA distance) added to QK^T before softmax
+  # Protein-ONLY coords → no protein-ligand joint info → NO LEAKAGE
+  # Zero-init → starts as standard attention, learned gradually
+  use_dist_bias: true
+  dist_bias_n_rbf: 16          # RBF bins for distance-to-bias mapping
+  dist_bias_max_dist: 20.0     # clamp distance at 20Å
+
+  use_gated_attn: true
+  use_swiglu: true
+  gvp_radius: 15.0
+  gvp_k_neighbors: 30
+  use_gradient_checkpointing: false
+
+  # Cache intermediate tensors for TensorBoard Health diagnostics
+  # Set true to enable Health/feature_stats logging (costs ~1-2% GPU memory)
+  cache_intermediates: false
+
+  # Multi-chain: chain-gap RoPE
+  use_chain_features: true
+  chain_gap_size: 1000
+
+  n_classes: 3
+  edge_dim: 6
+
+training:
+  batch_size: 16
+  num_epochs: 100
+  num_workers: 8
+
+  optimizer: "adamw"
+  learning_rate: 5.0e-5
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+
+  scheduler: "cosine"
+  warmup_epochs: 3
+  min_lr: 1.0e-6
+
+  # ── V10m4 Loss Configuration ──────────────────────────────────────
+  focal_gamma: 2.0              # v10m4.1: 2.5→2.0 (standard value; 2.5 is aggressive with Tversky already present)
+  class_weights: [8.0, 3.0, 1.0]  # V10m4: Contact↑, Far↓ (d_min 5Å threshold)
+
+  # Focal Loss (主幹，始終開啟)
+  focal_weight: 0.7
+
+  # Tversky Loss: per-sample Contact-only, smooth=1.0 (核心改進)
+  # alpha < beta → 允許適量 FP，強調 recall（不漏 binding site）
+  tversky_weight: 0.3
+  tversky_alpha: 0.3            # FP 懲罰（低 = 容忍 FP）
+  tversky_beta: 0.7             # FN 懲罰（高 = 減少漏檢）
+  tversky_smooth: 1.0           # 訓練早期梯度穩定
+
+  # Weighted Dice Loss（可選補充，預設關閉）
+  # 如啟用建議: weighted_dice_weight: 0.1
+  weighted_dice_weight: 0.0
+  weighted_dice_smooth: 1.0
+
+  # Legacy / disabled
+  dice_weight: 0.0              # global batch Dice, 已停用
+
+  iou_weight: 0.0
+  iou_component_weight: 1.0
+  iou_dist_weight: 0.2
+  iou_power: 1.5
+  iou_d_max: 10.0
+
+  use_boundary_loss: false
+  boundary_weight: 0.2
+  boundary_multiplier: 2.0
+  boundary_distance_threshold: 8.0
+
+  label_smoothing: 0.05         # V10m4: 0.15→0.05（過高 smoothing 損害少數類）
+  gradient_clip: 1.0
+  enable_profiling: false
+
+  save_every: 5
+  early_stopping_patience: 100
+
+  use_amp: false
+  use_bf16: false
+  accumulation_steps: 1
+  cudnn_benchmark: false
+  pin_memory: true
+  prefetch_factor: 2
+
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false

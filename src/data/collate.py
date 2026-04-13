@@ -508,6 +508,7 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     protein_coords = torch.zeros(B, max_residues, 3)
     protein_vectors = torch.zeros(B, max_residues, 4, 3)
     protein_mask = torch.zeros(B, max_residues, dtype=torch.bool)
+    chain_ids = torch.zeros(B, max_residues, dtype=torch.long)
     labels = torch.zeros(B, max_residues, dtype=torch.long)
 
     has_labels_original = any('labels_original' in sample for sample in batch)
@@ -531,6 +532,8 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         protein_coords[i, :n_res] = sample['gvp_coords'][:n_res]
         protein_vectors[i, :n_res] = sample['gvp_vectors'][:n_res]
         protein_mask[i, :n_res] = True
+        if 'chain_ids' in sample:
+            chain_ids[i, :n_res] = sample['chain_ids'][:n_res]
         labels[i, :n_res] = sample['labels'][:n_res]
 
         if has_labels_original and 'labels_original' in sample:
@@ -553,6 +556,7 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'protein_coords': protein_coords,
         'protein_vectors': protein_vectors,
         'protein_mask': protein_mask,
+        'chain_ids': chain_ids,
         'ligand_features': ligand_features,
         'ligand_coords': ligand_coords,
         'ligand_mask': ligand_mask,
@@ -625,6 +629,7 @@ def prepare_model_inputs_v10(
         'protein_gvp_vectors': batch['protein_vectors'].to(device, non_blocking=non_blocking),
         'protein_coords': batch['protein_coords'].to(device, non_blocking=non_blocking),
         'protein_mask': batch['protein_mask'].to(device, non_blocking=non_blocking),
+        'chain_ids': batch['chain_ids'].to(device, non_blocking=non_blocking),
         'ligand_x': ligand_batch_graph.x.to(device, non_blocking=non_blocking),
         'ligand_pos': ligand_batch_graph.pos.to(device, non_blocking=non_blocking),
         'ligand_edge_index': ligand_batch_graph.edge_index.to(device, non_blocking=non_blocking),

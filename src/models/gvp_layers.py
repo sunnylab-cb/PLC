@@ -292,6 +292,173 @@ class GVPEncoder(nn.Module):
         return node_s, node_v
 
 
+def rbf_encode(
+    dist: torch.Tensor,
+    D_min: float = 0.0,
+    D_max: float = 20.0,
+    num_rbf: int = 16,
+) -> torch.Tensor:
+    """
+    Radial Basis Function (RBF) encoding of distances.
+
+    Each distance is mapped to a soft-assignment over num_rbf Gaussian
+    centres uniformly spaced in [D_min, D_max].  Much richer than raw
+    distance and lets the model learn smooth distance-dependent functions.
+
+    Args:
+        dist:    [E] distances (or any shape, last dim is NOT feature)
+        D_min:   left edge of RBF range (Å)
+        D_max:   right edge of RBF range (Å)
+        num_rbf: number of RBF centres
+
+    Returns:
+        [E, num_rbf] encoded distances
+    """
+    D_mu    = torch.linspace(D_min, D_max, num_rbf, device=dist.device, dtype=dist.dtype)
+    D_sigma = (D_max - D_min) / num_rbf
+    return torch.exp(-((dist.unsqueeze(-1) - D_mu) ** 2) / (2.0 * D_sigma ** 2))
+
+
+def build_protein_graph(
+    coords_ca: torch.Tensor,
+    coords_n:  torch.Tensor,
+    coords_c:  torch.Tensor,
+    k: int = 20,
+    radius: float = 10.0,
+    num_rbf: int = 16,
+    rbf_dmax: float = 20.0,
+    chain_ids: Optional[torch.Tensor] = None,   # [N] integer chain indices
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Build protein residue graph with chemically-informed edge features.
+
+    Improvements over build_knn_graph:
+    1. Explicit backbone edges (i±1) are ALWAYS included (not subject to
+       KNN filtering), ensuring peptide-bond connectivity survives coord noise.
+    2. RBF distance encoding (num_rbf bins) instead of raw scalar distance.
+    3. Sequential offset 4-class encoding — distinguishes backbone vs
+       short-range vs medium-range vs long-range contacts.
+    4. Local backbone reference frame (N-CA-C) as a second edge vector,
+       letting GVP learn frame-relative directions (e.g. hydrogen-bond geometry).
+    5. is_same_chain binary flag (1 = same chain, 0 = cross-chain).
+       Only appended when chain_ids is provided; edge_s dim = num_rbf+4+1.
+
+    Edge scalar features:
+        chain_ids=None : [E, num_rbf + 4]
+        chain_ids given: [E, num_rbf + 5]  (last dim = is_same_chain)
+
+    Edge vector features [E, 2, 3]:
+        [:, 0, :] = global CA_src→CA_dst unit direction
+        [:, 1, :] = same direction in the N-CA-C local frame of source residue
+
+    Args:
+        coords_ca:  [N, 3]  C-alpha coordinates
+        coords_n:   [N, 3]  backbone N coordinates
+        coords_c:   [N, 3]  backbone C (carbonyl) coordinates
+        k:          KNN neighbours (spatial proximity graph)
+        radius:     maximum edge distance for KNN edges (Å)
+        num_rbf:    number of RBF bins
+        rbf_dmax:   max distance for RBF range (Å)
+        chain_ids:  [N] integer chain indices (optional)
+
+    Returns:
+        edge_index: [2, E]
+        edge_s:     [E, num_rbf + 4] or [E, num_rbf + 5]
+        edge_v:     [E, 2, 3]
+    """
+    N      = coords_ca.size(0)
+    device = coords_ca.device
+    dtype  = coords_ca.dtype
+
+    edge_s_dim = num_rbf + 4 + (1 if chain_ids is not None else 0)
+
+    if N == 0:
+        return (
+            torch.zeros((2, 0), dtype=torch.long, device=device),
+            torch.zeros((0, edge_s_dim), dtype=dtype, device=device),
+            torch.zeros((0, 2, 3), dtype=dtype, device=device),
+        )
+
+    # ── 1. KNN spatial graph ─────────────────────────────────────────────────
+    from torch_geometric.nn import knn_graph
+    curr_k = min(k, N - 1)
+    try:
+        knn_ei = knn_graph(coords_ca, k=curr_k, loop=False)
+    except Exception:
+        dist_mat = torch.cdist(coords_ca, coords_ca)
+        dist_mat.fill_diagonal_(float('inf'))
+        _, nn_idx = dist_mat.topk(curr_k, dim=1, largest=False)  # [N, k]
+        src_idx = torch.arange(N, device=device).unsqueeze(1).expand(-1, curr_k).reshape(-1)
+        knn_ei  = torch.stack([src_idx, nn_idx.reshape(-1)], dim=0)
+
+    # ── 2. Explicit backbone edges (always i→i±1) ────────────────────────────
+    if N > 1:
+        seq = torch.arange(N, device=device)
+        bb_src = torch.cat([seq[:-1], seq[1:]])   # forward + backward
+        bb_dst = torch.cat([seq[1:],  seq[:-1]])
+        bb_ei  = torch.stack([bb_src, bb_dst], dim=0)
+    else:
+        bb_ei = torch.zeros((2, 0), dtype=torch.long, device=device)
+
+    # ── 3. Merge & deduplicate via unique edge keys ──────────────────────────
+    combined = torch.cat([knn_ei, bb_ei], dim=1)          # [2, E_knn + E_bb]
+    edge_key = combined[0] * N + combined[1]              # unique int per (src,dst)
+    unique_keys, _ = torch.unique(edge_key, sorted=False, return_inverse=True)
+    src = unique_keys // N
+    dst = unique_keys %  N
+
+    # ── 4. Radius filter (backbone edges bypass radius) ──────────────────────
+    edge_vec_raw = coords_ca[dst] - coords_ca[src]         # [E, 3]
+    dist_raw     = torch.norm(edge_vec_raw, dim=-1)        # [E]
+    seq_offset   = (dst - src).abs()                       # [E]
+    keep         = (dist_raw <= radius) | (seq_offset == 1)
+    src, dst     = src[keep], dst[keep]
+    edge_vec_raw = edge_vec_raw[keep]
+    dist_raw     = dist_raw[keep]
+    seq_offset   = seq_offset[keep]
+
+    # ── 5. Edge scalar features ──────────────────────────────────────────────
+    rbf          = rbf_encode(dist_raw, D_min=0.0, D_max=rbf_dmax, num_rbf=num_rbf)
+    is_backbone  = (seq_offset == 1).float().unsqueeze(-1)
+    is_short     = ((seq_offset >= 2) & (seq_offset <= 5)).float().unsqueeze(-1)
+    is_medium    = ((seq_offset >= 6) & (seq_offset <= 12)).float().unsqueeze(-1)
+    is_long      = (seq_offset > 12).float().unsqueeze(-1)
+    edge_s_parts = [rbf, is_backbone, is_short, is_medium, is_long]
+
+    # is_same_chain: 1.0 if src and dst belong to the same chain, else 0.0
+    if chain_ids is not None:
+        same_chain = (chain_ids[src] == chain_ids[dst]).float().unsqueeze(-1)  # [E, 1]
+        edge_s_parts.append(same_chain)
+
+    edge_s = torch.cat(edge_s_parts, dim=-1)
+
+    # ── 6. Backbone local reference frame (N-CA-C) ───────────────────────────
+    # forward direction: CA → C  (peptide extension)
+    fwd   = F.normalize(coords_c  - coords_ca, dim=-1)    # [N, 3]
+    # N → CA
+    n2ca  = F.normalize(coords_ca - coords_n,  dim=-1)    # [N, 3]
+    # up: normal of N-CA-C plane, perpendicular to fwd
+    up    = F.normalize(torch.cross(fwd, n2ca, dim=-1), dim=-1)  # [N, 3]
+    # right: completes right-hand frame
+    right = torch.cross(fwd, up, dim=-1)                  # [N, 3]
+    # frame columns = [fwd, up, right] → 3×3 rotation for each residue
+    frame = torch.stack([fwd, up, right], dim=-1)         # [N, 3, 3]
+
+    # ── 7. Edge vector features ──────────────────────────────────────────────
+    global_dir = F.normalize(edge_vec_raw, dim=-1)        # [E, 3] global direction
+    frame_src  = frame[src]                               # [E, 3, 3]
+    # Project global direction into local frame of source residue
+    local_dir  = torch.bmm(
+        frame_src.transpose(1, 2),                        # [E, 3, 3]
+        global_dir.unsqueeze(-1)                          # [E, 3, 1]
+    ).squeeze(-1)                                         # [E, 3]
+
+    edge_index = torch.stack([src, dst], dim=0)           # [2, E]
+    edge_v     = torch.stack([global_dir, local_dir], dim=1)  # [E, 2, 3]
+
+    return edge_index, edge_s, edge_v
+
+
 def build_knn_graph(
     coords: torch.Tensor,
     k: int = 20,
@@ -300,13 +467,13 @@ def build_knn_graph(
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Build k-NN graph from coordinates.
-    
+
     Args:
         coords: Node coordinates [N, 3]
         k: Number of nearest neighbors
         radius: Maximum edge distance (Angstroms)
         batch: Batch indices [N] for batched graphs
-        
+
     Returns:
         edge_index: [2, E]
         edge_dist: [E, 1] - edge distances

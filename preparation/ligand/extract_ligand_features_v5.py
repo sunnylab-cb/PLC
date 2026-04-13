@@ -237,17 +237,24 @@ def batch_extract_ligand_features(
     only_ids: Optional[Iterable[str]] = None,
     strict: bool = True,
     num_threads: int = 0,
+    flat: bool = False,
 ) -> None:
     only_ids_set = {s.lower() for s in only_ids} if only_ids else None
     ligand_files_dict: dict[str, Path] = {}
 
     for ext in [".sdf", ".mol2", ".pdb", ".mol"]:
-        for file_path in ligand_root.rglob(f"*_ligand{ext}"):
-            protein_id = file_path.stem.replace("_ligand", "").lower()
+        pattern = f"*{ext}" if flat else f"*_ligand{ext}"
+        for file_path in ligand_root.rglob(pattern):
+            if flat:
+                protein_id = file_path.stem.split("_", 1)[0].lower()
+                dedupe_key = file_path.stem.lower()
+            else:
+                protein_id = file_path.stem.replace("_ligand", "").lower()
+                dedupe_key = protein_id
             if only_ids_set is not None and protein_id not in only_ids_set:
                 continue
-            if protein_id not in ligand_files_dict:
-                ligand_files_dict[protein_id] = file_path
+            if dedupe_key not in ligand_files_dict:
+                ligand_files_dict[dedupe_key] = file_path
 
     ligand_files = sorted(ligand_files_dict.values())
     if max_files:
@@ -268,6 +275,7 @@ def batch_extract_ligand_features(
         "(54D local + 45D global tag + 10D shape)"
         f" + {num_conformers} conformers"
     )
+    print(f"Flat scan mode: {flat}")
     print(f"Strict mode: {strict}")
     print(f"RDKit threads per task: {num_threads}")
 
@@ -336,6 +344,7 @@ def main():
     parser.add_argument("--rdkit-threads", type=int, default=0, help="每个任务内部 RDKit 线程数，0=全部线程")
     parser.add_argument("--ids", nargs="*", default=None, help="只处理指定PDB ID")
     parser.add_argument("--loose", action="store_true", help="宽松模式：允许构象/MMFF降级")
+    parser.add_argument("--flat", action="store_true", help="平铺扫描模式：直接处理输入目录下的 *.sdf/*.mol2/*.pdb/*.mol")
 
     args = parser.parse_args()
 
@@ -363,6 +372,7 @@ def main():
         only_ids=args.ids,
         strict=not args.loose,
         num_threads=args.rdkit_threads,
+        flat=args.flat,
     )
 
 
