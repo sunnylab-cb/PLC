@@ -75,6 +75,44 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 
 ---
 
+## V10m8 - 2026-04-14
+
+### 主要特性
+- ✅ Per-layer distance bias: 每层 Transformer 使用独立的 DistanceBias 模块（AlphaFold2/ESMFold style），浅层学习局部几何，深层学习全局上下文
+- ✅ Distance regression auxiliary head: 连续 d_min 预测辅助头，与 3-class 分类并行。Huber loss + proximity weighting，在类别边界处提供更平滑的梯度信号
+
+### 关键改进/变化
+1. **Per-layer distance bias**: 将 `RoPEProteinContextEncoder` 中共享的单个 `DistanceBias` 替换为 `ModuleList`，每个 Transformer layer 拥有独立的 DistanceBias module。参数量微增（16 RBF × 8 heads × 4 layers = 512 params）
+2. **Distance regression aux head**: `Softplus` 激活确保预测距离 ≥ 0。训练时使用 proximity-weighted Huber loss（近距残基权重更高），推理时可忽略
+3. **Dataset 支持**: `PocketDatasetV8` 现在输出 `raw_distances` 字段，`pocket_collate_fn_v10` 支持 padding
+
+### 影响范围
+- 模型：`src/models/pocket_gvp_fusion_v10m8.py`
+- 数据：`src/data/pocket_dataset_v8.py`（新增 raw_distances 输出）
+- 数据：`src/data/collate.py`（新增 raw_distances padding）
+- 脚本：`scripts/train/train_v10m8.py`
+- 配置：`configs/pocket_gvp_v10.yaml`
+
+### 配置变化
+```yaml
+model:
+  use_dist_aux: true              # 启用距离回归辅助头
+
+training:
+  dist_aux:
+    enabled: true
+    weight: 0.1                   # 辅助损失权重
+    max_dist: 20.0                # clamp 距离上限
+```
+
+### 使用方法
+```bash
+python scripts/train/train_v10m8.py --config configs/pocket_gvp_v10.yaml
+torchrun --nproc_per_node=4 scripts/train/train_v10m8.py --config configs/pocket_gvp_v10.yaml
+```
+
+---
+
 ## V10m7 - 2026-04-13
 
 ### 主要特性

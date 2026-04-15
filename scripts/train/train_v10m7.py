@@ -17,8 +17,8 @@ V10m7 更新 (基于 V10m6):
 - ligand_features_v5 (109D atom features)
 
 使用方法:
-    python scripts/train/train_v10m7.py --config configs/pocket_gvp_v10m7.yaml
-    torchrun --nproc_per_node=4 scripts/train/train_v10m7.py --config configs/pocket_gvp_v10m7.yaml
+    python scripts/train/train_v10m7.py --config configs/pocket_gvp_v10.yaml
+    torchrun --nproc_per_node=4 scripts/train/train_v10m7.py --config configs/pocket_gvp_v10.yaml
 """
 
 import argparse

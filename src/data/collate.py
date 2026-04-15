@@ -515,6 +515,11 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     if has_labels_original:
         labels_original = torch.zeros(B, max_residues, dtype=torch.long)
 
+    # V10m8: raw distances for distance regression auxiliary head
+    has_raw_distances = any('raw_distances' in sample for sample in batch)
+    if has_raw_distances:
+        raw_distances = torch.full((B, max_residues), 999.0)  # pad with large distance
+
     ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
@@ -540,6 +545,12 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
             labels_orig = sample['labels_original']
             n_orig = min(len(labels_orig), n_res)
             labels_original[i, :n_orig] = labels_orig[:n_orig]
+
+        # V10m8: raw distances
+        if has_raw_distances and 'raw_distances' in sample:
+            rd = sample['raw_distances']
+            n_rd = min(len(rd), n_res)
+            raw_distances[i, :n_rd] = rd[:n_rd]
 
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
@@ -569,6 +580,9 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 
     if has_labels_original:
         result['labels_original'] = labels_original
+
+    if has_raw_distances:
+        result['raw_distances'] = raw_distances
 
     return result
 
