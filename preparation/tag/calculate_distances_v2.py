@@ -107,6 +107,40 @@ def extract_ligand_coords_from_pdb(ligand_pdb: str) -> np.ndarray:
     return np.array(coords)
 
 
+def extract_ligand_coords_from_pt(ligand_data: Dict, source: Optional[str] = None) -> np.ndarray:
+    """优先返回 heavy-only 坐标，避免将含氢的 coords 直接用于距离计算。"""
+    source_label = source or "<in-memory ligand_data>"
+
+    if 'coords_original' in ligand_data and ligand_data['coords_original'] is not None:
+        return ligand_data['coords_original'].numpy()
+
+    if 'coords_heavy_current' in ligand_data and ligand_data['coords_heavy_current'] is not None:
+        print(f"[fallback] {source_label}: using coords_heavy_current")
+        return ligand_data['coords_heavy_current'].numpy()
+
+    coords = ligand_data['coords'].numpy()
+
+    if 'atom_symbols' in ligand_data:
+        atom_symbols = ligand_data['atom_symbols']
+        heavy_mask = np.array([str(symbol) != 'H' for symbol in atom_symbols], dtype=bool)
+        if len(heavy_mask) == len(coords):
+            print(f"[fallback] {source_label}: filtering coords by atom_symbols to heavy-only")
+            return coords[heavy_mask]
+
+    atom_features = ligand_data.get('atom_features')
+    if atom_features is not None:
+        if isinstance(atom_features, torch.Tensor):
+            atom_features = atom_features.numpy()
+        if atom_features.ndim == 2 and atom_features.shape[0] == coords.shape[0] and atom_features.shape[1] >= 11:
+            atom_type_idx = np.argmax(atom_features[:, :11], axis=1)
+            heavy_mask = atom_type_idx != 9  # index 9 = H in ligand feature extraction
+            print(f"[fallback] {source_label}: filtering coords by atom_features to heavy-only")
+            return coords[heavy_mask]
+
+    print(f"[fallback] {source_label}: using raw coords (unable to derive heavy-only mask)")
+    return coords
+
+
 def process_single_complex(args) -> Tuple[Optional[str], Optional[Dict]]:
     """处理单个复合物的任务函数"""
     complex_dir, year_dir, data_root_path = args
@@ -135,14 +169,7 @@ def process_single_complex(args) -> Tuple[Optional[str], Optional[Dict]]:
 
             if ligand_feat_file.exists():
                 ligand_data = torch.load(ligand_feat_file, weights_only=False)
-
-                # ✅ 优先使用 coords_original（原始实验坐标）
-                if 'coords_original' in ligand_data:
-                    ligand_coords = ligand_data['coords_original'].numpy()
-                else:
-                    # 如果没有 coords_original，回退到 coords
-                    # ⚠️  这可能是旧版本的特征文件，坐标可能不准确
-                    ligand_coords = ligand_data['coords'].numpy()
+                ligand_coords = extract_ligand_coords_from_pt(ligand_data, source=str(ligand_feat_file))
             else:
                 return None, None
 
@@ -235,14 +262,8 @@ if __name__ == '__main__':
     if Path(protein_pdb).exists() and Path(ligand_feat).exists():
         # 加载配体特征
         ligand_data = torch.load(ligand_feat, weights_only=False)
-
-        # ✅ 优先使用 coords_original（原始实验坐标）
-        if 'coords_original' in ligand_data:
-            ligand_coords = ligand_data['coords_original'].numpy()
-            print(f"✅ 使用 coords_original: {ligand_coords.shape}")
-        else:
-            ligand_coords = ligand_data['coords'].numpy()
-            print(f"⚠️  使用 coords: {ligand_coords.shape}")
+        ligand_coords = extract_ligand_coords_from_pt(ligand_data, source=ligand_feat)
+        print(f"✅ 使用 ligand heavy-only 坐标: {ligand_coords.shape}")
 
         # 计算距离 (使用全重原子)
         distances = calculate_residue_ligand_distances(

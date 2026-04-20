@@ -236,7 +236,6 @@ def main():
             pattern=args.pattern,
             max_files=args.max,
             workers=args.workers,
-            overwrite=args.overwrite,
         )
     elif args.command == "extract":
         extract_mode(
@@ -248,6 +247,7 @@ def main():
             pattern=args.pattern,
             max_files=args.max,
             workers=args.workers,
+            overwrite=args.overwrite,
         )
 
 

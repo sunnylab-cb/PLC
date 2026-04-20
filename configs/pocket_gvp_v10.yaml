@@ -27,8 +27,8 @@ data:
   max_seq_len: 1800
   max_atoms: 128
   # 改回 PoC 設定，對齊 benchmark 標準
-  label_contact_thresh: 4.0   # Contact: d_min < 4.0Å
-  label_near_thresh: 6.0      # Near: 4.0–6.0Å; Far: > 6.0Å
+  label_contact_thresh: 5.0   # Contact: d_min < 4.0Å
+  label_near_thresh: 8.0      # Near: 4.0–6.0Å; Far: > 6.0Å
 
 model:
   d_esm: 1280

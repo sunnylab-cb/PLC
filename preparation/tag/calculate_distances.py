@@ -94,6 +94,37 @@ def extract_ligand_coords_from_pdb(ligand_pdb: str) -> np.ndarray:
     return np.array(coords)
 
 
+def extract_ligand_coords_from_pt(ligand_data: Dict, source: str = "<ligand pt>") -> np.ndarray:
+    if 'coords_original' in ligand_data and ligand_data['coords_original'] is not None:
+        return ligand_data['coords_original'].numpy()
+
+    if 'coords_heavy_current' in ligand_data and ligand_data['coords_heavy_current'] is not None:
+        print(f"[fallback] {source}: using coords_heavy_current")
+        return ligand_data['coords_heavy_current'].numpy()
+
+    coords = ligand_data['coords'].numpy()
+
+    if 'atom_symbols' in ligand_data:
+        atom_symbols = ligand_data['atom_symbols']
+        heavy_mask = np.array([str(symbol) != 'H' for symbol in atom_symbols], dtype=bool)
+        if len(heavy_mask) == len(coords):
+            print(f"[fallback] {source}: filtering coords by atom_symbols to heavy-only")
+            return coords[heavy_mask]
+
+    atom_features = ligand_data.get('atom_features')
+    if atom_features is not None:
+        if isinstance(atom_features, torch.Tensor):
+            atom_features = atom_features.numpy()
+        if atom_features.ndim == 2 and atom_features.shape[0] == coords.shape[0] and atom_features.shape[1] >= 11:
+            atom_type_idx = np.argmax(atom_features[:, :11], axis=1)
+            heavy_mask = atom_type_idx != 9  # index 9 = H in ligand feature extraction
+            print(f"[fallback] {source}: filtering coords by atom_features to heavy-only")
+            return coords[heavy_mask]
+
+    print(f"[fallback] {source}: using raw coords (unable to derive heavy-only mask)")
+    return coords
+
+
 def batch_calculate_distances(
     data_root: str,
     output_file: str
@@ -146,7 +177,7 @@ def batch_calculate_distances(
                     ligand_feat_file = data_root / 'PLK' / 'ligand_features' / year_dir / complex_id / f'{complex_id}_ligand.pt'
                     if ligand_feat_file.exists():
                         ligand_data = torch.load(ligand_feat_file, weights_only=False)
-                        ligand_coords = ligand_data['coords'].numpy()
+                        ligand_coords = extract_ligand_coords_from_pt(ligand_data, source=str(ligand_feat_file))
                     else:
                         continue
 

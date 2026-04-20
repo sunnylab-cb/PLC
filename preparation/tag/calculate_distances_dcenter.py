@@ -22,7 +22,10 @@
 """
 
 import argparse
+import contextlib
+import io
 import multiprocessing as mp
+import sys
 import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -31,6 +34,11 @@ import numpy as np
 import torch
 from Bio.PDB import PDBParser
 from tqdm import tqdm
+
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from preparation.protein.extract_physchem_from_pdb import parse_pdb_protein
 
 warnings.filterwarnings('ignore')
 
@@ -42,28 +50,20 @@ YEAR_DIRS = ['1981-2000', '2001-2010', '2011-2019']
 # ---------------------------------------------------------------------------
 
 def _extract_protein_heavy_coords(protein_pdb: str) -> list:
-    """返回每个残基的重原子坐标列表 List[np.ndarray[N_atoms, 3]]，按 (chain, res_id) 排序。"""
-    parser = PDBParser(QUIET=True)
-    structure = parser.get_structure('protein', protein_pdb)
-    if len(structure) == 0:
+    """
+    返回每个残基的重原子坐标列表 List[np.ndarray[N_atoms, 3]]。
+
+    这里显式复用 protein feature 流的 residue enumeration 逻辑，
+    以保证 distance label 与 protein feature `.pt` 的残基顺序完全一致。
+    """
+    with contextlib.redirect_stdout(io.StringIO()):
+        pdb_info = parse_pdb_protein(Path(protein_pdb), chain_id=None, mode='complex')
+
+    residue_coords = pdb_info.get('all_atom_coords', [])
+    if not residue_coords:
         return []
 
-    model = structure[0]
-    residue_data = []
-    for chain in model:
-        for residue in chain:
-            if residue.id[0] != ' ':   # 跳过 HETATM
-                continue
-            coords = np.array([
-                atom.get_coord() for atom in residue.get_atoms()
-                if atom.element != 'H'
-            ])
-            if len(coords) == 0:
-                continue
-            residue_data.append((chain.id, residue.id[1], coords))
-
-    residue_data.sort(key=lambda x: (x[0], x[1]))
-    return [r[2] for r in residue_data]
+    return [np.asarray(coords, dtype=np.float32) for coords in residue_coords if len(coords) > 0]
 
 
 def _extract_ligand_coords_from_pdb(ligand_pdb: str) -> np.ndarray:
@@ -82,9 +82,32 @@ def _extract_ligand_coords_from_pdb(ligand_pdb: str) -> np.ndarray:
 def _extract_ligand_coords_from_pt(pt_path: Path) -> np.ndarray:
     data = torch.load(pt_path, weights_only=False)
     if 'coords_original' in data and data['coords_original'] is not None:
-        coords = data['coords_original'].numpy()
-    else:
-        coords = data['coords'].numpy()
+        return data['coords_original'].numpy()
+
+    if 'coords_heavy_current' in data and data['coords_heavy_current'] is not None:
+        print(f"[fallback] {pt_path}: using coords_heavy_current")
+        return data['coords_heavy_current'].numpy()
+
+    coords = data['coords'].numpy()
+
+    if 'atom_symbols' in data:
+        atom_symbols = data['atom_symbols']
+        heavy_mask = np.array([str(symbol) != 'H' for symbol in atom_symbols], dtype=bool)
+        if len(heavy_mask) == len(coords):
+            print(f"[fallback] {pt_path}: filtering coords by atom_symbols to heavy-only")
+            return coords[heavy_mask]
+
+    atom_features = data.get('atom_features')
+    if atom_features is not None:
+        if isinstance(atom_features, torch.Tensor):
+            atom_features = atom_features.numpy()
+        if atom_features.ndim == 2 and atom_features.shape[0] == coords.shape[0] and atom_features.shape[1] >= 11:
+            atom_type_idx = np.argmax(atom_features[:, :11], axis=1)
+            heavy_mask = atom_type_idx != 9  # index 9 = H in ligand feature extraction
+            print(f"[fallback] {pt_path}: filtering coords by atom_features to heavy-only")
+            return coords[heavy_mask]
+
+    print(f"[fallback] {pt_path}: using raw coords (unable to derive heavy-only mask)")
     return coords
 
 

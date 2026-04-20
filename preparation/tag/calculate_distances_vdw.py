@@ -14,6 +14,8 @@
 3. 基于VDW半径的物理阈值
 """
 
+import contextlib
+import io
 import torch
 import numpy as np
 from pathlib import Path
@@ -22,7 +24,16 @@ import argparse
 from tqdm import tqdm
 import multiprocessing as mp
 from Bio.PDB import PDBParser
+import sys
 import warnings
+
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from preparation.protein.extract_physchem_from_pdb import parse_pdb_protein
+from biotite.structure.io.pdb import PDBFile
+import biotite.structure as bs
+
 warnings.filterwarnings('ignore')
 
 # 范德华半径查找表 (Bondi半径, 单位: Å)
@@ -79,33 +90,39 @@ def extract_protein_atoms_from_pdb(protein_pdb: str) -> Tuple[np.ndarray, List[s
         coords: [N_residues, max_atoms, 3] 每个残基的重原子坐标
         atom_symbols: List[List[str]] 每个残基的原子符号
     """
-    parser = PDBParser(QUIET=True)
-    structure = parser.get_structure('protein', protein_pdb)
+    with contextlib.redirect_stdout(io.StringIO()):
+        pdb_info = parse_pdb_protein(Path(protein_pdb), chain_id=None, mode='complex')
 
-    if len(structure) == 0:
-        return [], []
-
-    model = structure[0]  # 只处理第一个模型
+    pdb_file = PDBFile.read(protein_pdb)
+    structure = pdb_file.get_structure(model=1)
+    atom_array = structure[bs.filter_amino_acids(structure) & ~structure.hetero]
 
     residue_coords = []
     residue_symbols = []
-
-    for chain in model:
-        for residue in chain:
-            if residue.id[0] != ' ':  # 跳过HETATM
-                continue
-
-            # 获取所有重原子
-            coords = []
-            symbols = []
-            for atom in residue.get_atoms():
-                if atom.element != 'H':  # 过滤氢原子
-                    coords.append(atom.get_coord())
-                    symbols.append(atom.element)
-
-            if len(coords) > 0:
-                residue_coords.append(np.array(coords))
-                residue_symbols.append(symbols)
+    insertion_codes = pdb_info.get('insertion_codes', [''] * pdb_info.get('n_residues', 0))
+    for coords, res_id, chain_id, ins_code in zip(
+        pdb_info.get('all_atom_coords', []),
+        pdb_info.get('residue_indices', []),
+        pdb_info.get('chain_ids', []),
+        insertion_codes,
+    ):
+        if len(coords) == 0:
+            continue
+        res_mask = (
+            (atom_array.res_id == res_id) &
+            (atom_array.chain_id == chain_id) &
+            (atom_array.ins_code == ins_code)
+        )
+        res_atoms = atom_array[res_mask]
+        heavy_atoms = res_atoms[res_atoms.element != 'H']
+        atom_symbols = [str(element).strip() for element in heavy_atoms.element]
+        if len(atom_symbols) != len(coords):
+            raise ValueError(
+                f"Protein atom symbol alignment failed for {protein_pdb}: "
+                f"coords={len(coords)} symbols={len(atom_symbols)} chain={chain_id} res_id={res_id} icode={ins_code!r}"
+            )
+        residue_coords.append(np.asarray(coords, dtype=np.float32))
+        residue_symbols.append(atom_symbols)
 
     return residue_coords, residue_symbols
 
@@ -137,7 +154,10 @@ def extract_ligand_coords_from_pdb(ligand_pdb: str) -> Tuple[np.ndarray, List[st
     return np.array(coords), symbols
 
 
-def extract_ligand_from_pt(ligand_pt: Path) -> Tuple[np.ndarray, List[str]]:
+def extract_ligand_from_pt(
+    ligand_pt: Path,
+    allow_raw_coords_fallback: bool = False,
+) -> Tuple[np.ndarray, List[str]]:
     """
     从.pt特征文件提取配体坐标和原子符号（过滤氢原子）
 
@@ -150,29 +170,43 @@ def extract_ligand_from_pt(ligand_pt: Path) -> Tuple[np.ndarray, List[str]]:
     """
     data = torch.load(ligand_pt, weights_only=False)
 
-    # 提取坐标
-    coords = data['coords'].numpy()
-
-    # 提取原子符号
     if 'atom_symbols' in data:
-        symbols = data['atom_symbols']
+        all_symbols = list(data['atom_symbols'])
     else:
-        # 从atom_features推断（前11维是原子类型的one-hot编码）
         atom_features = data['atom_features']
         atom_types = ['C', 'N', 'O', 'S', 'F', 'P', 'Cl', 'Br', 'I', 'H', 'Other']
-
-        symbols = []
+        all_symbols = []
         for feat in atom_features:
             atom_type_onehot = feat[:11]
             idx = torch.argmax(atom_type_onehot).item()
-            symbols.append(atom_types[idx])
+            all_symbols.append(atom_types[idx])
 
-    # 过滤氢原子
-    heavy_mask = np.array([s != 'H' for s in symbols])
-    coords = coords[heavy_mask]
-    symbols = [s for s, m in zip(symbols, heavy_mask) if m]
+    heavy_mask = np.array([symbol != 'H' for symbol in all_symbols], dtype=bool)
+    heavy_symbols = [symbol for symbol, keep in zip(all_symbols, heavy_mask) if keep]
 
-    return coords, symbols
+    if 'coords_original' in data and data['coords_original'] is not None:
+        return data['coords_original'].numpy(), heavy_symbols
+
+    if 'coords_heavy_current' in data and data['coords_heavy_current'] is not None:
+        print(f"[fallback] {ligand_pt}: using coords_heavy_current")
+        return data['coords_heavy_current'].numpy(), heavy_symbols
+
+    coords = data['coords'].numpy()
+    if len(heavy_mask) == len(coords):
+        if 'atom_symbols' in data:
+            print(f"[fallback] {ligand_pt}: filtering coords by atom_symbols to heavy-only")
+        else:
+            print(f"[fallback] {ligand_pt}: filtering coords by atom_features to heavy-only")
+        return coords[heavy_mask], heavy_symbols
+
+    if allow_raw_coords_fallback:
+        print(f"[fallback] {ligand_pt}: using raw coords (unable to derive heavy-only mask)")
+        return coords, heavy_symbols[:len(coords)]
+
+    raise ValueError(
+        f"{ligand_pt}: unable to derive heavy-only ligand coordinates safely from .pt; "
+        "set allow_raw_coords_fallback=True to override"
+    )
 
 
 def calculate_vdw_based_distances(
@@ -270,7 +304,7 @@ def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
     Returns:
         (success, message, result_dict)
     """
-    complex_dir, year_dir, data_root_path = args_tuple
+    complex_dir, year_dir, ligand_feat_root, allow_raw_coords_fallback = args_tuple
     complex_id = complex_dir.name
 
     try:
@@ -297,21 +331,12 @@ def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
         if ligand_pdb.suffix == '.pdb':
             ligand_coords, ligand_symbols = extract_ligand_coords_from_pdb(str(ligand_pdb))
         else:
-            # 对于SDF/MOL2，从.pt文件读取（但要过滤氢原子）
-            # 尝试多个可能的路径
-            possible_paths = [
-                data_root_path / 'PLK' / 'ligand_features_v3' / year_dir / complex_id / f'{complex_id}_ligand.pt',
-                data_root_path / 'PLK' / 'ligand_features' / year_dir / complex_id / f'{complex_id}_ligand.pt',
-            ]
-
-            ligand_feat_file = None
-            for path in possible_paths:
-                if path.exists():
-                    ligand_feat_file = path
-                    break
-
-            if ligand_feat_file:
-                ligand_coords, ligand_symbols = extract_ligand_from_pt(ligand_feat_file)
+            ligand_feat_file = ligand_feat_root / year_dir / complex_id / f'{complex_id}_ligand.pt'
+            if ligand_feat_file.exists():
+                ligand_coords, ligand_symbols = extract_ligand_from_pt(
+                    ligand_feat_file,
+                    allow_raw_coords_fallback=allow_raw_coords_fallback,
+                )
             else:
                 return (False, f"{complex_id}: 配体特征文件不存在", None)
 
@@ -349,15 +374,17 @@ def process_single_complex(args_tuple) -> Tuple[bool, str, Optional[Dict]]:
 
 
 def batch_calculate_distances(
-    data_root: str,
+    pl_dir: str,
+    ligand_feat_dir: str,
     output_file: str,
-    num_workers: int = 64
+    num_workers: int = 64,
+    allow_raw_coords_fallback: bool = False,
 ):
     """
     批量计算所有复合物的残基-配体距离 (多进程版)
     """
-    data_root_path = Path(data_root)
-    pl_dir = data_root_path / 'P-L'
+    pl_root = Path(pl_dir)
+    ligand_feat_root = Path(ligand_feat_dir)
 
     distances_dict = {}
     tasks = []
@@ -365,18 +392,21 @@ def batch_calculate_distances(
     # 1. 收集所有任务
     print("收集任务...")
     for year_dir in ['1981-2000', '2001-2010', '2011-2019']:
-        year_path = pl_dir / year_dir
+        year_path = pl_root / year_dir
         if not year_path.exists():
             continue
 
         for complex_dir in year_path.iterdir():
             if not complex_dir.is_dir():
                 continue
-            tasks.append((complex_dir, year_dir, data_root_path))
+            tasks.append((complex_dir, year_dir, ligand_feat_root, allow_raw_coords_fallback))
 
     print(f"总共有 {len(tasks)} 个复合物待处理")
     print(f"使用 {num_workers} 个进程进行计算...")
     print(f"使用 BioLiP 标准: d < r_vdw(P) + r_vdw(L) + {TOLERANCE} Å")
+    print(f"允许 ligand raw coords 最末级 fallback: {allow_raw_coords_fallback}")
+    print(f"Protein/Ligand complex root: {pl_root}")
+    print(f"Ligand feature root: {ligand_feat_root}")
 
     # 2. 并行处理
     success_count = 0
@@ -432,13 +462,25 @@ def batch_calculate_distances(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description="基于范德华半径计算蛋白质-配体距离 (BioLiP标准) - PLK版本"
+        description="基于范德华半径计算蛋白质-配体距离 (PLC 主线版本)"
     )
     parser.add_argument(
-        "--data-root",
+        "--pl-dir",
         type=str,
-        default="/home/husrcf/Code/ProtBind",
-        help="数据根目录"
+        default="/home/husrcf/Code/ProtBind/New",
+        help="复合物根目录（含 1981-2000 / 2001-2010 / 2011-2019）"
+    )
+    parser.add_argument(
+        "--ligand-feat-dir",
+        type=str,
+        default="/home/husrcf/Code/ProtBind/PLC/data/ligand_features_v5",
+        help="配体 .pt 特征根目录（含年份子目录）"
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help="已弃用的旧别名；若提供则等价于 --pl-dir"
     )
     parser.add_argument(
         "--output",
@@ -452,15 +494,25 @@ if __name__ == '__main__':
         default=100,
         help="并行进程数"
     )
+    parser.add_argument(
+        "--allow-raw-coords-fallback",
+        action="store_true",
+        help="当 ligand .pt 无法安全导出 heavy-only 坐标时，允许退回原始 coords（默认关闭）",
+    )
 
     args = parser.parse_args()
 
-    data_root = Path(args.data_root)
-    if not data_root.exists():
-        raise FileNotFoundError(f"数据目录不存在: {data_root}")
+    pl_dir = Path(args.input) if args.input else Path(args.pl_dir)
+    ligand_feat_dir = Path(args.ligand_feat_dir)
+    if not pl_dir.exists():
+        raise FileNotFoundError(f"复合物目录不存在: {pl_dir}")
+    if not ligand_feat_dir.exists():
+        raise FileNotFoundError(f"配体特征目录不存在: {ligand_feat_dir}")
 
     batch_calculate_distances(
-        data_root=str(data_root),
+        pl_dir=str(pl_dir),
+        ligand_feat_dir=str(ligand_feat_dir),
         output_file=args.output,
-        num_workers=args.workers
+        num_workers=args.workers,
+        allow_raw_coords_fallback=args.allow_raw_coords_fallback,
     )
