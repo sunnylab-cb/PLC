@@ -9,8 +9,8 @@ Pipeline
                      repair missing heavy atoms (optionally add missing loops)
   2. PropKa        — predict per-residue pKa at target pH → protonation states
   3. OpenMM Modeller — add hydrogens consistent with PropKa protonation
-  4. Restraints    — lock all heavy-atom positions (k = 1000 kJ/mol/nm²)
-  5. H-only minimization — relax hydrogen positions to remove vdW clashes
+  4. Fixed heavy atoms — set all non-H particle masses to zero
+  5. H-only minimization — relax hydrogens with bonded + nonbonded terms
 
 Why CIF in / CIF out
 ────────────────────
@@ -62,24 +62,33 @@ import uuid
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# ── PDBFixer / OpenMM ─────────────────────────────────────────────────────────
-try:
-    from pdbfixer import PDBFixer
-    from openmm.app import (
-        PDBFile, PDBxFile, ForceField, Modeller, CutoffNonPeriodic, Simulation,
-        HBonds,
-    )
-    from openmm import (
-        CustomExternalForce, LangevinMiddleIntegrator, unit, NonbondedForce,
-    )
-    OPENMM_AVAILABLE = True
-except ImportError:
-    OPENMM_AVAILABLE = False
+# ── PDBFixer / OpenMM availability (lazy — no C-library load at module level) ──
 
-# Limit OpenMM to 1 CPU thread per worker process.
-# Otherwise 128 workers × N threads each creates thousand-way
-# oversubscription → near-zero throughput on multi-worker runs.
-if OPENMM_AVAILABLE:
+import importlib.util as _importlib_util
+_OPENMM_SPEC   = _importlib_util.find_spec('openmm')
+_PDBFIXER_SPEC = _importlib_util.find_spec('pdbfixer')
+OPENMM_AVAILABLE = _OPENMM_SPEC is not None and _PDBFIXER_SPEC is not None
+del _importlib_util, _OPENMM_SPEC, _PDBFIXER_SPEC
+
+# ── OpenMM thread limit (must run AFTER fork in each worker) ──────────
+
+def _limit_openmm_threads() -> None:
+    """
+    Force OpenMM to use CPU-only, 1 thread per process.
+
+    Must be called BEFORE any OpenMM import that triggers Platform init,
+    and AFTER os.fork() in each worker child.
+
+    Hides all GPU devices so OpenMM (including internal contexts created
+    by addHydrogens()) cannot auto-select CUDA/HIP/OpenCL platforms.
+    """
+    # Hide GPUs from all backends — must happen before OpenMM Platform init
+    os.environ['CUDA_VISIBLE_DEVICES'] = ''     # NVIDIA
+    os.environ['HIP_VISIBLE_DEVICES'] = ''      # AMD ROCm
+    os.environ['ROCR_VISIBLE_DEVICES'] = ''     # AMD ROCm (alternative)
+
+    if not OPENMM_AVAILABLE:
+        return
     try:
         from openmm import Platform
         Platform.getPlatformByName('CPU').setPropertyDefaultValue('Threads', '1')
@@ -101,10 +110,15 @@ def _validate_pdb_id(pdb_id: str, biolip_root: Path, output_root: Path) -> None:
     Reject pdb_ids that would escape the intended filesystem roots.
 
     Checks:
+    - Empty string or OS special names ('.', '..').
     - No path separators or '..' components (fast lexical guard).
-    - Resolved input dir stays under biolip_root/shared_receptors.
-    - Resolved output dir stays under output_root.
+    - Resolved input dir strictly under biolip_root/shared_receptors.
+    - Resolved output dir strictly under output_root.
     """
+    if not pdb_id or pdb_id.strip() == '':
+        raise ValueError(f'pdb_id {pdb_id!r} is empty or whitespace-only.')
+    if pdb_id in ('.', '..'):
+        raise ValueError(f'pdb_id {pdb_id!r} is a special directory name; refusing.')
     if os.sep in pdb_id or '/' in pdb_id or '..' in pdb_id.split('/'):
         raise ValueError(
             f'pdb_id {pdb_id!r} contains path separators or ".."; refusing to process.'
@@ -113,8 +127,7 @@ def _validate_pdb_id(pdb_id: str, biolip_root: Path, output_root: Path) -> None:
     candidate_in   = (receptors_root / pdb_id).resolve()
     candidate_out  = (output_root / pdb_id).resolve()
 
-    if not str(candidate_in).startswith(str(receptors_root) + os.sep) and \
-            candidate_in != receptors_root:
+    if not str(candidate_in).startswith(str(receptors_root) + os.sep):
         raise ValueError(
             f'pdb_id {pdb_id!r} resolves to {candidate_in}, '
             f'which is outside {receptors_root}.'
@@ -281,17 +294,73 @@ def _strip_extra_models(in_path: Path, pdb_id: str) -> Optional[Path]:
 
     For multi-model CIFs, failure to strip is raised (not silently ignored)
     because PDBFixer will crash on atom-order mismatches between models.
+
+    Uses a cheap text scan first: most receptors are single-model, so we
+    avoid the gemmi full-parse cost in the common case.
     """
+    # ── Cheap pre-check: scan for model_num > 1 in atom_site records ──
+    if not _has_multiple_models(in_path):
+        return None
+
     import gemmi
     structure = gemmi.read_structure(str(in_path))
     if len(structure) <= 1:
-        return None                                         # single model → no-op
+        return None
     # Keep only the first conformer
     del structure[1:]
     fd, tmp_str = tempfile.mkstemp(suffix='.cif', prefix=f'{pdb_id}_model1_')
     os.close(fd)
     structure.make_mmcif_document().write_file(tmp_str)
     return Path(tmp_str)
+
+
+def _has_multiple_models(in_path: Path) -> bool:
+    """
+    Cheap text scan: does *in_path* contain atoms from model ≥2?
+
+    Only parses the atom_site loop header to locate the
+    pdbx_PDB_model_num column, then scans data lines for any value >1.
+    Returns False for single-model CIFs — the common case — so we can
+    skip a full gemmi parse entirely.
+    """
+    with open(in_path, 'r') as f:
+        in_atom_site = False
+        column_names: list = []
+        model_idx: Optional[int] = None
+
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith('#'):
+                continue
+
+            if line == 'loop_':
+                in_atom_site = False
+                column_names = []
+                model_idx = None
+                continue
+
+            if line.startswith('_atom_site.'):
+                in_atom_site = True
+                column_names.append(line)
+                continue
+
+            if in_atom_site and column_names:
+                if line.startswith('_') or line == 'loop_':
+                    return False
+                if model_idx is None:
+                    try:
+                        model_idx = column_names.index('_atom_site.pdbx_PDB_model_num')
+                    except ValueError:
+                        return False
+
+                values = line.split()
+                if model_idx < len(values):
+                    try:
+                        if int(values[model_idx]) > 1:
+                            return True
+                    except ValueError:
+                        pass
+    return False
 
 
 def preprocess_receptor(
@@ -314,6 +383,15 @@ def preprocess_receptor(
     Input  : {biolip_root}/shared_receptors/{pdb_id}/receptor_full.cif
     Output : {output_root}/{pdb_id}/receptor_fixed.cif
     """
+    # ── Lazy imports (fork-safe: OpenMM libs loaded only in worker) ─────
+    from pdbfixer import PDBFixer
+    from openmm.app import (
+        PDBFile, PDBxFile, ForceField, Modeller, CutoffNonPeriodic, Simulation,
+    )
+    from openmm import (
+        LangevinMiddleIntegrator, Platform, unit,
+    )
+
     # ── path safety (before any filesystem access) ────────────────────────
     try:
         _validate_pdb_id(pdb_id, biolip_root, output_root)
@@ -331,15 +409,15 @@ def preprocess_receptor(
         return False, f'{pdb_id}: receptor_full.cif not found', None
 
     propka_warn: Optional[str] = None   # initialised before try so except can reference it
+    _stripped_cif: Optional[Path] = None
 
     try:
-        # ── Step 0: Strip NMR models (multi-model CIF breaks PDBxFile) ────
+        # ── Step 0: Strip extra NMR models (keep model 1 only) ───────
         cif_path = in_path
         _stripped_cif = _strip_extra_models(in_path, pdb_id)
         if _stripped_cif is not None:
             cif_path = _stripped_cif
             propka_warn = _STRIP_MODEL_WARN
-
         # ── Step 1: PDBFixer — heavy-atom repair ──────────────────────────
         fixer = PDBFixer(filename=str(cif_path))
 
@@ -352,14 +430,24 @@ def preprocess_receptor(
         fixer.replaceNonstandardResidues()
         fixer.removeHeterogens(keepWater=False)
         fixer.findMissingAtoms()
-        fixer.addMissingAtoms()
+        try:
+            fixer.addMissingAtoms()
+        except Exception as e:
+            # PDBFixer may NaN during its internal addMissingAtoms minimization.
+            # Rebuild a clean heavy-atom-only fixer and continue without filling
+            # missing atoms for this receptor.
+            _repair_warn = (
+                'addMissingAtoms failed; continuing without missing heavy-atom '
+                f'repair. Cause: {str(e).splitlines()[0]}'
+            )
+            propka_warn = f'{propka_warn}; {_repair_warn}' if propka_warn else _repair_warn
 
-        # Clean up temp model1.cif (no longer needed — PDBFixer has topology in memory)
-        if _stripped_cif is not None:
-            try:
-                _stripped_cif.unlink(missing_ok=True)
-            except OSError:
-                pass
+            fixer = PDBFixer(filename=str(cif_path))
+            fixer.missingResidues = {}
+            fixer.findNonstandardResidues()
+            fixer.replaceNonstandardResidues()
+            fixer.removeHeterogens(keepWater=False)
+        # (stripped_cif temp file cleanup is now in the finally block below)
 
         # ── Step 2: PropKa — pKa prediction → protonation lookup ─────────
         pka_lookup: dict = {}
@@ -371,9 +459,46 @@ def preprocess_receptor(
             try:
                 with open(tmp_pdb, 'w') as fh:
                     PDBFile.writeFile(fixer.topology, fixer.positions, fh)
-                pka_lookup, propka_warn = _run_propka(tmp_pdb, ph)
+                pka_lookup, _propka_warn = _run_propka(tmp_pdb, ph)
+                if _propka_warn:
+                    propka_warn = (
+                        f'{propka_warn}; {_propka_warn}'
+                        if propka_warn else _propka_warn
+                    )
+
+                # ── Chain-ID truncation check ─────────────────────────────
+                # PDB format truncates mmCIF chain IDs to 1 char.
+                # Only warn when topology actually has multi-char chain
+                # IDs that could be affected; report pKa coverage ratio
+                # instead of asserting a "mismatch" (chains without
+                # titratable sites naturally won't appear in PropKa output).
+                if pka_lookup:
+                    _top_chains = {r.chain.id.strip()
+                                   for r in fixer.topology.residues()}
+                    _long_chains = {c for c in _top_chains if len(c) > 1}
+                    if _long_chains:
+                        _n_titratable = sum(
+                            1 for r in fixer.topology.residues()
+                            if r.name in _TITRATABLE
+                            or r.name in ('HID', 'HIE', 'HIP')
+                        )
+                        _trunc_warn = (
+                            f'Topology has {len(_long_chains)} chain(s) with '
+                            f'ID >1 char ({sorted(_long_chains)}); '
+                            f'PDB truncation may affect PropKa matching. '
+                            f'pKa coverage: {len(pka_lookup)} sites / '
+                            f'{_n_titratable} titratable residues.'
+                        )
+                        propka_warn = (
+                            f'{propka_warn}; {_trunc_warn}'
+                            if propka_warn else _trunc_warn
+                        )
             except Exception as e:
-                propka_warn = f'PDB write for PropKa failed (overflow?): {e}'
+                _propka_warn = f'PDB write for PropKa failed (overflow?): {e}'
+                propka_warn = (
+                    f'{propka_warn}; {_propka_warn}'
+                    if propka_warn else _propka_warn
+                )
             finally:
                 try:
                     os.unlink(tmp_pdb)
@@ -381,7 +506,10 @@ def preprocess_receptor(
                 except OSError:
                     pass
         else:
-            propka_warn = 'propka not installed'
+            _propka_warn = 'propka not installed'
+            propka_warn = (
+                f'{propka_warn}; {_propka_warn}' if propka_warn else _propka_warn
+            )
 
         # ── Step 3: OpenMM Modeller — add hydrogens ───────────────────────
         # forcefield may be pre-built by the caller (worker caches it once)
@@ -392,16 +520,20 @@ def preprocess_receptor(
         variants = _build_variants(modeller.topology, pka_lookup, ph) \
                    if pka_lookup else None   # None → OpenMM uses pH directly
 
-        # ── addHydrogens with two-level fallback ──────────────────────────
+        # ── addHydrogens with three-level fallback ────────────────────────
         # Level 1: PropKa-guided variants.
         # Level 2: variants=None (pure pH-based placement, no PropKa).
         # Level 3: skip H entirely — save heavy-atom-only structure, still
         #          useful for feature extraction; logged in propka_warn.
         add_h_warn: Optional[str] = None
         hydrogens_added = False
+        last_addh_err = 'unknown addHydrogens failure'
         for attempt, var in enumerate(
             [variants, None] if variants is not None else [None]
         ):
+            # addHydrogens may partially mutate Modeller before raising.
+            # Rebuild from the clean fixer state for every attempt.
+            modeller = Modeller(fixer.topology, fixer.positions)
             try:
                 modeller.addHydrogens(forcefield, pH=ph, variants=var)
                 hydrogens_added = True
@@ -411,77 +543,94 @@ def preprocess_receptor(
                         'fell back to pH-only placement.'
                     )
                 break
-            except ValueError as e:
-                err_msg = str(e)
-                if 'No template found' not in err_msg and 'Illegal variant' not in err_msg:
-                    raise   # unexpected error — surface it
-                last_template_err = err_msg.split('\n')[0]  # first line only
+            except Exception as e:
+                # OpenMM can also fail inside geometric H placement
+                # (e.g. math domain error from degenerate coordinates).
+                # Treat it as a per-structure addH failure, not a worker kill.
+                err_msg = str(e).split('\n')[0]
+                last_addh_err = f'{type(e).__name__}: {err_msg}'
 
         if not hydrogens_added:
             # Level 3: save without H; downstream heavy-atom feature extraction
             # still works.  Record the cause.
-            add_h_warn = f'addHydrogens failed (no FF template); saved without H. {last_template_err}'
+            modeller = Modeller(fixer.topology, fixer.positions)
+            add_h_warn = f'addHydrogens failed; saved without H. {last_addh_err}'
 
         if add_h_warn:
             propka_warn = (
                 f'{propka_warn}; {add_h_warn}' if propka_warn else add_h_warn
             )
 
-        # ── Steps 4 & 5: restrained minimization (H only) ────────────────
-        # Skip minimization when no H were added — nothing to relax.
+        # ── Steps 4 & 5: fixed-heavy minimization (H only) ───────────────
+        # Capture post-addHydrogens positions before minimization mutates
+        # them.  Serves as NaN fallback and as the fixed-heavy reference.
+        pre_min_positions = modeller.positions if hydrogens_added else None
+
         if not hydrogens_added:
             final_positions = modeller.positions
+        elif min_max_iter <= 0:
+            # User requested zero iterations — skip createSystem() and the
+            # entire minimization stack (saves time + memory for large structures).
+            final_positions = modeller.positions
         else:
-            # Keep pre-minimization positions as fallback if minimizer diverges
-            pre_min_positions = modeller.positions
             try:
                 system = forcefield.createSystem(
                     modeller.topology,
                     nonbondedMethod=CutoffNonPeriodic,
                     nonbondedCutoff=1.2 * unit.nanometer,
-                    constraints=HBonds,
+                    # Zero-mass heavy atoms are incompatible with H-heavy
+                    # bond constraints.  Leave constraints off so H atoms can
+                    # relax bond lengths/angles against fixed heavy atoms.
+                    constraints=None,
                 )
 
-                # Harmonic restraints on all heavy atoms (k = 1000 kJ/mol/nm²)
-                restraint = CustomExternalForce(
-                    'k*((x-x0)^2+(y-y0)^2+(z-z0)^2)'
-                )
-                restraint.addGlobalParameter(
-                    'k', 1000.0 * unit.kilojoules_per_mole / unit.nanometer**2
-                )
-                restraint.addPerParticleParameter('x0')
-                restraint.addPerParticleParameter('y0')
-                restraint.addPerParticleParameter('z0')
-
+                # True H-only relaxation: zero-mass all non-H atoms so the
+                # minimizer keeps the experimental heavy-atom scaffold fixed
+                # while hydrogens respond to bonded and nonbonded terms.
                 for atom in modeller.topology.atoms():
-                    if atom.element is not None and atom.element.symbol != 'H':
-                        pos = pre_min_positions[atom.index]
-                        restraint.addParticle(
-                            atom.index,
-                            [pos.x, pos.y, pos.z],
-                        )
-                system.addForce(restraint)
-
-                # ── NonbondedForce removal (77× speedup) ────────────────────
-                # H-only minimisation only needs bonded terms to relax H
-                # positions.  Nonbonded evaluation dominates runtime (353 s
-                # vs 4.6 s for 7566 atoms / 100 steps) and is unnecessary
-                # here — heavy-atom restraints keep the backbone in place.
-                for _i in range(system.getNumForces() - 1, -1, -1):
-                    if isinstance(system.getForce(_i), NonbondedForce):
-                        system.removeForce(_i)
+                    is_h = atom.element is not None and atom.element.symbol == 'H'
+                    if not is_h:
+                        system.setParticleMass(atom.index, 0.0 * unit.dalton)
 
                 integrator = LangevinMiddleIntegrator(
                     300 * unit.kelvin,
                     1 / unit.picosecond,
                     0.002 * unit.picoseconds,
                 )
-                simulation = Simulation(modeller.topology, system, integrator)
+                cpu_platform = Platform.getPlatformByName('CPU')
+                simulation = Simulation(
+                    modeller.topology, system, integrator,
+                    cpu_platform, {'Threads': '1'},
+                )
                 simulation.context.setPositions(pre_min_positions)
                 simulation.minimizeEnergy(maxIterations=min_max_iter)
 
                 state = simulation.context.getState(getPositions=True)
                 final_positions = state.getPositions()
+                max_heavy_shift_nm = 0.0
+                for atom in modeller.topology.atoms():
+                    is_h = atom.element is not None and atom.element.symbol == 'H'
+                    if is_h:
+                        continue
+                    p0 = pre_min_positions[atom.index]
+                    p1 = final_positions[atom.index]
+                    dx = p1.x - p0.x
+                    dy = p1.y - p0.y
+                    dz = p1.z - p0.z
+                    max_heavy_shift_nm = max(
+                        max_heavy_shift_nm,
+                        (dx * dx + dy * dy + dz * dz) ** 0.5,
+                    )
+                if max_heavy_shift_nm > 1e-5:
+                    drift_warn = (
+                        'H-minimization moved fixed heavy atoms '
+                        f'(max shift {max_heavy_shift_nm:.3g} nm); '
+                        'using unrelaxed H positions.'
+                    )
+                    propka_warn = (
+                        f'{propka_warn}; {drift_warn}' if propka_warn else drift_warn
+                    )
+                    final_positions = pre_min_positions
 
             except Exception as min_err:
                 # Fallback: use addHydrogens positions (unrelaxed but valid)
@@ -509,7 +658,7 @@ def preprocess_receptor(
         write_positions = final_positions
         for fallback_name, fallback_pos in [
             ('final_positions',        final_positions),
-            ('pre_min_positions',      pre_min_positions if hydrogens_added else None),
+            ('pre_min_positions',      pre_min_positions),
             ('modeller.positions',     modeller.positions),
         ]:
             if fallback_pos is None:
@@ -544,10 +693,36 @@ def preprocess_receptor(
 
     except Exception as e:
         return False, f'{pdb_id}: error: {e}\n{traceback.format_exc()}', propka_warn
+    finally:
+        # Ensure temp model1.cif is deleted even on exception
+        if _stripped_cif is not None:
+            try:
+                _stripped_cif.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     n_atoms    = modeller.topology.getNumAtoms()
     n_chains   = modeller.topology.getNumChains()
     propka_tag = f'PropKa({len(pka_lookup)} sites)' if pka_lookup else 'PropKa=skip'
+
+    # ── Explicit cleanup of large C++ objects ─────────────────────────────
+    # Delete OpenMM-owned objects so their C++ destructors release GPU/heap
+    # memory before the next iteration.  This is supplementary to worker
+    # recycling (--max_per_worker), which is the primary OOM defence.
+    del fixer, modeller
+    try:
+        del simulation
+    except NameError:
+        pass
+    try:
+        del system
+    except NameError:
+        pass
+    try:
+        del integrator
+    except NameError:
+        pass
+
     return True, (
         f'{pdb_id}: OK  ({n_chains} chains, {n_atoms} atoms, {propka_tag})'
     ), propka_warn
@@ -566,10 +741,27 @@ def _worker_entry(
     worker_id    : int,
     failure_tsv  : Path,
 ) -> None:
+    # Initialise OpenMM Platform in this child process (AFTER fork).
+    _limit_openmm_threads()
+
+    # Lazy import (fork-safe: OpenMM libs loaded only in worker)
+    from openmm.app import ForceField
+
     total    = len(pdb_ids)
     failures : List[Tuple[str, str]] = []
 
     propka_failures: List[Tuple[str, str]] = []
+
+    # Clear stale failure TSV from previous runs
+    try:
+        failure_tsv.unlink(missing_ok=True)
+    except OSError:
+        pass
+    _pk_tsv = failure_tsv.parent / failure_tsv.name.replace('failures_', 'propka_failures_')
+    try:
+        _pk_tsv.unlink(missing_ok=True)
+    except OSError:
+        pass
 
     # Build ForceField once per worker — loading AMBER14 XML is expensive
     ff = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml') \
@@ -586,6 +778,8 @@ def _worker_entry(
             failures.append((pdb_id, msg))
         if propka_warn is not None:
             propka_failures.append((pdb_id, propka_warn))
+        # Force cyclic GC collection to free C++ extension cycles
+        import gc as _gc; _gc.collect()
 
     def _write_tsv(path: Path, rows: List[Tuple[str, str]], header: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -623,10 +817,15 @@ def main() -> int:
                         help='Target pH for protonation (default: 7.0)')
     parser.add_argument('--workers', type=int, default=8,
                         help='Parallel worker processes (default: 8)')
-    parser.add_argument('--min_max_iter', type=int, default=100,
+    parser.add_argument('--max_per_worker', type=int, default=None,
+                        help='Max structures each worker processes before '
+                             'exiting; enables wave-based dispatch for worker '
+                             'recycling (OS reclaims process heap). '
+                             'Example: --workers 16 --max_per_worker 50 '
+                             '→ 16 workers restart every 50 structures.')
+    parser.add_argument('--min_max_iter', type=int, default=20,
                         help='Max iterations for H-only energy minimization '
-                             '(default: 100; H start from addHydrogens so '
-                             'convergence is fast)')
+                             '(default: 20; set 0 to skip)')
     parser.add_argument('--pdbid_list_file', default=None,
                         help='Text file of pdb_ids to process (one per line); '
                              'default: auto-discover from shared_receptors/')
@@ -688,6 +887,8 @@ def main() -> int:
     print(f'PropKa available : {PROPKA_AVAILABLE}')
     print(f'H-min iterations : {args.min_max_iter}')
     print(f'Model loops      : {args.add_residues}')
+    if args.workers > 1 and args.max_per_worker:
+        print(f'Max per worker   : {args.max_per_worker} (wave recycling on)')
 
     if total == 0:
         print('Nothing to do.')
@@ -700,10 +901,14 @@ def main() -> int:
 
     # ── single-worker shortcut ─────────────────────────────────────────────
     if args.workers <= 1:
+        _limit_openmm_threads()
+
         failures        : List[Tuple[str, str]] = []
         propka_failures : List[Tuple[str, str]] = []
 
         # Build ForceField once for all structures
+        from openmm.app import ForceField
+        import gc as _gc
         ff_single = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
 
         for idx, pdb_id in enumerate(pdb_ids, 1):
@@ -715,6 +920,7 @@ def main() -> int:
                 failures.append((pdb_id, msg))
             if propka_warn is not None:
                 propka_failures.append((pdb_id, propka_warn))
+            _gc.collect()
 
         def _write_tsv(path: Path, rows: List[Tuple[str, str]], header: str) -> None:
             with open(path, 'w') as f:
@@ -736,33 +942,59 @@ def main() -> int:
         print(f'\nDone. {total}/{total} receptors processed.')
         return 0
 
-    # ── multi-worker: round-robin split ───────────────────────────────────
+    # ── multi-worker dispatch ──────────────────────────────────────────
     n_workers = min(args.workers, total)
-    splits    = [[] for _ in range(n_workers)]
-    for i, pid in enumerate(pdb_ids):
-        splits[i % n_workers].append(pid)
+    ctx = mp.get_context('fork')
 
-    ctx   = mp.get_context('spawn')
-    procs = []
-    for wid, chunk in enumerate(splits):
-        if not chunk:
-            continue
-        p = ctx.Process(
-            target=_worker_entry,
-            args=(
-                chunk, biolip_root, output_root,
-                args.ph, args.overwrite, args.add_residues, args.min_max_iter,
-                wid, output_root / f'failures_w{wid}.tsv',
-            ),
-        )
-        p.start()
-        procs.append(p)
+    max_per = args.max_per_worker
+    if max_per is None:
+        # Single wave: split all work across workers (original behaviour)
+        waves = [pdb_ids]
+    else:
+        # Wave-based: each worker processes ≤ max_per_worker structures,
+        # then exits so the OS reclaims its entire process heap.
+        # This is the primary OOM defence — worker recycling.
+        wave_size = n_workers * max_per
+        waves = [
+            pdb_ids[i:i + wave_size]
+            for i in range(0, total, wave_size)
+        ]
+        print(f'Waves            : {len(waves)}')
 
     rc = 0
-    for p in procs:
-        p.join()
-        if p.exitcode != 0:
-            rc = 1
+    for wave_num, wave_chunk in enumerate(waves):
+        n_active = min(n_workers, len(wave_chunk))
+        splits = [[] for _ in range(n_active)]
+        for i, pid in enumerate(wave_chunk):
+            splits[i % n_active].append(pid)
+
+        if len(waves) > 1:
+            print(f'\n── Wave {wave_num + 1}/{len(waves)} '
+                  f'({len(wave_chunk)} structures, {n_active} workers) ──')
+
+        procs = []
+        for wid, chunk in enumerate(splits):
+            if len(waves) > 1:
+                fail_tsv = output_root / f'failures_w{wave_num}_w{wid}.tsv'
+            else:
+                fail_tsv = output_root / f'failures_w{wid}.tsv'
+            p = ctx.Process(
+                target=_worker_entry,
+                args=(
+                    chunk, biolip_root, output_root,
+                    args.ph, args.overwrite, args.add_residues,
+                    args.min_max_iter,
+                    wid, fail_tsv,
+                ),
+            )
+            p.start()
+            procs.append(p)
+
+        for p in procs:
+            p.join()
+            if p.exitcode != 0:
+                rc = 1
+
     return rc
 
 
