@@ -828,13 +828,14 @@ def _worker_entry(
 #                  Returns a (success, msg, propka_warn) tuple to the main
 #                  process via imap_unordered.
 
-_POOL_BIOLIP_ROOT : Optional[Path] = None
-_POOL_OUTPUT_ROOT : Optional[Path] = None
-_POOL_PH          : float          = 7.0
-_POOL_OVERWRITE   : bool           = False
-_POOL_ADD_RESIDUES: bool           = False
-_POOL_MIN_MAX_ITER: int            = 20
-_POOL_FF          : 'Optional[ForceField]' = None   # type: ignore[name-defined]
+_POOL_BIOLIP_ROOT   : Optional[Path] = None
+_POOL_OUTPUT_ROOT   : Optional[Path] = None
+_POOL_PH            : float          = 7.0
+_POOL_OVERWRITE     : bool           = False
+_POOL_ADD_RESIDUES  : bool           = False
+_POOL_MIN_MAX_ITER  : int            = 20
+_POOL_FF            : 'Optional[ForceField]' = None   # type: ignore[name-defined]
+_POOL_TASK_TIMEOUT  : int            = 99999  # seconds; 0 = unlimited
 
 
 def _pool_init(
@@ -844,6 +845,7 @@ def _pool_init(
     overwrite    : bool,
     add_residues : bool,
     min_max_iter : int,
+    task_timeout : int = 1800,
 ) -> None:
     """
     Pool initializer — called once in each worker process after fork.
@@ -854,9 +856,11 @@ def _pool_init(
     3. Stores all other shared parameters as process-level globals so
        _process_one() needs only the pdb_id argument (Pool tasks must be
        picklable; ForceField is not, so we cannot pass it as an argument).
+    4. Stores per-structure timeout (SIGALRM-based, Linux only).
     """
     global _POOL_BIOLIP_ROOT, _POOL_OUTPUT_ROOT, _POOL_PH
     global _POOL_OVERWRITE, _POOL_ADD_RESIDUES, _POOL_MIN_MAX_ITER, _POOL_FF
+    global _POOL_TASK_TIMEOUT
 
     _limit_openmm_threads()   # hide GPUs, set CPU Threads=1
 
@@ -866,6 +870,7 @@ def _pool_init(
     _POOL_OVERWRITE    = overwrite
     _POOL_ADD_RESIDUES = add_residues
     _POOL_MIN_MAX_ITER = min_max_iter
+    _POOL_TASK_TIMEOUT = task_timeout
 
     if OPENMM_AVAILABLE:
         from openmm.app import ForceField as _FF
@@ -877,20 +882,45 @@ def _process_one(pdb_id: str) -> Tuple[bool, str, Optional[str]]:
     Pool task function — processes one pdb_id and returns (ok, msg, propka_warn).
 
     Reads all shared state from process globals set by _pool_init().
+    Uses SIGALRM to enforce a per-structure wall-clock timeout (Linux only).
     Runs GC after each structure to free C++ extension cycles.
+
+    Note on SIGALRM: the alarm fires when Python next gets control from a
+    C extension (e.g. between OpenMM minimisation steps).  It may not
+    interrupt a tight C loop immediately, but it will eventually deliver.
+    For a guaranteed kill, combine with --task_timeout and monitor workers
+    from outside (e.g. SLURM wall-time limit).
     """
     import gc as _gc
-    result = preprocess_receptor(
-        pdb_id,
-        _POOL_BIOLIP_ROOT,
-        _POOL_OUTPUT_ROOT,
-        ph=_POOL_PH,
-        overwrite=_POOL_OVERWRITE,
-        add_residues=_POOL_ADD_RESIDUES,
-        min_max_iter=_POOL_MIN_MAX_ITER,
-        forcefield=_POOL_FF,
-    )
-    _gc.collect()
+    import signal as _signal
+
+    def _alarm_handler(signum, frame):
+        raise TimeoutError(f'exceeded {_POOL_TASK_TIMEOUT}s per-structure timeout')
+
+    if _POOL_TASK_TIMEOUT > 0:
+        _signal.signal(_signal.SIGALRM, _alarm_handler)
+        _signal.alarm(_POOL_TASK_TIMEOUT)
+
+    try:
+        result = preprocess_receptor(
+            pdb_id,
+            _POOL_BIOLIP_ROOT,
+            _POOL_OUTPUT_ROOT,
+            ph=_POOL_PH,
+            overwrite=_POOL_OVERWRITE,
+            add_residues=_POOL_ADD_RESIDUES,
+            min_max_iter=_POOL_MIN_MAX_ITER,
+            forcefield=_POOL_FF,
+        )
+    except TimeoutError as _te:
+        result = (False, f'{pdb_id}: TIMEOUT (>{_POOL_TASK_TIMEOUT}s)', None)
+    except Exception as _exc:
+        result = (False, f'{pdb_id}: {type(_exc).__name__}: {str(_exc)[:150]}', None)
+    finally:
+        if _POOL_TASK_TIMEOUT > 0:
+            _signal.alarm(0)   # cancel pending alarm
+        _gc.collect()
+
     return result
 
 
@@ -931,6 +961,11 @@ def main() -> int:
                         help='Model missing loop residues via PDBFixer '
                              '(coordinates are modelled, not experimental; '
                              'off by default)')
+    parser.add_argument('--task_timeout', type=int, default=99999,
+                        help='Per-structure wall-clock timeout in seconds '
+                             '(SIGALRM, Linux only; 0 = unlimited; default: 99999). '
+                             'Heartbeat line prints every 2 min if no result arrives. '
+                             'Reduce for giant ribosome structures that block indefinitely.')
     args = parser.parse_args()
 
     if not OPENMM_AVAILABLE:
@@ -1048,11 +1083,16 @@ def main() -> int:
     #   - imap_unordered() streams results back as they complete, so the
     #     main process can print progress without waiting for an entire wave.
 
-    n_workers = min(args.workers, total)
-    max_per   = args.max_per_worker   # None → no recycling limit
+    n_workers    = min(args.workers, total)
+    max_per      = args.max_per_worker   # None → no recycling limit
+    task_timeout = args.task_timeout     # 0 = unlimited
 
     if max_per is not None:
         print(f'Max per worker   : {max_per} (Pool maxtasksperchild)')
+    if task_timeout > 0:
+        print(f'Per-structure timeout: {task_timeout}s (SIGALRM)')
+    else:
+        print('Per-structure timeout: unlimited')
 
     ctx     = mp.get_context('fork')
     pool_kw : dict = dict(
@@ -1061,6 +1101,7 @@ def main() -> int:
         initargs    = (
             biolip_root, output_root,
             args.ph, args.overwrite, args.add_residues, args.min_max_iter,
+            task_timeout,
         ),
     )
     if max_per is not None:
@@ -1070,18 +1111,57 @@ def main() -> int:
     propka_failures : List[Tuple[str, str]] = []
     rc = 0
 
-    with ctx.Pool(**pool_kw) as pool:
-        for done, (ok, msg, propka_warn) in enumerate(
-            pool.imap_unordered(_process_one, pdb_ids, chunksize=1), 1
-        ):
-            print(f'[{done}/{total}] {msg}', flush=True)
-            if not ok:
-                # pdb_id is the first colon-delimited token in msg
-                failures.append((msg.split(':')[0].strip(), msg))
-                rc = 1
-            if propka_warn is not None:
-                pdb_id_key = msg.split(':')[0].strip()
-                propka_failures.append((pdb_id_key, propka_warn))
+    # ── heartbeat thread: prints a "still alive" line if no result arrives
+    #    within _HEARTBEAT_SECS.  This makes it obvious that workers are
+    #    stuck on a giant structure rather than silently crashed.
+    import threading as _threading
+    import time as _time
+
+    _HEARTBEAT_SECS    = 120   # print heartbeat if quiet for ≥ 2 min
+    _last_result_ts    = [_time.monotonic()]
+    _heartbeat_stop    = [False]
+
+    def _heartbeat():
+        while not _heartbeat_stop[0]:
+            _time.sleep(10)
+            elapsed = _time.monotonic() - _last_result_ts[0]
+            if elapsed >= _HEARTBEAT_SECS:
+                print(
+                    f'    ... still working  (no result for {elapsed:.0f}s, '
+                    f'{n_workers} workers active)',
+                    flush=True,
+                )
+
+    hb_thread = _threading.Thread(target=_heartbeat, daemon=True)
+    hb_thread.start()
+
+    from multiprocessing.pool import WorkerLostError
+
+    try:
+        with ctx.Pool(**pool_kw) as pool:
+            for done, (ok, msg, propka_warn) in enumerate(
+                pool.imap_unordered(_process_one, pdb_ids, chunksize=1), 1
+            ):
+                _last_result_ts[0] = _time.monotonic()
+                print(f'[{done}/{total}] {msg}', flush=True)
+                if not ok:
+                    # pdb_id is the first colon-delimited token in msg
+                    failures.append((msg.split(':')[0].strip(), msg))
+                    rc = 1
+                if propka_warn is not None:
+                    pdb_id_key = msg.split(':')[0].strip()
+                    propka_failures.append((pdb_id_key, propka_warn))
+    except WorkerLostError as _wle:
+        print(
+            f'\nWARNING: a worker process died unexpectedly (OOM or SIGKILL):\n'
+            f'  {_wle}\n'
+            f'  Some structures near the point of failure may not have been\n'
+            f'  processed. Re-run without --overwrite to pick them up.',
+            flush=True,
+        )
+        rc = 1
+    finally:
+        _heartbeat_stop[0] = True
 
     def _write_tsv(path: Path, rows: List[Tuple[str, str]], header: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
