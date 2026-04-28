@@ -146,6 +146,7 @@ def extract_pair(
     output_root: Path,
     overwrite  : bool = False,
     num_conformers: int = 50,
+    rdkit_threads: int = 1,
 ) -> Tuple[bool, str]:
     stem     = _output_stem(pair)
     out_path = _output_path(pair, output_root)
@@ -176,6 +177,7 @@ def extract_pair(
             num_conformers=num_conformers,
             strict=False,   # don't crash on unusual ligands
             verbose=False,
+            num_threads=rdkit_threads,
         )
     except Exception as e:
         return False, f'{stem}: feature extraction failed: {e}\n{traceback.format_exc()[:400]}'
@@ -242,39 +244,11 @@ def extract_pair(
     return True, f'{stem}: OK  ({n_atoms} heavy atoms, {dim}D)'
 
 
-# ── worker ────────────────────────────────────────────────────────────────────
+# ── pool worker (top-level for pickle) ───────────────────────────────────────
 
-def _worker_entry(
-    pairs        : List[dict],
-    output_root  : Path,
-    overwrite    : bool,
-    num_conformers: int,
-    worker_id    : int,
-    failure_tsv  : Path,
-) -> None:
-    total    = len(pairs)
-    failures : List[Tuple[str, str]] = []
-
-    bar = _tqdm(pairs, total=total, desc=f'W{worker_id}', position=worker_id,
-                leave=True, dynamic_ncols=True) if TQDM_OK else pairs
-    for idx, pair in enumerate(bar, 1):
-        ok, msg = extract_pair(pair, output_root, overwrite, num_conformers)
-        if TQDM_OK:
-            bar.set_postfix_str(msg[-60:])
-        else:
-            print(f'[W{worker_id} {idx}/{total}] {msg}', flush=True)
-        if not ok:
-            failures.append((_output_stem(pair), msg))
-
-    if failures:
-        failure_tsv.parent.mkdir(parents=True, exist_ok=True)
-        with open(failure_tsv, 'w') as f:
-            f.write('pair_id\terror\n')
-            for pid, err in failures:
-                f.write(f'{pid}\t{err.replace(chr(9)," ").replace(chr(10)," ")}\n')
-        print(f'[W{worker_id}] {len(failures)} failures → {failure_tsv}')
-
-    raise SystemExit(1 if failures else 0)
+def _pool_task(args: tuple) -> Tuple[bool, str]:
+    pair, output_root, overwrite, num_conformers, rdkit_threads = args
+    return extract_pair(pair, output_root, overwrite, num_conformers, rdkit_threads)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -290,6 +264,8 @@ def main() -> int:
     parser.add_argument('--workers', type=int, default=8)
     parser.add_argument('--num_conformers', type=int, default=50,
                         help='Conformers for RMSF/flexibility (0 = skip, default 50)')
+    parser.add_argument('--rdkit-threads', type=int, default=1,
+                        help='RDKit threads per task (default 1; avoid CPU oversubscription)')
     parser.add_argument('--max', type=int, default=None,
                         help='Limit to first N pairs (for testing)')
     parser.add_argument('--overwrite', action='store_true')
@@ -336,13 +312,14 @@ def main() -> int:
     print(f'Output root  : {output_root}')
     print(f'Workers      : {args.workers}')
     print(f'Conformers   : {args.num_conformers}')
+    print(f'RDKit thr/task: {args.rdkit_threads}')
 
     if total == 0:
         print('Nothing to do.')
         return 0
 
     kw = dict(output_root=output_root, overwrite=args.overwrite,
-               num_conformers=args.num_conformers)
+               num_conformers=args.num_conformers, rdkit_threads=args.rdkit_threads)
 
     # single-worker shortcut
     if args.workers <= 1:
@@ -368,31 +345,37 @@ def main() -> int:
         print(f'\nDone. {total}/{total} pairs processed.')
         return 0
 
-    # multi-worker round-robin
+    # multi-worker pool (dynamic load balancing)
     n_workers = min(args.workers, total)
-    splits    = [[] for _ in range(n_workers)]
-    for i, p in enumerate(pairs):
-        splits[i % n_workers].append(p)
+    tasks = [(p, output_root, args.overwrite, args.num_conformers, args.rdkit_threads) for p in pairs]
 
-    ctx   = mp.get_context('fork')
-    procs = []
-    for wid, chunk in enumerate(splits):
-        if not chunk:
-            continue
-        p = ctx.Process(
-            target=_worker_entry,
-            args=(chunk, output_root, args.overwrite, args.num_conformers,
-                  wid, output_root / f'failures_w{wid}.tsv'),
-        )
-        p.start()
-        procs.append(p)
+    ctx = mp.get_context('fork')
+    failures: List[Tuple[str, str]] = []
+    ok_count = 0
 
-    rc = 0
-    for p in procs:
-        p.join()
-        if p.exitcode != 0:
-            rc = 1
-    return rc
+    with ctx.Pool(processes=n_workers) as pool:
+        itr = pool.imap_unordered(_pool_task, tasks, chunksize=4)
+        bar = _tqdm(itr, total=total, desc='extract', dynamic_ncols=True) if TQDM_OK else itr
+        for ok, msg in bar:
+            if ok:
+                ok_count += 1
+            else:
+                failures.append(msg)
+            if TQDM_OK:
+                bar.set_postfix(ok=ok_count, fail=len(failures))
+            else:
+                print(msg, flush=True)
+
+    if failures:
+        fail_path = output_root / 'failures.tsv'
+        with open(fail_path, 'w') as f:
+            f.write('pair_id\terror\n')
+            for err in failures:
+                f.write(f'{err.replace(chr(9)," ").replace(chr(10)," ")}\n')
+        print(f'{len(failures)} failures → {fail_path}')
+        return 1
+    print(f'\nDone. {ok_count}/{total} pairs processed.')
+    return 0
 
 
 if __name__ == '__main__':
