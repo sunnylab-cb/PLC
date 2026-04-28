@@ -51,6 +51,7 @@ import multiprocessing as mp
 import os
 import pickle
 import shutil
+import signal
 import sys
 import traceback
 import uuid
@@ -139,6 +140,23 @@ def _output_path(pair: dict, output_root: Path) -> Path:
     return output_root / pair['pdb_id'] / f"{_output_stem(pair)}.pt"
 
 
+class _Timeout:
+    def __init__(self, seconds: int):
+        self.seconds = max(0, int(seconds))
+
+    def __enter__(self):
+        if self.seconds > 0:
+            def _handler(signum, frame):
+                raise TimeoutError(f'timeout after {self.seconds}s')
+            signal.signal(signal.SIGALRM, _handler)
+            signal.alarm(self.seconds)
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.seconds > 0:
+            signal.alarm(0)
+        return False
+
+
 # ── single-pair extraction ────────────────────────────────────────────────────
 
 def extract_pair(
@@ -147,6 +165,8 @@ def extract_pair(
     overwrite  : bool = False,
     num_conformers: int = 50,
     rdkit_threads: int = 1,
+    per_pair_timeout: int = 0,
+    fallback_no_conformers: bool = True,
 ) -> Tuple[bool, str]:
     stem     = _output_stem(pair)
     out_path = _output_path(pair, output_root)
@@ -171,16 +191,32 @@ def extract_pair(
             return False, f'{stem}: {ori_sdf_name} not found'
 
     try:
-        features = extract_ligand_features_v5(
-            str(ori_sdf),
-            include_conformers=(num_conformers > 0),
-            num_conformers=num_conformers,
-            strict=False,   # don't crash on unusual ligands
-            verbose=False,
-            num_threads=rdkit_threads,
-        )
+        with _Timeout(per_pair_timeout):
+            features = extract_ligand_features_v5(
+                str(ori_sdf),
+                include_conformers=(num_conformers > 0),
+                num_conformers=num_conformers,
+                strict=False,   # don't crash on unusual ligands
+                verbose=False,
+                num_threads=rdkit_threads,
+            )
     except Exception as e:
-        return False, f'{stem}: feature extraction failed: {e}\n{traceback.format_exc()[:400]}'
+        if fallback_no_conformers and num_conformers > 0:
+            try:
+                features = extract_ligand_features_v5(
+                    str(ori_sdf),
+                    include_conformers=False,
+                    num_conformers=0,
+                    strict=False,
+                    verbose=False,
+                    num_threads=rdkit_threads,
+                )
+            except Exception as e2:
+                return False, f'{stem}: feature extraction failed: {e2}\n{traceback.format_exc()[:400]}'
+            else:
+                fallback_tag = ' (fallback:no_conformers)'
+        else:
+            return False, f'{stem}: feature extraction failed: {e}\n{traceback.format_exc()[:400]}'
 
     # Build output dict
     data: dict = {
@@ -241,14 +277,23 @@ def extract_pair(
 
     n_atoms = features['num_heavy_atoms']
     dim     = features['feature_dim_total']
-    return True, f'{stem}: OK  ({n_atoms} heavy atoms, {dim}D)'
+    tag = locals().get('fallback_tag', '')
+    return True, f'{stem}: OK  ({n_atoms} heavy atoms, {dim}D){tag}'
 
 
 # ── pool worker (top-level for pickle) ───────────────────────────────────────
 
 def _pool_task(args: tuple) -> Tuple[bool, str]:
-    pair, output_root, overwrite, num_conformers, rdkit_threads = args
-    return extract_pair(pair, output_root, overwrite, num_conformers, rdkit_threads)
+    pair, output_root, overwrite, num_conformers, rdkit_threads, per_pair_timeout, fallback_no_conformers = args
+    return extract_pair(
+        pair,
+        output_root,
+        overwrite,
+        num_conformers,
+        rdkit_threads,
+        per_pair_timeout,
+        fallback_no_conformers,
+    )
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -266,6 +311,10 @@ def main() -> int:
                         help='Conformers for RMSF/flexibility (0 = skip, default 50)')
     parser.add_argument('--rdkit-threads', type=int, default=1,
                         help='RDKit threads per task (default 1; avoid CPU oversubscription)')
+    parser.add_argument('--per-pair-timeout', type=int, default=0,
+                        help='Per-pair timeout in seconds (0 = disable)')
+    parser.add_argument('--no-fallback-no-conformers', action='store_true',
+                        help='Disable fallback to num_conformers=0 when conformer path fails/timeouts')
     parser.add_argument('--max', type=int, default=None,
                         help='Limit to first N pairs (for testing)')
     parser.add_argument('--overwrite', action='store_true')
@@ -320,13 +369,21 @@ def main() -> int:
     print(f'Workers      : {args.workers}')
     print(f'Conformers   : {args.num_conformers}')
     print(f'RDKit thr/task: {args.rdkit_threads}')
+    print(f'Pair timeout : {args.per_pair_timeout}s (0=off)')
+    print(f'Fallback     : {not args.no_fallback_no_conformers}')
 
     if total == 0:
         print('Nothing to do.')
         return 0
 
-    kw = dict(output_root=output_root, overwrite=args.overwrite,
-               num_conformers=args.num_conformers, rdkit_threads=args.rdkit_threads)
+    kw = dict(
+        output_root=output_root,
+        overwrite=args.overwrite,
+        num_conformers=args.num_conformers,
+        rdkit_threads=args.rdkit_threads,
+        per_pair_timeout=args.per_pair_timeout,
+        fallback_no_conformers=(not args.no_fallback_no_conformers),
+    )
 
     # single-worker shortcut
     if args.workers <= 1:
@@ -354,7 +411,18 @@ def main() -> int:
 
     # multi-worker pool (dynamic load balancing)
     n_workers = min(args.workers, total)
-    tasks = [(p, output_root, args.overwrite, args.num_conformers, args.rdkit_threads) for p in pairs]
+    tasks = [
+        (
+            p,
+            output_root,
+            args.overwrite,
+            args.num_conformers,
+            args.rdkit_threads,
+            args.per_pair_timeout,
+            (not args.no_fallback_no_conformers),
+        )
+        for p in pairs
+    ]
 
     ctx = mp.get_context('fork')
     failures: List[Tuple[str, str]] = []
