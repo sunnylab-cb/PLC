@@ -4,8 +4,16 @@
 BioLip ESM2 per-residue embedding extractor.
 
 Unlike the PDBBind version (which reads PDB via ProteinChain.from_pdb),
-this script reads observed residues directly from receptor_full.cif using
-gemmi, then runs ESM2 on the observed amino-acid sequence.
+this script reads observed residues from a CIF file using gemmi, then runs
+ESM2 on the observed amino-acid sequence.
+
+CIF source priority
+───────────────────
+1. ``--fixed_root/{pdb_id}/receptor_fixed.cif``  (protonated+minimised)
+2. ``--biolip_root/shared_receptors/{pdb_id}/receptor_full.cif``  (original)
+
+If --fixed_root is omitted, only the original receptor_full.cif is used.
+The ``cif_source`` field in the saved .pt records which file was used.
 
 Residue alignment contract
 ──────────────────────────
@@ -25,11 +33,12 @@ python biolip_esm2_extract.py \
     --output      /home/husrcf/Code/ProtBind/BioLip/DOCs/esm2_biolip \
     --device cuda:0
 
-# multi-GPU  (each process owns one GPU)
+# multi-GPU with fixed_receptors (preferred) + shared_receptors fallback
 python biolip_esm2_extract.py \
-    --biolip_root /home/husrcf/Code/ProtBind/BioLip \
-    --output      /home/husrcf/Code/ProtBind/BioLip/DOCs/esm2_biolip \
-    --devices 0,1,2,3
+    --biolip_root  /home/husrcf/Code/ProtBind/BioLip \
+    --fixed_root   /home/husrcf/Code/ProtBind/BioLip/fixed_receptors \
+    --output       /home/husrcf/Code/ProtBind/BioLip/esm2_features \
+    --devices 0,1,cpu --cpu_threads 64
 
 # subset only
 python biolip_esm2_extract.py ... --bundle_list_file missing.txt
@@ -249,6 +258,7 @@ def extract_bundle(
     alphabet,
     overwrite   : bool = False,
     smoke_test  : bool = False,
+    fixed_root  : Optional[Path] = None,
 ) -> Tuple[bool, str]:
     """
     Extract ESM2 embeddings for one bundle.
@@ -279,7 +289,7 @@ def extract_bundle(
     if not pdb_id or not protein_chain:
         return False, f'{bundle_name}: missing pdb_id or protein_chain in meta'
 
-    # ── validate pdb_id from metadata stays within shared_receptors/ ──────
+    # ── validate pdb_id from metadata stays within allowed roots ──────────
     # A malformed protein_meta.json could point at an arbitrary path and cause
     # embeddings to be computed for the wrong structure (silent data corruption).
     receptors_root    = (biolip_root / 'shared_receptors').resolve()
@@ -289,11 +299,34 @@ def extract_bundle(
             f'{bundle_name}: pdb_id {pdb_id!r} from metadata resolves to '
             f'{candidate_cif_dir}, which escapes shared_receptors root'
         )
+    if fixed_root is not None:
+        fixed_root_res    = fixed_root.resolve()
+        candidate_fixed   = (fixed_root_res / pdb_id).resolve()
+        if not str(candidate_fixed).startswith(str(fixed_root_res) + os.sep):
+            return False, (
+                f'{bundle_name}: pdb_id {pdb_id!r} from metadata resolves to '
+                f'{candidate_fixed}, which escapes fixed_root'
+            )
 
-    # ── locate CIF ────────────────────────────────────────────────────────
-    cif_path = biolip_root / 'shared_receptors' / pdb_id / 'receptor_full.cif'
-    if not cif_path.exists():
-        return False, f'{bundle_name}: receptor_full.cif not found at {cif_path}'
+    # ── locate CIF: fixed_receptors preferred, shared_receptors fallback ──
+    cif_path   : Optional[Path] = None
+    cif_source : str            = 'unknown'
+    if fixed_root is not None:
+        candidate = fixed_root / pdb_id / 'receptor_fixed.cif'
+        if candidate.exists():
+            cif_path   = candidate
+            cif_source = 'fixed'
+    if cif_path is None:
+        candidate = biolip_root / 'shared_receptors' / pdb_id / 'receptor_full.cif'
+        if candidate.exists():
+            cif_path   = candidate
+            cif_source = 'full'
+    if cif_path is None:
+        tried = []
+        if fixed_root is not None:
+            tried.append(str(fixed_root / pdb_id / 'receptor_fixed.cif'))
+        tried.append(str(biolip_root / 'shared_receptors' / pdb_id / 'receptor_full.cif'))
+        return False, f'{bundle_name}: no CIF found (tried: {", ".join(tried)})'
 
     # ── parse CIF → residue table ─────────────────────────────────────────
     try:
@@ -309,7 +342,8 @@ def extract_bundle(
     # ── smoke-test: print residue table ───────────────────────────────────
     if smoke_test:
         print(f'\n  [{bundle_name}] {pdb_id} chain={protein_chain}  '
-              f'observed={n_obs}  seq={sequence[:40]}{"…" if n_obs>40 else ""}')
+              f'observed={n_obs}  src={cif_source}  '
+              f'seq={sequence[:40]}{"…" if n_obs>40 else ""}')
         # show first 5 residues with insertion codes highlighted
         has_icode = any(c for c in ins_codes)
         if has_icode:
@@ -351,6 +385,7 @@ def extract_bundle(
         'bundle_name'    : bundle_name,
         'pdb_id'         : pdb_id,
         'protein_chain'  : protein_chain,
+        'cif_source'     : cif_source,      # 'fixed' | 'full'
     }
     try:
         torch.save(result, tmp_path)
@@ -362,7 +397,7 @@ def extract_bundle(
         except OSError:
             pass
         return False, f'{bundle_name}: save error: {e}'
-    return True, f'{bundle_name}: OK  ({len(sequence)} res, emb={tuple(embeddings.shape)})'
+    return True, f'{bundle_name}: OK  ({len(sequence)} res, emb={tuple(embeddings.shape)}, src={cif_source})'
 
 
 # ── worker entry (runs inside subprocess for multi-GPU) ───────────────────────
@@ -377,6 +412,7 @@ def _worker_entry(
     smoke_test   : bool,
     failure_tsv  : Path,
     cpu_threads  : int = 0,
+    fixed_root   : Optional[Path] = None,
 ):
     device = _resolve_device(device_str)
     if device.type == 'cuda':
@@ -393,7 +429,7 @@ def _worker_entry(
     for idx, bundle_name in enumerate(bundle_names, 1):
         ok, msg = extract_bundle(
             bundle_name, biolip_root, output_root,
-            model, alphabet, overwrite, smoke_test
+            model, alphabet, overwrite, smoke_test, fixed_root,
         )
         print(f'[{tag} {idx}/{total}] {msg}', flush=True)
         if not ok:
@@ -448,6 +484,13 @@ def main() -> int:
     )
     parser.add_argument('--biolip_root', required=True,
                         help='BioLip dataset root (contains data/ and shared_receptors/)')
+    parser.add_argument('--fixed_root', default=None,
+                        help=(
+                            'Directory of PDBFixer-processed receptors '
+                            '({fixed_root}/{pdb_id}/receptor_fixed.cif). '
+                            'When provided, receptor_fixed.cif is preferred; '
+                            'falls back to shared_receptors/receptor_full.cif.'
+                        ))
     parser.add_argument('--output', required=True,
                         help='Output directory for .pt files')
     parser.add_argument('--device', default='cuda',
@@ -472,7 +515,15 @@ def main() -> int:
 
     biolip_root = Path(args.biolip_root).resolve()
     output_root = Path(args.output).resolve()
+    fixed_root  = Path(args.fixed_root).resolve() if args.fixed_root else None
     output_root.mkdir(parents=True, exist_ok=True)
+
+    if fixed_root is not None:
+        if not fixed_root.is_dir():
+            print(f'WARNING: --fixed_root {fixed_root} does not exist; '
+                  f'will fall back to shared_receptors for all bundles.')
+        else:
+            print(f'fixed_root: {fixed_root}')
 
     if not ESM_AVAILABLE:
         print('ERROR: fair-esm not installed.  pip install fair-esm')
@@ -539,7 +590,7 @@ def main() -> int:
                 target=_worker_entry,
                 args=(chunk, biolip_root, output_root, dev,
                       args.overwrite, tag, args.smoke_test, failure_tsv,
-                      cpu_threads),
+                      cpu_threads, fixed_root),
             )
             p.start()
             procs.append(p)
@@ -570,7 +621,7 @@ def main() -> int:
     for idx, bundle_name in enumerate(bundle_names, 1):
         ok, msg = extract_bundle(
             bundle_name, biolip_root, output_root,
-            model, alphabet, args.overwrite, args.smoke_test
+            model, alphabet, args.overwrite, args.smoke_test, fixed_root,
         )
         print(f'[{idx}/{total}] {msg}', flush=True)
         if not ok:

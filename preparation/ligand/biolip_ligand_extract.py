@@ -307,6 +307,13 @@ def main() -> int:
     if args.max:
         pairs = pairs[:args.max]
 
+    import os as _os
+    n_workers_eff = max(1, args.workers)
+    if args.rdkit_threads == 0:
+        rdkit_threads = max(1, (_os.cpu_count() or 1) // n_workers_eff)
+    else:
+        rdkit_threads = max(1, args.rdkit_threads)
+
     total = len(pairs)
     print(f'Total pairs  : {total:,}')
     print(f'Output root  : {output_root}')
