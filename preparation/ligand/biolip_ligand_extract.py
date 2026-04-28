@@ -146,6 +146,7 @@ def extract_pair(
     output_root: Path,
     overwrite  : bool = False,
     num_conformers: int = 50,
+    rdkit_threads : int = 1,
 ) -> Tuple[bool, str]:
     stem     = _output_stem(pair)
     out_path = _output_path(pair, output_root)
@@ -176,6 +177,7 @@ def extract_pair(
             num_conformers=num_conformers,
             strict=False,   # don't crash on unusual ligands
             verbose=False,
+            num_threads=rdkit_threads,
         )
     except Exception as e:
         return False, f'{stem}: feature extraction failed: {e}\n{traceback.format_exc()[:400]}'
@@ -245,12 +247,13 @@ def extract_pair(
 # ── worker ────────────────────────────────────────────────────────────────────
 
 def _worker_entry(
-    pairs        : List[dict],
-    output_root  : Path,
-    overwrite    : bool,
+    pairs         : List[dict],
+    output_root   : Path,
+    overwrite     : bool,
     num_conformers: int,
-    worker_id    : int,
-    failure_tsv  : Path,
+    worker_id     : int,
+    failure_tsv   : Path,
+    rdkit_threads : int = 1,
 ) -> None:
     total    = len(pairs)
     failures : List[Tuple[str, str]] = []
@@ -258,7 +261,7 @@ def _worker_entry(
     bar = _tqdm(pairs, total=total, desc=f'W{worker_id}', position=worker_id,
                 leave=True, dynamic_ncols=True) if TQDM_OK else pairs
     for idx, pair in enumerate(bar, 1):
-        ok, msg = extract_pair(pair, output_root, overwrite, num_conformers)
+        ok, msg = extract_pair(pair, output_root, overwrite, num_conformers, rdkit_threads)
         if TQDM_OK:
             bar.set_postfix_str(msg[-60:])
         else:
@@ -290,6 +293,10 @@ def main() -> int:
     parser.add_argument('--workers', type=int, default=8)
     parser.add_argument('--num_conformers', type=int, default=50,
                         help='Conformers for RMSF/flexibility (0 = skip, default 50)')
+    parser.add_argument('--rdkit_threads', type=int, default=1,
+                        help='RDKit/OpenMP threads per worker. Default=1 (each worker uses one '
+                             'thread; rely on worker-level parallelism, not intra-worker threading). '
+                             'Set to 0 for auto (cpu_count // workers).')
     parser.add_argument('--max', type=int, default=None,
                         help='Limit to first N pairs (for testing)')
     parser.add_argument('--overwrite', action='store_true')
@@ -331,18 +338,27 @@ def main() -> int:
     if args.max:
         pairs = pairs[:args.max]
 
+    import os as _os
+    n_workers_eff = max(1, args.workers)
+    if args.rdkit_threads == 0:
+        rdkit_threads = max(1, (_os.cpu_count() or 1) // n_workers_eff)
+    else:
+        rdkit_threads = max(1, args.rdkit_threads)
+
     total = len(pairs)
     print(f'Total pairs  : {total:,}')
     print(f'Output root  : {output_root}')
     print(f'Workers      : {args.workers}')
     print(f'Conformers   : {args.num_conformers}')
+    print(f'RDKit threads: {rdkit_threads} per worker  '
+          f'(total={rdkit_threads * n_workers_eff}, cpu_count={_os.cpu_count()})')
 
     if total == 0:
         print('Nothing to do.')
         return 0
 
     kw = dict(output_root=output_root, overwrite=args.overwrite,
-               num_conformers=args.num_conformers)
+               num_conformers=args.num_conformers, rdkit_threads=rdkit_threads)
 
     # single-worker shortcut
     if args.workers <= 1:
@@ -382,7 +398,7 @@ def main() -> int:
         p = ctx.Process(
             target=_worker_entry,
             args=(chunk, output_root, args.overwrite, args.num_conformers,
-                  wid, output_root / f'failures_w{wid}.tsv'),
+                  wid, output_root / f'failures_w{wid}.tsv', rdkit_threads),
         )
         p.start()
         procs.append(p)
