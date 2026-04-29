@@ -86,28 +86,62 @@ del _importlib_util, _OPENMM_SPEC, _PDBFIXER_SPEC
 
 # ── OpenMM thread limit (must run AFTER fork in each worker) ──────────
 
-def _limit_openmm_threads() -> None:
+def _setup_compute_platform(platform: str = 'cpu', device_id: str = '0') -> None:
     """
-    Force OpenMM to use CPU-only, 1 thread per process.
+    Configure the hardware platform for OpenMM in the current worker process.
 
     Must be called BEFORE any OpenMM import that triggers Platform init,
     and AFTER os.fork() in each worker child.
 
-    Hides all GPU devices so OpenMM (including internal contexts created
-    by addHydrogens()) cannot auto-select CUDA/HIP/OpenCL platforms.
-    """
-    # Hide GPUs from all backends — must happen before OpenMM Platform init
-    os.environ['CUDA_VISIBLE_DEVICES'] = ''     # NVIDIA
-    os.environ['HIP_VISIBLE_DEVICES'] = ''      # AMD ROCm
-    os.environ['ROCR_VISIBLE_DEVICES'] = ''     # AMD ROCm (alternative)
+    platform : 'cpu'    — hide all GPUs, force single-threaded CPU
+               'hip'    — expose only *device_id* via HIP_VISIBLE_DEVICES
+               'cuda'   — expose only *device_id* via CUDA_VISIBLE_DEVICES
+               'opencl' — expose only *device_id* (ROCm OpenCL)
 
-    if not OPENMM_AVAILABLE:
-        return
-    try:
-        from openmm import Platform
-        Platform.getPlatformByName('CPU').setPropertyDefaultValue('Threads', '1')
-    except Exception:
-        pass
+    device_id : the physical GPU index (e.g. '0', '1').
+                Because the env-var restricts visibility to one card,
+                OpenMM should always be told DeviceIndex='0' internally.
+
+    The env-var approach also affects addHydrogens(), which creates its own
+    internal OpenMM context — so the GPU benefit applies to H-placement too.
+    """
+    _plat = platform.lower()
+
+    if _plat == 'cpu':
+        # Hide ALL GPU devices so OpenMM cannot auto-select any accelerator.
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        os.environ['HIP_VISIBLE_DEVICES']  = ''
+        os.environ['ROCR_VISIBLE_DEVICES'] = ''
+        if OPENMM_AVAILABLE:
+            try:
+                from openmm import Platform
+                Platform.getPlatformByName('CPU').setPropertyDefaultValue(
+                    'Threads', '1'
+                )
+            except Exception:
+                pass
+    else:
+        # Expose only the assigned device; OpenMM sees exactly one GPU.
+        # DeviceIndex inside OpenMM is always '0' because the env-var
+        # remaps the physical device to logical index 0 in this process.
+        dev = str(device_id)
+        if _plat == 'cuda':
+            os.environ['CUDA_VISIBLE_DEVICES'] = dev
+            os.environ['HIP_VISIBLE_DEVICES']  = dev
+            os.environ['ROCR_VISIBLE_DEVICES'] = dev
+        elif _plat in ('hip', 'opencl'):
+            # ROCm/HIP honours all three env-vars (CUDA_VISIBLE_DEVICES is
+            # the CUDA-compatibility alias that ROCm also reads).
+            os.environ['CUDA_VISIBLE_DEVICES'] = dev
+            os.environ['HIP_VISIBLE_DEVICES']  = dev
+            os.environ['ROCR_VISIBLE_DEVICES'] = dev
+        # Remove CPU-thread cap so the CPU can be used for non-GPU work.
+        os.environ.pop('OPENMM_CPU_THREADS', None)
+
+
+# Keep the old name as an alias so _worker_entry (v1 path) still works.
+def _limit_openmm_threads() -> None:
+    _setup_compute_platform('cpu')
 
 # ── PropKa ────────────────────────────────────────────────────────────────────
 try:
@@ -386,7 +420,15 @@ def preprocess_receptor(
     add_residues  : bool  = False,
     min_max_iter  : int   = 100,
     forcefield    : 'Optional[ForceField]' = None,
-) -> Tuple[bool, str, Optional[str]]:
+    platform      : str   = 'cpu',
+    device_id     : str   = '0',
+    fast_above    : int   = 0,
+) -> Tuple[bool, str, Optional[str], bool]:
+    """
+    Returns (success, message, propka_warn, fast_triggered).
+    fast_triggered=True when the structure exceeded fast_above heavy atoms
+    and PropKa + minimization were skipped.
+    """
     """
     Full 5-step preprocessing for one receptor.
     Returns (success, message, propka_warn).
@@ -410,17 +452,17 @@ def preprocess_receptor(
     try:
         _validate_pdb_id(pdb_id, biolip_root, output_root)
     except ValueError as e:
-        return False, f'{pdb_id}: invalid pdb_id: {e}', None
+        return False, f'{pdb_id}: invalid pdb_id: {e}', None, False
 
     in_path  = biolip_root / 'shared_receptors' / pdb_id / 'receptor_full.cif'
     out_dir  = output_root / pdb_id
     out_path = out_dir / 'receptor_fixed.cif'
 
     if out_path.exists() and not overwrite:
-        return True, f'{pdb_id}: SKIP', None
+        return True, f'{pdb_id}: SKIP', None, False
 
     if not in_path.exists():
-        return False, f'{pdb_id}: receptor_full.cif not found', None
+        return False, f'{pdb_id}: receptor_full.cif not found', None, False
 
     propka_warn: Optional[str] = None   # initialised before try so except can reference it
     _stripped_cif: Optional[Path] = None
@@ -463,9 +505,24 @@ def preprocess_receptor(
             fixer.removeHeterogens(keepWater=False)
         # (stripped_cif temp file cleanup is now in the finally block below)
 
+        # ── Fast-above check: count heavy atoms after repair ──────────────
+        # If the structure exceeds the threshold, skip ProPKa + minimization
+        # and use pH-only addHydrogens.  Large assemblies (ribosomes, virus
+        # capsids) can take hours for these steps on CPU.
+        _n_heavy    = fixer.topology.getNumAtoms()
+        _fast_mode  = fast_above > 0 and _n_heavy > fast_above
+        _eff_min    = 0 if _fast_mode else min_max_iter
+
+        if _fast_mode:
+            _fast_warn = (
+                f'FAST mode: {_n_heavy:,} heavy atoms > fast_above={fast_above:,}; '
+                'PropKa and H-minimization skipped.'
+            )
+            propka_warn = f'{propka_warn}; {_fast_warn}' if propka_warn else _fast_warn
+
         # ── Step 2: PropKa — pKa prediction → protonation lookup ─────────
         pka_lookup: dict = {}
-        if PROPKA_AVAILABLE:
+        if PROPKA_AVAILABLE and not _fast_mode:
             # PropKa needs a PDB file; write a temporary one.
             # For structures that overflow PDB limits, we skip PropKa gracefully.
             tmp_dir = tempfile.mkdtemp()
@@ -582,7 +639,7 @@ def preprocess_receptor(
 
         if not hydrogens_added:
             final_positions = modeller.positions
-        elif min_max_iter <= 0:
+        elif _eff_min <= 0:
             # User requested zero iterations — skip createSystem() and the
             # entire minimization stack (saves time + memory for large structures).
             final_positions = modeller.positions
@@ -611,13 +668,30 @@ def preprocess_receptor(
                     1 / unit.picosecond,
                     0.002 * unit.picoseconds,
                 )
-                cpu_platform = Platform.getPlatformByName('CPU')
+                _plat = platform.lower()
+                if _plat == 'hip':
+                    _sim_platform = Platform.getPlatformByName('HIP')
+                    # HIP/CUDA: env-var (HIP_VISIBLE_DEVICES) remaps the
+                    # physical device to logical index 0, so always use '0'.
+                    _sim_props = {'DeviceIndex': '0', 'Precision': 'mixed'}
+                elif _plat == 'cuda':
+                    _sim_platform = Platform.getPlatformByName('CUDA')
+                    _sim_props = {'DeviceIndex': '0', 'Precision': 'mixed'}
+                elif _plat == 'opencl':
+                    _sim_platform = Platform.getPlatformByName('OpenCL')
+                    # OpenCL ignores HIP_VISIBLE_DEVICES; must pass the real
+                    # device index so workers on different GPUs don't all land
+                    # on device 0.
+                    _sim_props = {'DeviceIndex': str(device_id), 'Precision': 'mixed'}
+                else:
+                    _sim_platform = Platform.getPlatformByName('CPU')
+                    _sim_props = {'Threads': '1'}
                 simulation = Simulation(
                     modeller.topology, system, integrator,
-                    cpu_platform, {'Threads': '1'},
+                    _sim_platform, _sim_props,
                 )
                 simulation.context.setPositions(pre_min_positions)
-                simulation.minimizeEnergy(maxIterations=min_max_iter)
+                simulation.minimizeEnergy(maxIterations=_eff_min)
 
                 state = simulation.context.getState(getPositions=True)
                 final_positions = state.getPositions()
@@ -690,6 +764,7 @@ def preprocess_receptor(
                 False,
                 f'{pdb_id}: write error — all position sources contain NaN',
                 propka_warn,
+                _fast_mode,
             )
 
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -703,10 +778,10 @@ def preprocess_receptor(
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
-            return False, f'{pdb_id}: write error: {e}', propka_warn
+            return False, f'{pdb_id}: write error: {e}', propka_warn, _fast_mode
 
     except Exception as e:
-        return False, f'{pdb_id}: error: {e}\n{traceback.format_exc()}', propka_warn
+        return False, f'{pdb_id}: error: {e}\n{traceback.format_exc()}', propka_warn, False
     finally:
         # Ensure temp model1.cif is deleted even on exception
         if _stripped_cif is not None:
@@ -718,11 +793,9 @@ def preprocess_receptor(
     n_atoms    = modeller.topology.getNumAtoms()
     n_chains   = modeller.topology.getNumChains()
     propka_tag = f'PropKa({len(pka_lookup)} sites)' if pka_lookup else 'PropKa=skip'
+    fast_tag   = f' [FAST>{fast_above:,}]' if _fast_mode else ''
 
     # ── Explicit cleanup of large C++ objects ─────────────────────────────
-    # Delete OpenMM-owned objects so their C++ destructors release GPU/heap
-    # memory before the next iteration.  This is supplementary to worker
-    # recycling (--max_per_worker), which is the primary OOM defence.
     del fixer, modeller
     try:
         del simulation
@@ -738,8 +811,8 @@ def preprocess_receptor(
         pass
 
     return True, (
-        f'{pdb_id}: OK  ({n_chains} chains, {n_atoms} atoms, {propka_tag})'
-    ), propka_warn
+        f'{pdb_id}: OK  ({n_chains} chains, {n_atoms} atoms, {propka_tag}{fast_tag})'
+    ), propka_warn, _fast_mode
 
 
 # ── worker subprocess ─────────────────────────────────────────────────────────
@@ -836,33 +909,68 @@ _POOL_ADD_RESIDUES  : bool           = False
 _POOL_MIN_MAX_ITER  : int            = 20
 _POOL_FF            : 'Optional[ForceField]' = None   # type: ignore[name-defined]
 _POOL_TASK_TIMEOUT  : int            = 99999  # seconds; 0 = unlimited
+_POOL_PLATFORM      : str            = 'cpu'  # 'cpu' | 'hip' | 'cuda' | 'opencl'
+_POOL_DEVICE_ID     : str            = '0'    # physical GPU index (remapped to 0 inside process)
+_POOL_FAST_ABOVE    : int            = 0      # 0 = disabled
 
 
 def _pool_init(
-    biolip_root  : Path,
-    output_root  : Path,
-    ph           : float,
-    overwrite    : bool,
-    add_residues : bool,
-    min_max_iter : int,
-    task_timeout : int = 1800,
+    biolip_root   : Path,
+    output_root   : Path,
+    ph            : float,
+    overwrite     : bool,
+    add_residues  : bool,
+    min_max_iter  : int,
+    task_timeout  : int,
+    platform      : str,
+    device_queue,          # multiprocessing.Queue pre-filled with device_id strings
+    fast_above    : int = 0,
 ) -> None:
     """
     Pool initializer — called once in each worker process after fork.
 
-    1. Hides GPU devices + sets OpenMM to single-threaded CPU (fork-safe).
-    2. Builds the ForceField object and stores it in a process-level global
-       so every task reuses the same loaded XML (loading AMBER14 is expensive).
-    3. Stores all other shared parameters as process-level globals so
-       _process_one() needs only the pdb_id argument (Pool tasks must be
-       picklable; ForceField is not, so we cannot pass it as an argument).
-    4. Stores per-structure timeout (SIGALRM-based, Linux only).
+    1. Pops a GPU device_id from *device_queue* (round-robin assignment)
+       and configures the hardware platform via _setup_compute_platform().
+       For CPU mode the queue contains only '0' placeholders.
+    2. Builds the ForceField object once per worker (loading AMBER14 is
+       expensive) and stores it in a process-level global for reuse.
+    3. Stores all shared parameters as process-level globals so
+       _process_one() only needs the pdb_id argument (ForceField is not
+       picklable so it cannot be passed as a task argument).
+    4. Stores per-structure SIGALRM timeout.
     """
     global _POOL_BIOLIP_ROOT, _POOL_OUTPUT_ROOT, _POOL_PH
     global _POOL_OVERWRITE, _POOL_ADD_RESIDUES, _POOL_MIN_MAX_ITER, _POOL_FF
-    global _POOL_TASK_TIMEOUT
+    global _POOL_TASK_TIMEOUT, _POOL_PLATFORM, _POOL_DEVICE_ID, _POOL_FAST_ABOVE
 
-    _limit_openmm_threads()   # hide GPUs, set CPU Threads=1
+    # Each worker pops its assigned device from the shared queue.
+    try:
+        device_id = device_queue.get_nowait()
+    except Exception:
+        device_id = '0'
+
+    _POOL_PLATFORM  = platform
+    _POOL_DEVICE_ID = device_id
+
+    _setup_compute_platform(platform, device_id)
+
+    # ── Diagnostic: confirm env vars and list available OpenMM platforms ──
+    import os as _os
+    _pid = _os.getpid()
+    print(
+        f'  [worker {_pid}] platform={platform} device={device_id} '
+        f'CUDA_VISIBLE={_os.environ.get("CUDA_VISIBLE_DEVICES","<unset>")} '
+        f'HIP_VISIBLE={_os.environ.get("HIP_VISIBLE_DEVICES","<unset>")}',
+        flush=True,
+    )
+    if OPENMM_AVAILABLE:
+        try:
+            from openmm import Platform as _Plat
+            _names = [_Plat.getPlatform(i).getName()
+                      for i in range(_Plat.getNumPlatforms())]
+            print(f'  [worker {_pid}] OpenMM platforms: {_names}', flush=True)
+        except Exception as _e:
+            print(f'  [worker {_pid}] platform list error: {_e}', flush=True)
 
     _POOL_BIOLIP_ROOT  = biolip_root
     _POOL_OUTPUT_ROOT  = output_root
@@ -871,6 +979,7 @@ def _pool_init(
     _POOL_ADD_RESIDUES = add_residues
     _POOL_MIN_MAX_ITER = min_max_iter
     _POOL_TASK_TIMEOUT = task_timeout
+    _POOL_FAST_ABOVE   = fast_above
 
     if OPENMM_AVAILABLE:
         from openmm.app import ForceField as _FF
@@ -911,11 +1020,14 @@ def _process_one(pdb_id: str) -> Tuple[bool, str, Optional[str]]:
             add_residues=_POOL_ADD_RESIDUES,
             min_max_iter=_POOL_MIN_MAX_ITER,
             forcefield=_POOL_FF,
+            platform=_POOL_PLATFORM,
+            device_id=_POOL_DEVICE_ID,
+            fast_above=_POOL_FAST_ABOVE,
         )
     except TimeoutError as _te:
-        result = (False, f'{pdb_id}: TIMEOUT (>{_POOL_TASK_TIMEOUT}s)', None)
+        result = (False, f'{pdb_id}: TIMEOUT (>{_POOL_TASK_TIMEOUT}s)', None, False)
     except Exception as _exc:
-        result = (False, f'{pdb_id}: {type(_exc).__name__}: {str(_exc)[:150]}', None)
+        result = (False, f'{pdb_id}: {type(_exc).__name__}: {str(_exc)[:150]}', None, False)
     finally:
         if _POOL_TASK_TIMEOUT > 0:
             _signal.alarm(0)   # cancel pending alarm
@@ -966,6 +1078,22 @@ def main() -> int:
                              '(SIGALRM, Linux only; 0 = unlimited; default: 99999). '
                              'Heartbeat line prints every 2 min if no result arrives. '
                              'Reduce for giant ribosome structures that block indefinitely.')
+    parser.add_argument('--fast_above', type=int, default=0,
+                        help='Skip ProPKa + H-minimization for structures with '
+                             'more than N heavy atoms after PDBFixer repair '
+                             '(0 = disabled). Processed structures are recorded '
+                             'in fast_above_ids.tsv. Recommended: 50000 for '
+                             'ribosome/capsid assemblies.')
+    parser.add_argument('--platform', default='cpu',
+                        choices=['cpu', 'hip', 'cuda', 'opencl'],
+                        help='OpenMM compute platform (default: cpu). '
+                             'Use "hip" for AMD ROCm GPUs, "cuda" for NVIDIA. '
+                             'Affects both addHydrogens() and minimizeEnergy().')
+    parser.add_argument('--gpu_devices', default='0',
+                        help='Comma-separated physical GPU device indices to use '
+                             '(default: "0"). Workers are assigned round-robin. '
+                             'Example: "0,1" spreads workers across two GPUs. '
+                             'Ignored when --platform cpu.')
     args = parser.parse_args()
 
     if not OPENMM_AVAILABLE:
@@ -1030,10 +1158,13 @@ def main() -> int:
 
     # ── single-worker shortcut ─────────────────────────────────────────────
     if args.workers <= 1:
-        _limit_openmm_threads()
+        _plat_single = args.platform.lower()
+        _dev_single  = args.gpu_devices.split(',')[0].strip()
+        _setup_compute_platform(_plat_single, _dev_single)
 
         failures        : List[Tuple[str, str]] = []
         propka_failures : List[Tuple[str, str]] = []
+        fast_entries    : List[Tuple[str, str]] = []
 
         # Build ForceField once for all structures
         from openmm.app import ForceField
@@ -1041,14 +1172,18 @@ def main() -> int:
         ff_single = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
 
         for idx, pdb_id in enumerate(pdb_ids, 1):
-            ok, msg, propka_warn = preprocess_receptor(
-                pdb_id, biolip_root, output_root, **kw, forcefield=ff_single
+            ok, msg, propka_warn, fast_hit = preprocess_receptor(
+                pdb_id, biolip_root, output_root, **kw,
+                forcefield=ff_single, platform=_plat_single, device_id=_dev_single,
+                fast_above=args.fast_above,
             )
             print(f'[{idx}/{total}] {msg}', flush=True)
             if not ok:
                 failures.append((pdb_id, msg))
             if propka_warn is not None:
                 propka_failures.append((pdb_id, propka_warn))
+            if fast_hit:
+                fast_entries.append((pdb_id, msg))
             _gc.collect()
 
         def _write_tsv(path: Path, rows: List[Tuple[str, str]], header: str) -> None:
@@ -1061,6 +1196,11 @@ def main() -> int:
             pk_path = output_root / 'propka_failures.tsv'
             _write_tsv(pk_path, propka_failures, 'pdb_id\tpropka_error')
             print(f'\n{len(propka_failures)} PropKa failures → {pk_path}')
+
+        if fast_entries:
+            fast_path = output_root / 'fast_above_ids.tsv'
+            _write_tsv(fast_path, fast_entries, 'pdb_id\tmsg')
+            print(f'{len(fast_entries)} fast-above structures → {fast_path}')
 
         if failures:
             fail_path = output_root / 'failures.tsv'
@@ -1086,6 +1226,27 @@ def main() -> int:
     n_workers    = min(args.workers, total)
     max_per      = args.max_per_worker   # None → no recycling limit
     task_timeout = args.task_timeout     # 0 = unlimited
+    platform     = args.platform.lower()
+
+    # ── GPU device assignment ──────────────────────────────────────────────
+    # Parse --gpu_devices into a list, then pre-fill a Queue with one entry
+    # per worker in round-robin order.  Each worker pops its device in
+    # _pool_init() so the assignment is deterministic and balanced.
+    ctx = mp.get_context('fork')
+    if platform != 'cpu':
+        gpu_list = [d.strip() for d in args.gpu_devices.split(',') if d.strip()]
+        device_queue = ctx.Queue()
+        for i in range(n_workers):
+            device_queue.put(gpu_list[i % len(gpu_list)])
+        print(f'Platform         : {platform.upper()} '
+              f'(devices: {gpu_list}, {n_workers} workers)')
+    else:
+        # CPU mode — queue is not used; fill with placeholders so _pool_init
+        # can always call get_nowait() without branching.
+        device_queue = ctx.Queue()
+        for _ in range(n_workers):
+            device_queue.put('0')
+        print(f'Platform         : CPU (1 thread/worker)')
 
     if max_per is not None:
         print(f'Max per worker   : {max_per} (Pool maxtasksperchild)')
@@ -1094,14 +1255,17 @@ def main() -> int:
     else:
         print('Per-structure timeout: unlimited')
 
-    ctx     = mp.get_context('fork')
+    fast_above = args.fast_above
+    if fast_above > 0:
+        print(f'Fast-above       : {fast_above:,} atoms (skip ProPKa+min for larger)')
+
     pool_kw : dict = dict(
         processes   = n_workers,
         initializer = _pool_init,
         initargs    = (
             biolip_root, output_root,
             args.ph, args.overwrite, args.add_residues, args.min_max_iter,
-            task_timeout,
+            task_timeout, platform, device_queue, fast_above,
         ),
     )
     if max_per is not None:
@@ -1109,6 +1273,7 @@ def main() -> int:
 
     failures        : List[Tuple[str, str]] = []
     propka_failures : List[Tuple[str, str]] = []
+    fast_entries    : List[Tuple[str, str]] = []   # (pdb_id, msg) for fast-above structures
     rc = 0
 
     # ── heartbeat thread: prints a "still alive" line if no result arrives
@@ -1135,22 +1300,27 @@ def main() -> int:
     hb_thread = _threading.Thread(target=_heartbeat, daemon=True)
     hb_thread.start()
 
-    from multiprocessing.pool import WorkerLostError
+    try:
+        from multiprocessing.pool import WorkerLostError
+    except ImportError:
+        # Python builds that don't export WorkerLostError — fall back to OSError
+        WorkerLostError = OSError
 
     try:
         with ctx.Pool(**pool_kw) as pool:
-            for done, (ok, msg, propka_warn) in enumerate(
+            for done, (ok, msg, propka_warn, fast_hit) in enumerate(
                 pool.imap_unordered(_process_one, pdb_ids, chunksize=1), 1
             ):
                 _last_result_ts[0] = _time.monotonic()
                 print(f'[{done}/{total}] {msg}', flush=True)
+                pdb_id_key = msg.split(':')[0].strip()
                 if not ok:
-                    # pdb_id is the first colon-delimited token in msg
-                    failures.append((msg.split(':')[0].strip(), msg))
+                    failures.append((pdb_id_key, msg))
                     rc = 1
                 if propka_warn is not None:
-                    pdb_id_key = msg.split(':')[0].strip()
                     propka_failures.append((pdb_id_key, propka_warn))
+                if fast_hit:
+                    fast_entries.append((pdb_id_key, msg))
     except WorkerLostError as _wle:
         print(
             f'\nWARNING: a worker process died unexpectedly (OOM or SIGKILL):\n'
@@ -1174,6 +1344,11 @@ def main() -> int:
         pk_path = output_root / 'propka_failures.tsv'
         _write_tsv(pk_path, propka_failures, 'pdb_id\tpropka_error')
         print(f'\n{len(propka_failures)} PropKa warnings → {pk_path}')
+
+    if fast_entries:
+        fast_path = output_root / 'fast_above_ids.tsv'
+        _write_tsv(fast_path, fast_entries, 'pdb_id\tmsg')
+        print(f'{len(fast_entries)} fast-above structures (PropKa+min skipped) → {fast_path}')
 
     if failures:
         fail_path = output_root / 'failures.tsv'
