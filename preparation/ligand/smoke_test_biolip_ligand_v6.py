@@ -189,6 +189,7 @@ def assert_regular_organic(data: dict, pair: dict) -> None:
     meta = pair["meta"]
     sdf_name = meta.get("ligand_reference_sdf_file") or meta.get("ligand_reference_mol2_file")
     sdf = pair["pair_dir"] / sdf_name
+    # Use sanitize_mode='full' to match extract_pair behaviour for REGULAR_ORGANIC
     v5 = extract_ligand_features_v5(
         str(sdf),
         include_conformers=True,
@@ -196,6 +197,7 @@ def assert_regular_organic(data: dict, pair: dict) -> None:
         strict=True,
         verbose=False,
         num_threads=1,
+        sanitize_mode="full",
     )
     np.testing.assert_allclose(data["global_features"].numpy(), v5["global_features"], rtol=1e-5, atol=1e-5)
     np.testing.assert_allclose(data["shape_features"].numpy(), v5["shape_features"], rtol=1e-5, atol=1e-5)
