@@ -40,6 +40,9 @@ python biolip_esm2_extract.py \
     --output       /home/husrcf/Code/ProtBind/BioLip/esm2_features \
     --devices 0,1,cpu --cpu_threads 64
 
+# shard by PDB/bundle prefix, useful for launching independent processes
+python biolip_esm2_extract.py ... --first_id 2 --devices 0,1
+
 # subset only
 python biolip_esm2_extract.py ... --bundle_list_file missing.txt
 
@@ -78,6 +81,7 @@ except ImportError:
 # ── constants ─────────────────────────────────────────────────────────────────
 
 ESM2_MAX_LEN = 1022          # ESM2 hard limit (excl. BOS/EOS)
+ESM2_WINDOW_OVERLAP = 768    # high-overlap windowing for overlength chains
 MODEL_NAME   = "esm2_t33_650M_UR50D"
 
 STD_AA_3TO1: dict[str, str] = {
@@ -224,14 +228,13 @@ def _parse_cif_chain(cif_path: Path, chain_id: str) -> Tuple[
 def _run_esm2(model, alphabet, sequence: str) -> torch.Tensor:
     """
     Return per-residue embeddings [N, 1280].
-    Raises ValueError for sequences longer than ESM2_MAX_LEN — callers must
-    handle overlength chains explicitly rather than silently losing residues.
+    Single-pass ESM2 call.  Callers should use _run_esm2_windowed() for
+    overlength chains.
     """
     if len(sequence) > ESM2_MAX_LEN:
         raise ValueError(
             f'Sequence length {len(sequence)} exceeds ESM2 limit {ESM2_MAX_LEN}. '
-            f'Overlength chains are not silently truncated; handle via windowed '
-            f'extraction or exclude this bundle.'
+            f'Use _run_esm2_windowed() for overlength chains.'
         )
 
     batch_converter = alphabet.get_batch_converter()
@@ -246,6 +249,83 @@ def _run_esm2(model, alphabet, sequence: str) -> torch.Tensor:
         f'Embedding length {emb.shape[0]} ≠ sequence length {len(sequence)}'
     )
     return emb.cpu()
+
+
+def _window_starts(n_res: int, window_len: int, overlap: int) -> List[int]:
+    """Return starts that cover [0, n_res) with the final window end-aligned."""
+    if n_res <= window_len:
+        return [0]
+    if overlap < 0 or overlap >= window_len:
+        raise ValueError(
+            f'Invalid ESM2 window overlap {overlap}; expected 0 <= overlap < {window_len}'
+        )
+    stride = window_len - overlap
+    starts = [0]
+    while starts[-1] + window_len < n_res:
+        nxt = starts[-1] + stride
+        if nxt + window_len >= n_res:
+            nxt = n_res - window_len
+        if nxt <= starts[-1]:
+            break
+        starts.append(nxt)
+    return starts
+
+
+def _run_esm2_windowed(
+    model,
+    alphabet,
+    sequence: str,
+    overlap: int = ESM2_WINDOW_OVERLAP,
+) -> Tuple[torch.Tensor, dict]:
+    """
+    Return per-residue embeddings [N, 1280].
+
+    Short sequences use the original single-pass path.  Overlength sequences are
+    encoded in overlapping windows of length ESM2_MAX_LEN; residues covered by
+    multiple windows are averaged.  No residues are truncated.
+    """
+    n_res = len(sequence)
+    if n_res <= ESM2_MAX_LEN:
+        emb = _run_esm2(model, alphabet, sequence)
+        return emb, {
+            'windowed': False,
+            'window_len': ESM2_MAX_LEN,
+            'window_overlap': 0,
+            'window_stride': ESM2_MAX_LEN,
+            'window_starts': [0],
+            'n_windows': 1,
+        }
+
+    starts = _window_starts(n_res, ESM2_MAX_LEN, overlap)
+    acc = None
+    counts = torch.zeros(n_res, dtype=torch.float32)
+
+    for start in starts:
+        end = min(start + ESM2_MAX_LEN, n_res)
+        emb = _run_esm2(model, alphabet, sequence[start:end])
+        if acc is None:
+            acc = torch.zeros(n_res, emb.shape[1], dtype=emb.dtype)
+        acc[start:end] += emb
+        counts[start:end] += 1.0
+
+    if acc is None or torch.any(counts == 0):
+        raise RuntimeError(
+            f'Windowed ESM2 failed to cover all residues: n_res={n_res}, '
+            f'windows={starts}, uncovered={(counts == 0).sum().item()}'
+        )
+
+    embeddings = acc / counts[:, None]
+    assert embeddings.shape[0] == n_res, (
+        f'Embedding length {embeddings.shape[0]} ≠ sequence length {n_res}'
+    )
+    return embeddings, {
+        'windowed': True,
+        'window_len': ESM2_MAX_LEN,
+        'window_overlap': overlap,
+        'window_stride': ESM2_MAX_LEN - overlap,
+        'window_starts': starts,
+        'n_windows': len(starts),
+    }
 
 
 # ── per-bundle extraction ─────────────────────────────────────────────────────
@@ -360,7 +440,7 @@ def extract_bundle(
 
     # ── run ESM2 ──────────────────────────────────────────────────────────
     try:
-        embeddings = _run_esm2(model, alphabet, sequence)
+        embeddings, esm2_window_info = _run_esm2_windowed(model, alphabet, sequence)
     except Exception as e:
         return False, f'{bundle_name}: ESM2 error: {e}'
 
@@ -382,6 +462,12 @@ def extract_bundle(
         'residue_name_3' : res_name_3,                         # list[str]
         'sequence'       : sequence,                            # str
         'model_name'     : MODEL_NAME,
+        'esm2_windowed'  : esm2_window_info['windowed'],
+        'esm2_window_len': esm2_window_info['window_len'],
+        'esm2_window_overlap': esm2_window_info['window_overlap'],
+        'esm2_window_stride': esm2_window_info['window_stride'],
+        'esm2_window_starts': esm2_window_info['window_starts'],
+        'esm2_n_windows': esm2_window_info['n_windows'],
         'bundle_name'    : bundle_name,
         'pdb_id'         : pdb_id,
         'protein_chain'  : protein_chain,
@@ -397,7 +483,14 @@ def extract_bundle(
         except OSError:
             pass
         return False, f'{bundle_name}: save error: {e}'
-    return True, f'{bundle_name}: OK  ({len(sequence)} res, emb={tuple(embeddings.shape)}, src={cif_source})'
+    window_tag = (
+        f', windowed={esm2_window_info["n_windows"]}x'
+        if esm2_window_info['windowed'] else ''
+    )
+    return True, (
+        f'{bundle_name}: OK  ({len(sequence)} res, emb={tuple(embeddings.shape)}, '
+        f'src={cif_source}{window_tag})'
+    )
 
 
 # ── worker entry (runs inside subprocess for multi-GPU) ───────────────────────
@@ -505,6 +598,12 @@ def main() -> int:
                         help='torch CPU threads for the CPU worker subprocess (default: 32)')
     parser.add_argument('--bundle_list_file', default=None,
                         help='Text file listing bundle names (one per line); default: all')
+    parser.add_argument('--first_id', default=None,
+                        help=(
+                            'Only process bundles whose name/PDB id starts with this prefix. '
+                            'Example: --first_id 2 keeps 2xxx_* bundles such as 2ijb_A. '
+                            'Filtering happens before --max and multi-device sharding.'
+                        ))
     parser.add_argument('--max', type=int, default=None,
                         help='Limit to first N bundles (for testing)')
     parser.add_argument('--overwrite', action='store_true',
@@ -550,6 +649,18 @@ def main() -> int:
         bundle_names = sorted(p.name for p in data_dir.iterdir() if p.is_dir())
         print(f'Auto-discovered bundles: {len(bundle_names):,}')
 
+    if args.first_id:
+        first_id = args.first_id.strip().lower()
+        before_filter = len(bundle_names)
+        bundle_names = [
+            bn for bn in bundle_names
+            if bn.lower().startswith(first_id)
+        ]
+        print(
+            f'first_id filter {first_id!r}: kept {len(bundle_names):,} / '
+            f'{before_filter:,} bundles; skipped {before_filter - len(bundle_names):,}'
+        )
+
     if args.max:
         bundle_names = bundle_names[:args.max]
         print(f'Limiting to first {len(bundle_names)} bundles.')
@@ -557,6 +668,9 @@ def main() -> int:
     total = len(bundle_names)
     print(f'Total to process: {total:,}')
     print(f'Output: {output_root}')
+    if total == 0:
+        print('No bundles to process after filtering.')
+        return 0
 
     # ── multi-device ──────────────────────────────────────────────────────
     if args.devices:

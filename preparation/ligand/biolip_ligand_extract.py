@@ -36,7 +36,7 @@ Routing (5 paths):
 
 Directory layout
 ────────────────
-  {biolip_root}/shared_receptors/{pdb_id}/pairs/
+  {biolip_root}/shared_receptors2/{pdb_id}/pairs/
     {pdb_id}_{chain}/
       {bs_id}_{lig_id}_{chain}_{resseq}/
         pair_meta.json
@@ -113,7 +113,7 @@ except ImportError as _ve:
 # ── pair discovery ────────────────────────────────────────────────────────────
 
 def _parse_meta_file(meta_path: Path) -> Optional[dict]:
-    # meta_path: .../shared_receptors/{pdb_id}/pairs/{pdb_id}_{chain}/{bs_dir}/pair_meta.json
+    # meta_path: .../shared_receptors2/{pdb_id}/pairs/{pdb_id}_{chain}/{bs_dir}/pair_meta.json
     try:
         meta = json.loads(meta_path.read_text())
     except Exception:
@@ -137,7 +137,7 @@ def _parse_meta_file(meta_path: Path) -> Optional[dict]:
 
 def _discover_pairs(biolip_root: Path, n_threads: int = 32) -> List[dict]:
     import subprocess
-    receptors_root = biolip_root / 'shared_receptors'
+    receptors_root = biolip_root / 'shared_receptors2'
     if not receptors_root.is_dir():
         raise FileNotFoundError(f'{receptors_root} not found')
 
