@@ -543,7 +543,22 @@ def preprocess_receptor(
             tmp_pdb = os.path.join(tmp_dir, f'{pdb_id}.pdb')
             try:
                 with open(tmp_pdb, 'w') as fh:
-                    PDBFile.writeFile(fixer.topology, fixer.positions, fh)
+                    # Preserve one-character chain IDs when the PDB format can
+                    # safely represent them.  The OpenMM default keepIds=False
+                    # renumbers chains as A, B, ..., which breaks PropKa lookup
+                    # for structures whose BioLiP chain IDs are not already in
+                    # that generated order.  For multi-character IDs, keep the
+                    # old generated-ID behavior because PDB cannot safely encode
+                    # them anyway.
+                    _pdb_chain_ids = [c.id.strip() for c in fixer.topology.chains()]
+                    _keep_pdb_ids = (
+                        all(len(cid) == 1 and cid for cid in _pdb_chain_ids)
+                        and len(set(_pdb_chain_ids)) == len(_pdb_chain_ids)
+                    )
+                    PDBFile.writeFile(
+                        fixer.topology, fixer.positions, fh,
+                        keepIds=_keep_pdb_ids,
+                    )
                 pka_lookup, _propka_warn = _run_propka(tmp_pdb, ph)
                 if _propka_warn:
                     propka_warn = (
@@ -785,7 +800,16 @@ def preprocess_receptor(
         tmp_path = out_dir / f'.{pdb_id}_{uuid.uuid4().hex}.tmp.cif'
         try:
             with open(tmp_path, 'w') as fh:
-                PDBxFile.writeFile(modeller.topology, write_positions, fh)
+                # Critical: keep original mmCIF chain IDs.  OpenMM's default
+                # keepIds=False regenerates chain IDs as A-Z with modulo-26
+                # reuse.  For BioLiP structures containing both uppercase and
+                # lowercase chain IDs (e.g. 1fnt has A-Z and a-p), that writes
+                # chain 'a' as a second 'A', causing downstream CIF readers to
+                # merge full A + full a into one chain.
+                PDBxFile.writeFile(
+                    modeller.topology, write_positions, fh,
+                    keepIds=True,
+                )
             os.replace(tmp_path, out_path)
         except Exception as e:
             try:

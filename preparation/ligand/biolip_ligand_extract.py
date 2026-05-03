@@ -1153,7 +1153,7 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
 
     import time as _time
-    cache_path = Path(args.pairs_cache) if args.pairs_cache else None
+    cache_path = Path(args.pairs_cache) if args.pairs_cache else biolip_root / 'pairs_cache_v6.pkl'
 
     if cache_path and cache_path.exists() and not args.refresh_cache:
         print(f'Loading pairs from cache: {cache_path}', flush=True)

@@ -409,12 +409,36 @@ def extract_bundle(
         return False, f'{bundle_name}: no CIF found (tried: {", ".join(tried)})'
 
     # ── parse CIF → residue table ─────────────────────────────────────────
+    # Prefer receptor_fixed.cif, but fall back to receptor_full.cif when the
+    # requested chain is missing from the fixed file.  This is needed for
+    # structures whose original mmCIF contains both uppercase and lowercase
+    # chain IDs: some fixer paths collapse case-distinct chains (e.g. full
+    # chains A+a become fixed chain A), so a case-insensitive lookup would
+    # silently extract the wrong concatenated sequence.
+    cif_fallback_reason = ''
     try:
         res_index, ins_codes, res_name_3, res_name_1 = _parse_cif_chain(
             cif_path, protein_chain
         )
     except Exception as e:
-        return False, f'{bundle_name}: CIF parse error: {e}'
+        if cif_source != 'fixed':
+            return False, f'{bundle_name}: CIF parse error: {e}'
+        fixed_error = str(e)
+        full_candidate = biolip_root / 'shared_receptors' / pdb_id / 'receptor_full.cif'
+        if not full_candidate.exists():
+            return False, f'{bundle_name}: CIF parse error: {e}'
+        try:
+            res_index, ins_codes, res_name_3, res_name_1 = _parse_cif_chain(
+                full_candidate, protein_chain
+            )
+            cif_path = full_candidate
+            cif_source = 'full'
+            cif_fallback_reason = f'fixed_chain_parse_failed: {fixed_error}'
+        except Exception as e_full:
+            return False, (
+                f'{bundle_name}: CIF parse error: fixed={fixed_error}; '
+                f'full_fallback={e_full}'
+            )
 
     sequence = ''.join(res_name_1)
     n_obs    = len(sequence)
@@ -472,6 +496,7 @@ def extract_bundle(
         'pdb_id'         : pdb_id,
         'protein_chain'  : protein_chain,
         'cif_source'     : cif_source,      # 'fixed' | 'full'
+        'cif_fallback_reason': cif_fallback_reason,
     }
     try:
         torch.save(result, tmp_path)
