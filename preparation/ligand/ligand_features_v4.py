@@ -158,6 +158,72 @@ def make_sanitized_descriptor_mol(mol: "Chem.Mol") -> "Chem.Mol":
         return mol
 
 
+def _partial_sanitize_mol(mol: "Chem.Mol") -> bool:
+    """
+    Low-risk sanitization for feature perception.
+
+    This intentionally skips PROPERTIES and KEKULIZE, which are common failure
+    points for metal complexes and unusual valence states, but still asks RDKit
+    to perceive rings, aromaticity, conjugation, chirality cleanup, and
+    hybridization.
+    """
+    try:
+        mol.UpdatePropertyCache(strict=False)
+    except Exception:
+        pass
+
+    flags = Chem.SanitizeFlags
+    ops = (
+        flags.SANITIZE_SYMMRINGS
+        | flags.SANITIZE_SETAROMATICITY
+        | flags.SANITIZE_SETCONJUGATION
+        | flags.SANITIZE_SETHYBRIDIZATION
+        | flags.SANITIZE_CLEANUPCHIRALITY
+    )
+    try:
+        failed = Chem.SanitizeMol(mol, sanitizeOps=ops, catchErrors=True)
+        return int(failed) == 0
+    except Exception as exc:
+        warnings.warn(f"Partial sanitize failed: {exc}")
+        return False
+
+
+def _prepare_feature_mol(mol: "Chem.Mol", sanitize_mode: str) -> Tuple["Chem.Mol", str]:
+    """
+    Return a same-atom-order mol for atom/topology features.
+
+    sanitize_mode:
+      - "none":    preserve historical V4 behavior.
+      - "partial": run low-risk perception for metal/complex fallback paths.
+      - "full":    full RDKit sanitize, falling back to partial on failure.
+    """
+    mode = (sanitize_mode or "none").lower()
+    if mode == "none":
+        return mol, "none"
+
+    work = Chem.Mol(mol)
+    if mode == "full":
+        try:
+            failed = Chem.SanitizeMol(work, catchErrors=True)
+            if int(failed) == 0:
+                return work, "full"
+            warnings.warn(f"Full sanitize returned failure flag {failed}; trying partial")
+        except Exception as exc:
+            warnings.warn(f"Full sanitize failed: {exc}; trying partial")
+
+        work = Chem.Mol(mol)
+        if _partial_sanitize_mol(work):
+            return work, "partial"
+        return mol, "none"
+
+    if mode == "partial":
+        if _partial_sanitize_mol(work):
+            return work, "partial"
+        return mol, "none"
+
+    raise ValueError(f"Unknown sanitize_mode {sanitize_mode!r}; expected none/full/partial")
+
+
 def compute_gasteiger_charges(mol: "Chem.Mol") -> np.ndarray:
     try:
         AllChem.ComputeGasteigerCharges(mol)
@@ -606,6 +672,7 @@ def extract_ligand_features_from_file(
     strict: bool = False,
     verbose: bool = False,
     num_threads: int = 0,
+    sanitize_mode: str = "none",
 ) -> Dict[str, np.ndarray]:
     mol = _load_molecule_from_file(ligand_file)
     num_atoms_original = mol.GetNumAtoms()
@@ -685,8 +752,10 @@ def extract_ligand_features_from_file(
             raise ValueError("No conformer available")
         AllChem.Compute2DCoords(mol)
 
+    feature_mol, sanitize_applied = _prepare_feature_mol(mol, sanitize_mode)
+
     atom_feature_rows = []
-    for atom in mol.GetAtoms():
+    for atom in feature_mol.GetAtoms():
         row = []
         row.extend(get_atom_symbol_features(atom))
         row.extend(get_atom_hybridization_features(atom))
@@ -710,7 +779,7 @@ def extract_ligand_features_from_file(
             coords_heavy_current.append(coords_current[atom.GetIdx()])
     coords_heavy_current = np.array(coords_heavy_current, dtype=np.float32)
 
-    edge_index, edge_attr = extract_bond_graph(mol)
+    edge_index, edge_attr = extract_bond_graph(feature_mol)
 
     atom_sasa = np.zeros(num_atoms_with_h, dtype=np.float32)
     hbond_donor = np.zeros(num_atoms_with_h, dtype=np.float32)
@@ -729,6 +798,7 @@ def extract_ligand_features_from_file(
             _set_coords_from_array(advanced_mol, coords_current)
 
         if advanced_mol.GetNumAtoms() == num_atoms_with_h:
+            advanced_mol, _ = _prepare_feature_mol(advanced_mol, sanitize_mode)
             atom_sasa = compute_atom_sasa(advanced_mol)
             hbond_donor, hbond_acceptor = compute_hbond_flags(advanced_mol)
             chirality_cw, chirality_ccw = compute_chirality_flags(advanced_mol)
@@ -828,4 +898,6 @@ def extract_ligand_features_from_file(
         "has_original_coords": original_coords_heavy is not None,
         "molecular_descriptors": molecular_descriptors,
         "feature_dim_local": local_atom_features.shape[1],
+        "sanitize_mode_requested": sanitize_mode,
+        "sanitize_mode_applied": sanitize_applied,
     }

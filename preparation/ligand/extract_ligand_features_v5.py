@@ -84,6 +84,48 @@ def _load_mol_for_global_features(ligand_file: str) -> "Chem.Mol":
     return mol
 
 
+def _partial_sanitize_global_mol(mol: "Chem.Mol") -> bool:
+    try:
+        mol.UpdatePropertyCache(strict=False)
+    except Exception:
+        pass
+    flags = Chem.SanitizeFlags
+    ops = (
+        flags.SANITIZE_SYMMRINGS
+        | flags.SANITIZE_SETAROMATICITY
+        | flags.SANITIZE_SETCONJUGATION
+        | flags.SANITIZE_SETHYBRIDIZATION
+        | flags.SANITIZE_CLEANUPCHIRALITY
+    )
+    try:
+        failed = Chem.SanitizeMol(mol, sanitizeOps=ops, catchErrors=True)
+        return int(failed) == 0
+    except Exception:
+        return False
+
+
+def _prepare_global_feature_mol(mol: "Chem.Mol", sanitize_mode: str) -> "Chem.Mol":
+    mode = (sanitize_mode or "none").lower()
+    if mode == "none":
+        return mol
+
+    work = Chem.Mol(mol)
+    if mode == "full":
+        try:
+            failed = Chem.SanitizeMol(work, catchErrors=True)
+            if int(failed) == 0:
+                return work
+        except Exception:
+            pass
+        work = Chem.Mol(mol)
+        return work if _partial_sanitize_global_mol(work) else mol
+
+    if mode == "partial":
+        return work if _partial_sanitize_global_mol(work) else mol
+
+    raise ValueError(f"Unknown sanitize_mode {sanitize_mode!r}; expected none/full/partial")
+
+
 def _shape_feature_vector(shape_features: np.ndarray) -> np.ndarray:
     norm_params = {
         0: (3879.901123, 6650.009766),
@@ -114,6 +156,7 @@ def extract_ligand_features_v5(
     strict: bool = True,
     verbose: bool = False,
     num_threads: int = 0,
+    sanitize_mode: str = "none",
 ) -> dict:
     if not PYPROPEL_AVAILABLE or not V4_AVAILABLE:
         raise ImportError("pypropel、RDKit和ligand_features_v4是必需的")
@@ -126,9 +169,11 @@ def extract_ligand_features_v5(
         strict=strict,
         verbose=verbose,
         num_threads=num_threads,
+        sanitize_mode=sanitize_mode,
     )
 
     mol = _load_mol_for_global_features(ligand_file)
+    mol = _prepare_global_feature_mol(mol, sanitize_mode)
     global_features = np.asarray(ppmol.get_global_tag(mol, output_dim=45), dtype=np.float32)
     shape_features = _shape_feature_vector(v4_features["shape_features"])
 

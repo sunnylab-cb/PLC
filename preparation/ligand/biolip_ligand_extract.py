@@ -52,6 +52,10 @@ conda run -n AIAA python3 preparation/ligand/biolip_ligand_extract.py \\
     --biolip_root /home/husrcf/Code/ProtBind/BioLip \\
     --output      /home/husrcf/Code/ProtBind/BioLip/ligand_features_v6 \\
     --max 5 --workers 1
+
+# shard by PDB prefix, useful for launching independent processes
+conda run -n AIAA python3 preparation/ligand/biolip_ligand_extract.py ... \\
+    --first_id 2 --workers 32
 """
 
 from __future__ import annotations
@@ -135,18 +139,37 @@ def _parse_meta_file(meta_path: Path) -> Optional[dict]:
     }
 
 
-def _discover_pairs(biolip_root: Path, n_threads: int = 32) -> List[dict]:
+def _discover_pairs(
+    biolip_root: Path,
+    n_threads: int = 32,
+    first_id: Optional[str] = None,
+) -> List[dict]:
     import subprocess
     receptors_root = biolip_root / 'shared_receptors2'
     if not receptors_root.is_dir():
         raise FileNotFoundError(f'{receptors_root} not found')
 
-    result = subprocess.run(
-        ['find', str(receptors_root), '-mindepth', '5', '-maxdepth', '5',
-         '-name', 'pair_meta.json'],
-        stdout=subprocess.PIPE, text=True, check=True,
-    )
-    meta_paths = [Path(p) for p in result.stdout.splitlines() if p.strip()]
+    first_id_norm = first_id.strip().lower() if first_id else None
+    if first_id_norm:
+        pdb_dirs = sorted(
+            p for p in receptors_root.iterdir()
+            if p.is_dir() and p.name.lower().startswith(first_id_norm)
+        )
+        print(
+            f'  first_id discovery {first_id_norm!r}: '
+            f'{len(pdb_dirs):,} receptor dirs matched',
+            flush=True,
+        )
+        meta_paths: List[Path] = []
+        for pdb_dir in pdb_dirs:
+            meta_paths.extend(pdb_dir.glob('pairs/*/*/pair_meta.json'))
+    else:
+        result = subprocess.run(
+            ['find', str(receptors_root), '-mindepth', '5', '-maxdepth', '5',
+             '-name', 'pair_meta.json'],
+            stdout=subprocess.PIPE, text=True, check=True,
+        )
+        meta_paths = [Path(p) for p in result.stdout.splitlines() if p.strip()]
     print(f'  Found {len(meta_paths):,} pair_meta.json files, reading…', flush=True)
 
     pairs: List[dict] = []
@@ -860,9 +883,11 @@ def extract_pair(
         use_conformers = (conf_policy == ConformerPolicy.FULL_ETKDG_MMFF and num_conformers > 0)
         # Only REGULAR_ORGANIC uses strict V5 parsing
         v5_strict = (route == LigandRoute.REGULAR_ORGANIC)
+        sanitize_mode = 'full' if route == LigandRoute.REGULAR_ORGANIC else 'partial'
     else:
         use_conformers = (num_conformers > 0)
         v5_strict = False
+        sanitize_mode = 'none'
 
     v5_ok = False
     v5_conf_ok = False
@@ -879,6 +904,7 @@ def extract_pair(
                 strict=v5_strict,
                 verbose=False,
                 num_threads=rdkit_threads,
+                sanitize_mode=sanitize_mode,
         )
         v5_ok = True
         v5_conf_ok = _valid_rmsf(features, use_conformers)
@@ -893,6 +919,7 @@ def extract_pair(
                     strict=False,
                     verbose=False,
                     num_threads=rdkit_threads,
+                    sanitize_mode=sanitize_mode,
                 )
                 v5_ok = True
                 v5_conf_ok = False
@@ -1050,6 +1077,8 @@ def extract_pair(
         'ligand_id':              pair['lig_id'],
         'ligand_resseq':          pair['resseq'],
         'molecular_descriptors':  features.get('molecular_descriptors', {}),
+        'sanitize_mode_requested': features.get('sanitize_mode_requested', sanitize_mode),
+        'sanitize_mode_applied':   features.get('sanitize_mode_applied', 'unknown'),
         # ── V6 keys ──────────────────────────────────────────────────────────
         'feature_schema_version':         FEATURE_SCHEMA_VERSION if use_v6 else 'biolip_ligand_v5',
         'ligand_type':                    torch.from_numpy(ligand_type_vec) if use_v6 else torch.zeros(14),
@@ -1132,6 +1161,12 @@ def main() -> int:
                         help='Per-pair timeout in seconds (0 = disable)')
     parser.add_argument('--no-fallback-no-conformers', action='store_true',
                         help='Disable fallback to num_conformers=0 on failure')
+    parser.add_argument('--first_id', default=None,
+                        help=(
+                            'Only process pairs whose PDB id starts with this prefix. '
+                            'Example: --first_id 2 keeps 2xxx structures such as 2ijb. '
+                            'Filtering happens before --max and multiprocessing.'
+                        ))
     parser.add_argument('--max', type=int, default=None,
                         help='Limit to first N pairs (for testing)')
     parser.add_argument('--overwrite', action='store_true')
@@ -1153,6 +1188,7 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
 
     import time as _time
+    first_id = args.first_id.strip().lower() if args.first_id else None
     cache_path = Path(args.pairs_cache) if args.pairs_cache else biolip_root / 'pairs_cache_v6.pkl'
 
     if cache_path and cache_path.exists() and not args.refresh_cache:
@@ -1164,6 +1200,9 @@ def main() -> int:
     else:
         print('Discovering binding pairs…', flush=True)
         _t0 = _time.time()
+        # The shared cache must always contain the full pair set.  Prefix
+        # filtering is applied only after loading/discovering pairs, otherwise
+        # one sharded run could poison the cache with a partial subset.
         pairs = _discover_pairs(biolip_root, n_threads=64)
         print(f'Discovery done in {_time.time()-_t0:.1f}s  ({len(pairs):,} pairs)', flush=True)
         if cache_path:
@@ -1171,6 +1210,19 @@ def main() -> int:
             with open(cache_path, 'wb') as f:
                 pickle.dump(pairs, f, protocol=pickle.HIGHEST_PROTOCOL)
             print(f'Pairs cached to: {cache_path}', flush=True)
+
+    if args.first_id:
+        first_id = args.first_id.strip().lower()
+        before_filter = len(pairs)
+        pairs = [
+            p for p in pairs
+            if str(p.get('pdb_id', '')).lower().startswith(first_id)
+        ]
+        print(
+            f'first_id filter {first_id!r}: kept {len(pairs):,} / '
+            f'{before_filter:,} pairs; skipped {before_filter - len(pairs):,}',
+            flush=True,
+        )
 
     if args.max:
         pairs = pairs[:args.max]
