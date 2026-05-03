@@ -1250,16 +1250,19 @@ def main() -> int:
 
     with ctx.Pool(processes=n_workers) as pool:
         itr = pool.imap_unordered(_pool_task, tasks, chunksize=4)
-        bar = _tqdm(itr, total=total, desc='extract', dynamic_ncols=True) if TQDM_OK else itr
-        for ok, msg in bar:
+        bar = _tqdm(total=total, desc='extract', dynamic_ncols=True) if TQDM_OK else None
+        for ok, msg in itr:
             if ok:
                 ok_count += 1
             else:
                 failures.append(msg)
             if TQDM_OK:
+                bar.update(1)
                 bar.set_postfix(ok=ok_count, fail=len(failures))
             else:
                 print(msg, flush=True)
+        if TQDM_OK:
+            bar.close()
 
     if failures:
         fail_path = output_root / 'failures.tsv'
