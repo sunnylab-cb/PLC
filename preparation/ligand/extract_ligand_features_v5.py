@@ -205,6 +205,7 @@ def extract_ligand_features_single(
     no_conformers: bool = False,
     strict: bool = True,
     num_threads: int = 0,
+    sanitize_mode: str = "none",
 ) -> tuple:
     try:
         rel_path = ligand_file.relative_to(ligand_root)
@@ -221,6 +222,7 @@ def extract_ligand_features_single(
             strict=strict,
             verbose=False,
             num_threads=num_threads,
+            sanitize_mode=sanitize_mode,
         )
 
         data = {
@@ -253,6 +255,8 @@ def extract_ligand_features_single(
             "ligand_path": str(ligand_file),
             "feature_dim_local": features["feature_dim_local"],
             "feature_dim_total": features["feature_dim_total"],
+            "sanitize_mode_requested": features.get("sanitize_mode_requested", sanitize_mode),
+            "sanitize_mode_applied": features.get("sanitize_mode_applied", "unknown"),
         }
 
         if features["coords_original"] is not None:
@@ -283,6 +287,7 @@ def batch_extract_ligand_features(
     strict: bool = True,
     num_threads: int = 0,
     flat: bool = False,
+    sanitize_mode: str = "none",
 ) -> None:
     only_ids_set = {s.lower() for s in only_ids} if only_ids else None
     ligand_files_dict: dict[str, Path] = {}
@@ -323,6 +328,7 @@ def batch_extract_ligand_features(
     print(f"Flat scan mode: {flat}")
     print(f"Strict mode: {strict}")
     print(f"RDKit threads per task: {num_threads}")
+    print(f"Sanitize mode: {sanitize_mode}")
 
     success_count = 0
     fail_count = 0
@@ -333,7 +339,7 @@ def batch_extract_ligand_features(
         for ligand_file in iterator:
             success, message = extract_ligand_features_single(
                 ligand_file, ligand_root, output_dir, num_conformers, overwrite,
-                no_conformers, strict, num_threads
+                no_conformers, strict, num_threads, sanitize_mode
             )
             if "SKIP" in message:
                 skip_count += 1
@@ -348,7 +354,7 @@ def batch_extract_ligand_features(
                 print(f"{status} {message}")
     else:
         tasks = [
-            (f, ligand_root, output_dir, num_conformers, overwrite, no_conformers, strict, num_threads)
+            (f, ligand_root, output_dir, num_conformers, overwrite, no_conformers, strict, num_threads, sanitize_mode)
             for f in ligand_files
         ]
         with mp.Pool(processes=n_workers) as pool:
@@ -390,6 +396,16 @@ def main():
     parser.add_argument("--ids", nargs="*", default=None, help="只处理指定PDB ID")
     parser.add_argument("--loose", action="store_true", help="宽松模式：允许构象/MMFF降级")
     parser.add_argument("--flat", action="store_true", help="平铺扫描模式：直接处理输入目录下的 *.sdf/*.mol2/*.pdb/*.mol")
+    parser.add_argument(
+        "--sanitize-mode",
+        choices=["none", "partial", "full"],
+        default="full",
+        help=(
+            "RDKit sanitization mode for atom/bond/global features. "
+            "Use full for regular organic ligands; partial skips valence/kekulize-sensitive steps; "
+            "none preserves historical behavior. Default: full."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -418,6 +434,7 @@ def main():
         strict=not args.loose,
         num_threads=args.rdkit_threads,
         flat=args.flat,
+        sanitize_mode=args.sanitize_mode,
     )
 
 
