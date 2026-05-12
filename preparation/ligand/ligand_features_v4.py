@@ -406,6 +406,8 @@ def compute_atom_sasa(mol: "Chem.Mol") -> np.ndarray:
             if atom.HasProp("SASA"):
                 try:
                     value = float(atom.GetProp("SASA"))
+                    if not np.isfinite(value):
+                        value = 0.0
                 except Exception:
                     value = 0.0
             sasa[idx] = value

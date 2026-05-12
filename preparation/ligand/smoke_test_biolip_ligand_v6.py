@@ -46,13 +46,13 @@ STATUS_NOT_APPLICABLE = int(OperationStatus.NOT_APPLICABLE)
 
 
 REAL_CASES = {
-    "BEN": "shared_receptors/3gy7/pairs/3gy7_A/BS02_BEN_A_1/pair_meta.json",
-    "ZN": "shared_receptors/8bep/pairs/8bep_L/BS02_ZN_L_700/pair_meta.json",
-    "HEM": "shared_receptors/5vcg/pairs/5vcg_A/BS01_HEM_A_601/pair_meta.json",
-    "ATP": "shared_receptors/9bn0/pairs/9bn0_A/BS02_ATP_A_4702/pair_meta.json",
-    "FAD": "shared_receptors/7fco/pairs/7fco_A/BS01_FAD_A_501/pair_meta.json",
-    "NAG": "shared_receptors/1oio/pairs/1oio_A/BS02_NAG_A_202/pair_meta.json",
-    "MSE": "shared_receptors/3uso/pairs/3uso_B/BS03_MSE_B_601/pair_meta.json",
+    "BEN": "shared_receptors2/3gy7/pairs/3gy7_A/BS02_BEN_A_1/pair_meta.json",
+    "ZN": "shared_receptors2/8bep/pairs/8bep_L/BS02_ZN_L_700/pair_meta.json",
+    "HEM": "shared_receptors2/5vcg/pairs/5vcg_A/BS01_HEM_A_601/pair_meta.json",
+    "ATP": "shared_receptors2/9bn0/pairs/9bn0_A/BS02_ATP_A_4702/pair_meta.json",
+    "FAD": "shared_receptors2/7fco/pairs/7fco_A/BS01_FAD_A_501/pair_meta.json",
+    "NAG": "shared_receptors2/1oio/pairs/1oio_A/BS02_NAG_A_202/pair_meta.json",
+    "MSE": "shared_receptors2/3uso/pairs/3uso_B/BS03_MSE_B_601/pair_meta.json",
 }
 
 
@@ -186,6 +186,25 @@ def assert_regular_organic(data: dict, pair: dict) -> None:
     _assert(float(_group_mask(data, "rmsf_and_flexibility").sum()) > 0, "BEN RMSF mask")
     _assert(float(data["feature_completeness_ratio"]) > 0.8, "BEN completeness")
 
+    # sanitize op provenance: full sanitize must be SUCCESS for REGULAR_ORGANIC
+    _assert(_operation(data, "rdkit_full_sanitize") == STATUS_SUCCESS, "BEN rdkit_full_sanitize SUCCESS")
+    _assert(_operation(data, "rdkit_partial_sanitize") == int(OperationStatus.SKIPPED_BY_POLICY),
+            "BEN rdkit_partial_sanitize SKIPPED_BY_POLICY")
+
+    # Hybridization sanity: with full sanitize, UNSPECIFIED must not dominate
+    x = data["atom_features"]
+    hyb = x[:, 11:17]  # [N, 6]: SP SP2 SP3 SP3D SP3D2 UNSPECIFIED
+    unspec_frac = float(hyb[:, 5].sum()) / max(float(hyb.sum()), 1.0)
+    _assert(unspec_frac < 0.5, f"BEN hybridization UNSPECIFIED fraction too high: {unspec_frac:.2f}")
+    _assert(float(hyb[:, :5].sum()) > 0, "BEN no non-UNSPECIFIED hybridization found")
+
+    # Edge chemical features: aromatic/conjugated/in_ring must appear for benzene
+    ea = data["edge_attr"]  # [2E, 6]
+    _assert(ea.shape[1] == 6, "BEN edge_attr must be 6D")
+    _assert(float(ea[:, 3].sum()) > 0, "BEN edge: no aromatic bonds found (expected for benzene)")
+    _assert(float(ea[:, 4].sum()) > 0, "BEN edge: no conjugated bonds found")
+    _assert(float(ea[:, 5].sum()) > 0, "BEN edge: no in-ring bonds found")
+
     meta = pair["meta"]
     sdf_name = meta.get("ligand_reference_sdf_file") or meta.get("ligand_reference_mol2_file")
     sdf = pair["pair_dir"] / sdf_name
@@ -247,6 +266,11 @@ def assert_metal_complex(data: dict) -> None:
     _assert(_operation(data, "etkdg") != STATUS_SUCCESS, "HEM ETKDG")
     _assert(_operation(data, "mmff") != STATUS_SUCCESS, "HEM MMFF")
     _assert(data["coords"].shape[0] == data["atom_features"].shape[0], "HEM coords/x")
+    # METAL_COMPLEX requests partial sanitize → partial must be SUCCESS, full SKIPPED
+    _assert(_operation(data, "rdkit_partial_sanitize") == STATUS_SUCCESS,
+            "HEM rdkit_partial_sanitize SUCCESS")
+    _assert(_operation(data, "rdkit_full_sanitize") == int(OperationStatus.SKIPPED_BY_POLICY),
+            "HEM rdkit_full_sanitize SKIPPED_BY_POLICY")
 
 
 def assert_no_conformer_type(data: dict, label: str, type_name: str) -> None:
@@ -293,6 +317,56 @@ def assert_multifragment(data: dict) -> None:
         _assert(set(_group_source(data, group).tolist()).issubset(valid_sources), f"MULTI {group} source")
     _assert(torch.count_nonzero(data["global_features"]).item() == 0, "MULTI global zero")
     _assert(torch.count_nonzero(data["shape_features"]).item() == 0, "MULTI shape zero")
+
+
+def _write_hypervalent_sdf(path: Path) -> None:
+    """Write a V2000 SDF with a pentavalent carbon (5 C-C bonds).
+
+    RDKit full sanitize (SANITIZE_PROPERTIES) rejects this valence violation.
+    Partial sanitize skips SANITIZE_PROPERTIES and succeeds.
+    This lets us assert requested=full, applied=partial → rdkit_full_sanitize=FAILED.
+    """
+    content = (
+        "hypervalent_C\n"
+        "  Synthetic fixture: pentavalent carbon triggers full->partial fallback\n"
+        "\n"
+        "  6  5  0  0  0  0  0  0  0  0999 V2000\n"
+        "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "    1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "   -1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "    0.0000    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "    0.0000   -1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "    0.0000    0.0000    1.5000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "  1  2  1  0\n"
+        "  1  3  1  0\n"
+        "  1  4  1  0\n"
+        "  1  5  1  0\n"
+        "  1  6  1  0\n"
+        "M  END\n"
+        "$$$$\n"
+    )
+    path.write_text(content, encoding="utf-8")
+
+
+def assert_sanitize_fallback(data: dict) -> None:
+    """Fixture: REGULAR_ORGANIC with pentavalent C → full sanitize fails, partial succeeds."""
+    assert_common_schema(data, "HYPERVALENT")
+    _assert(int(data["ligand_route"]) == int(LigandRoute.REGULAR_ORGANIC), "HVLNT route")
+    # requested full but applied partial → full=FAILED, partial=SUCCESS
+    _assert(_operation(data, "rdkit_full_sanitize") == int(OperationStatus.FAILED),
+            "HVLNT rdkit_full_sanitize must be FAILED (fallback triggered)")
+    _assert(_operation(data, "rdkit_partial_sanitize") == STATUS_SUCCESS,
+            "HVLNT rdkit_partial_sanitize must be SUCCESS")
+    # x_group_source for chemistry groups must NOT be RDKIT_FULL_SANITIZE.
+    # degree_and_formal_charge (group 9) always has non-zero values → stays mask=1 after
+    # quality check and must carry RDKIT_PARTIAL_SANITIZE source, not RDKIT_FULL_SANITIZE.
+    full_src  = int(FeatureSource.RDKIT_FULL_SANITIZE)
+    part_src  = int(FeatureSource.RDKIT_PARTIAL_SANITIZE)
+    src_vals = set(_group_source(data, "degree_and_formal_charge").tolist())
+    _assert(full_src not in src_vals,
+            "HVLNT degree_and_formal_charge source must not be RDKIT_FULL_SANITIZE after fallback")
+    _assert(part_src in src_vals,
+            "HVLNT degree_and_formal_charge source must contain RDKIT_PARTIAL_SANITIZE")
 
 
 def _write_sdf_from_smiles(smiles: str, path: Path) -> None:
@@ -371,6 +445,22 @@ def run(args: argparse.Namespace) -> None:
         multi = _extract_to_temp(multi_pair, out_root / "MULTI", num_conformers=3)
         assert_multifragment(multi)
         print("[ok] synthetic multifragment")
+
+        # Sanitize fallback fixture: pentavalent carbon → full FAILED, partial SUCCESS
+        hv_pair_dir = (synthetic_root / "shared_receptors" / "synhv" / "pairs"
+                       / "synhv_A" / "BS01_LIG_A_1")
+        hv_pair_dir.mkdir(parents=True, exist_ok=True)
+        hv_sdf = hv_pair_dir / "synhv_LIG_ligand_ori.sdf"
+        _write_hypervalent_sdf(hv_sdf)
+        (hv_pair_dir / "pair_meta.json").write_text(json.dumps({
+            "protein_chain": "A", "binding_site_id": "BS01",
+            "ligand_id": "LIG", "ligand_resseq": "1",
+            "ligand_reference_sdf_file": hv_sdf.name,
+        }), encoding="utf-8")
+        hv_pair = _load_pair(hv_pair_dir / "pair_meta.json")
+        hv_data = _extract_to_temp(hv_pair, out_root / "HVLNT", num_conformers=3)
+        assert_sanitize_fallback(hv_data)
+        print("[ok] hypervalent-C sanitize-fallback fixture")
 
         missing_pair = _make_synthetic_pair(synthetic_root, "synx", "BAD", None, missing=True)
         ok, msg = extract_pair(missing_pair, out_root / "MISSING", overwrite=True)

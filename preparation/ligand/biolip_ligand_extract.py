@@ -450,6 +450,7 @@ def _build_group_mask_source(
     rmsf_valid: bool,
     shape_valid: bool,
     has_exp_coords: bool = False,
+    sanitize_mode_applied: str = 'none',
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Returns (group_mask [N, G=14] float32, group_source [N, G=14] int8).
@@ -488,9 +489,16 @@ def _build_group_mask_source(
     if not v5_ok:
         return mask, src  # all UNAVAILABLE (default from empty_group_source)
 
-    # Source for chemistry-derived groups depends on route
+    # Source for chemistry-derived groups depends on route AND what sanitize actually applied.
+    # REGULAR_ORGANIC requests full; if it fell back, source must reflect that.
     if route == LigandRoute.REGULAR_ORGANIC:
-        chem_src = int(FeatureSource.RDKIT_FULL_SANITIZE)
+        if sanitize_mode_applied == 'full':
+            chem_src = int(FeatureSource.RDKIT_FULL_SANITIZE)
+        elif sanitize_mode_applied == 'partial':
+            chem_src = int(FeatureSource.RDKIT_PARTIAL_SANITIZE)
+        else:
+            # applied=none: sanitize failed entirely; treat same as heuristic
+            chem_src = int(FeatureSource.FALLBACK_HEURISTIC)
     else:
         # METAL_COMPLEX / NO_CONFORMER_BIOLOGICAL: V5 may have used internal fallbacks
         chem_src = int(FeatureSource.FALLBACK_HEURISTIC)
@@ -503,13 +511,26 @@ def _build_group_mask_source(
         mask[:, g] = 1.0
         src[:, g]  = chem_src
 
-    # RMSF + flexibility (group 3): needs conformer ensemble
+    # When sanitize failed entirely (applied=none), downgrade all
+    # sanitize-dependent chemistry-perception groups regardless of route.
+    # Groups 0,1,2,4,5,6,7,8,10,11,12 require sanitization for correct values.
+    # Group 9 (degree_and_formal_charge) is raw graph topology and remains valid.
+    # Groups 3 (rmsf) and 13 (shape) are coordinate-based and handled below
+    # independently of sanitization; they are NOT touched here.
+    if sanitize_mode_applied == 'none':
+        for g in [0, 1, 2, 4, 5, 6, 7, 8, 10, 11, 12]:
+            mask[:, g] = 0.0
+            src[:, g]  = int(FeatureSource.UNAVAILABLE)
+
+    # RMSF + flexibility (group 3): coordinate-based, independent of sanitization.
     if rmsf_valid:
         mask[:, 3] = 1.0; src[:, 3] = chem_src
     else:
         src[:, 3] = na_src  # RMSF silently zero without conformers
 
-    # shape_3d (group 13): valid from conformers OR experimental bound pose
+    # shape_3d (group 13): valid from conformers OR experimental bound pose.
+    # Coordinate geometry is independent of sanitization, so this block runs
+    # regardless of sanitize_mode_applied.
     if shape_valid and rmsf_valid:
         mask[:, 13] = 1.0; src[:, 13] = chem_src
     elif shape_valid and has_exp_coords and n_atoms > 1:
@@ -971,10 +992,37 @@ def extract_pair(
 
     # ── Annotate operation_status from V5 outcome ─────────────────────────────
     if use_v6 and v5_ok:
-        for op in ['rdkit_full_sanitize', 'rdkit_add_h', 'gasteiger',
-                   'crippen_logp', 'tpsa', 'morgan', 'sasa']:
+        # Sanitize ops: cross-check requested vs applied to detect fallback failures.
+        _san_req     = features.get('sanitize_mode_requested', sanitize_mode)
+        _san_applied = features.get('sanitize_mode_applied',   'unknown')
+
+        if _san_applied == 'full':
+            op_status[OP_IDX['rdkit_full_sanitize']]    = int(OperationStatus.SUCCESS)
+            op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.SKIPPED_BY_POLICY)
+        elif _san_applied == 'partial':
+            # partial succeeded; full was attempted only if it was requested
+            if _san_req == 'full':
+                op_status[OP_IDX['rdkit_full_sanitize']] = int(OperationStatus.FAILED)
+            else:
+                op_status[OP_IDX['rdkit_full_sanitize']] = int(OperationStatus.SKIPPED_BY_POLICY)
+            op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.SUCCESS)
+        elif _san_applied == 'none':
+            # both failed if they were requested; otherwise skipped
+            if _san_req == 'full':
+                op_status[OP_IDX['rdkit_full_sanitize']]    = int(OperationStatus.FAILED)
+                op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.FAILED)
+            elif _san_req == 'partial':
+                op_status[OP_IDX['rdkit_full_sanitize']]    = int(OperationStatus.SKIPPED_BY_POLICY)
+                op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.FAILED)
+            else:
+                op_status[OP_IDX['rdkit_full_sanitize']]    = int(OperationStatus.SKIPPED_BY_POLICY)
+                op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.SKIPPED_BY_POLICY)
+        else:  # 'unknown' — V5 didn't report; stay UNVERIFIED
+            op_status[OP_IDX['rdkit_full_sanitize']]    = int(OperationStatus.SKIPPED_BY_POLICY)
+            op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.SKIPPED_BY_POLICY)
+        # AddH and descriptor ops are V5-internal; cannot verify from outside → UNVERIFIED
+        for op in ['rdkit_add_h', 'gasteiger', 'crippen_logp', 'tpsa', 'morgan', 'sasa']:
             op_status[OP_IDX[op]] = int(OperationStatus.UNVERIFIED)
-        op_status[OP_IDX['rdkit_partial_sanitize']] = int(OperationStatus.SKIPPED_BY_POLICY)
 
         if v5_conf_ok:
             op_status[OP_IDX['etkdg']]  = int(OperationStatus.SUCCESS)
@@ -998,9 +1046,19 @@ def extract_pair(
     if use_v6:
         has_exp = bool(features.get('has_original_coords', False))
         group_mask, group_src = _build_group_mask_source(
-            n_atoms, route, v5_ok, v5_conf_ok, v5_shape_ok, has_exp_coords=has_exp
+            n_atoms, route, v5_ok, v5_conf_ok, v5_shape_ok,
+            has_exp_coords=has_exp,
+            sanitize_mode_applied=features.get('sanitize_mode_applied', 'none'),
         )
+        # Run quality check on raw (potentially NaN) values so that NaN descriptor
+        # failures are correctly reflected as mask=0 BEFORE clamping hides them.
         _apply_v5_group_quality(group_mask, group_src, features)
+        # Clamp NaN/Inf to 0 for safe storage AFTER quality check has already
+        # invalidated groups that had non-finite values.
+        for _nan_key in ('atom_features', 'gasteiger_charges', 'logp_contribs', 'tpsa_contribs'):
+            _arr = np.asarray(features.get(_nan_key, []), dtype=np.float32)
+            if _arr.size > 0 and not np.isfinite(_arr).all():
+                features[_nan_key] = np.nan_to_num(_arr, nan=0.0, posinf=0.0, neginf=0.0)
         x_atom_extra, x_atom_extra_mask = _atom_extra_with_addh(ori_sdf, n_atoms)
         x_atom_extra_source = np.where(
             x_atom_extra_mask > 0,

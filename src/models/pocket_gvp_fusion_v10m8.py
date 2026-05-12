@@ -606,6 +606,10 @@ class PocketGVPFusionV10m8(nn.Module):
         # Module 7: Classifier
         d_classifier_in = c['d_model'] + c['d_phys_encoded']
         classifier_dropout = c.get('classifier_dropout', 0.2)
+        # LayerNorm before classifier: h_prot_fused (cross-attn residual, no trailing norm)
+        # and protein_physchem_encoded (has LayerNorm at encoder output) may differ in scale.
+        # LN is a low-risk stabilizer; whether it materially helps depends on observed norm gap.
+        self.classifier_input_norm = nn.LayerNorm(d_classifier_in)
         self.classifier = nn.Sequential(
             nn.Linear(d_classifier_in, 256),
             nn.ReLU(),
@@ -911,6 +915,7 @@ class PocketGVPFusionV10m8(nn.Module):
 
         # Module 7: Classifier
         x_final = torch.cat([h_prot_fused, protein_physchem_encoded], dim=-1)
+        x_final = self.classifier_input_norm(x_final)
         logits = self.classifier(x_final)
 
         result = {
