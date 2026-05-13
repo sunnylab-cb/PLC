@@ -85,6 +85,7 @@ model:
   use_dist_bias: true
   dist_bias_n_rbf: 16          # RBF bins for distance-to-bias mapping
   dist_bias_max_dist: 20.0     # clamp distance at 20Å
+  use_sdpa_protein_self_attn: true  # fused SDPA for long protein self-attn
 
   use_gated_attn: true
   use_swiglu: true

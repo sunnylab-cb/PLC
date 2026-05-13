@@ -523,8 +523,7 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
-    ligand_edge_index_list = []
-    ligand_edge_attr_list = []
+    ligand_data_list = []  # PyG Data list for batched graph (assembled in worker)
 
     for i, sample in enumerate(batch):
         n_res = sample['n_residues']
@@ -555,8 +554,36 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
         ligand_mask[i, :n_atm] = True
-        ligand_edge_index_list.append(sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)))
-        ligand_edge_attr_list.append(sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)))
+
+        # Build per-sample PyG Data here (in DataLoader worker, not main thread).
+        # Keep empty ligand slots so PyG batch indices stay aligned with B.
+        if n_atm > 0:
+            lig_x_i = sample['ligand_features'][:n_atm]
+            lig_pos_i = sample['ligand_coords'][:n_atm]
+        else:
+            lig_x_i = torch.zeros((0, ligand_dim), dtype=sample['ligand_features'].dtype)
+            lig_pos_i = torch.zeros((0, 3), dtype=sample['ligand_coords'].dtype)
+        ligand_data_list.append(Data(
+            x=lig_x_i,
+            pos=lig_pos_i,
+            edge_index=sample.get('ligand_edge_index', torch.zeros((2, 0), dtype=torch.long)),
+            edge_attr=sample.get('ligand_edge_attr', torch.zeros((0, 6), dtype=torch.float32)),
+        ))
+
+    # Assemble batched ligand graph in worker (avoids main-thread Python loop overhead)
+    if len(ligand_data_list) > 0:
+        ligand_batch_graph = Batch.from_data_list(ligand_data_list)
+        ligand_x = ligand_batch_graph.x
+        ligand_pos = ligand_batch_graph.pos
+        ligand_edge_index = ligand_batch_graph.edge_index
+        ligand_edge_attr = ligand_batch_graph.edge_attr
+        ligand_batch_idx = ligand_batch_graph.batch
+    else:
+        ligand_x = torch.zeros((0, ligand_dim))
+        ligand_pos = torch.zeros((0, 3))
+        ligand_edge_index = torch.zeros((2, 0), dtype=torch.long)
+        ligand_edge_attr = torch.zeros((0, 6), dtype=torch.float32)
+        ligand_batch_idx = torch.zeros((0,), dtype=torch.long)
 
     result = {
         'pdb_ids': pdb_ids,
@@ -571,8 +598,11 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'ligand_features': ligand_features,
         'ligand_coords': ligand_coords,
         'ligand_mask': ligand_mask,
-        'ligand_edge_index_list': ligand_edge_index_list,
-        'ligand_edge_attr_list': ligand_edge_attr_list,
+        'ligand_x': ligand_x,
+        'ligand_pos': ligand_pos,
+        'ligand_edge_index': ligand_edge_index,
+        'ligand_edge_attr': ligand_edge_attr,
+        'ligand_batch': ligand_batch_idx,
         'labels': labels,
         'n_residues': torch.tensor(n_residues_list),
         'n_atoms': torch.tensor(n_atoms_list),
@@ -593,48 +623,14 @@ def prepare_model_inputs_v10(
     non_blocking: bool = True
 ) -> Dict[str, torch.Tensor]:
     """
-    Prepare model inputs for v10.
+    Prepare model inputs for v10-compatible models.
 
-    Dynamic dimensions:
-    - protein_spatial_scalar from complete_features_v4
-    - protein_spatial_vector from complete_features_v4
-    - ligand_features from ligand_features_v5
+    Ligand graph (ligand_x/pos/edge_index/edge_attr/batch) is pre-assembled
+    in pocket_collate_fn_v10 (DataLoader workers) and forwarded here directly.
+    The legacy ligand_to_protein placeholder is kept for older v10/v10m*
+    models and scripts that still read it for shape information.
     """
-    ligand_data_list = []
-    B = len(batch['pdb_ids'])
-
-    for i in range(B):
-        n_atoms = batch['n_atoms'][i].item()
-        if n_atoms == 0:
-            continue
-
-        x = batch['ligand_features'][i, :n_atoms]
-        pos = batch['ligand_coords'][i, :n_atoms]
-        if 'ligand_edge_index_list' in batch and 'ligand_edge_attr_list' in batch:
-            edge_index = batch['ligand_edge_index_list'][i]
-            edge_attr = batch['ligand_edge_attr_list'][i]
-        else:
-            edge_index = torch.zeros((2, 0), dtype=torch.long)
-            edge_attr = torch.zeros((0, 6), dtype=torch.float32)
-
-        ligand_data_list.append(Data(
-            x=x,
-            pos=pos,
-            edge_index=edge_index,
-            edge_attr=edge_attr
-        ))
-
-    if len(ligand_data_list) > 0:
-        ligand_batch_graph = Batch.from_data_list(ligand_data_list)
-    else:
-        ligand_batch_graph = Data(
-            x=torch.zeros((0, batch['ligand_features'].shape[-1])),
-            pos=torch.zeros((0, 3)),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            edge_attr=torch.zeros((0, 6)),
-            batch=torch.zeros((0,), dtype=torch.long)
-        )
-
+    B, max_atoms = batch['ligand_mask'].shape
     model_inputs = {
         'esm_embeddings': batch['esm_embeddings'].to(device, non_blocking=non_blocking),
         'protein_physchem': batch['protein_physchem'].to(device, non_blocking=non_blocking),
@@ -644,12 +640,43 @@ def prepare_model_inputs_v10(
         'protein_coords': batch['protein_coords'].to(device, non_blocking=non_blocking),
         'protein_mask': batch['protein_mask'].to(device, non_blocking=non_blocking),
         'chain_ids': batch['chain_ids'].to(device, non_blocking=non_blocking),
-        'ligand_x': ligand_batch_graph.x.to(device, non_blocking=non_blocking),
-        'ligand_pos': ligand_batch_graph.pos.to(device, non_blocking=non_blocking),
-        'ligand_edge_index': ligand_batch_graph.edge_index.to(device, non_blocking=non_blocking),
-        'ligand_edge_attr': ligand_batch_graph.edge_attr.to(device, non_blocking=non_blocking),
-        'ligand_batch': ligand_batch_graph.batch.to(device, non_blocking=non_blocking),
-        'ligand_to_protein': torch.zeros(B, batch['ligand_features'].shape[1], 512).to(device, non_blocking=non_blocking),
+        'ligand_x': batch['ligand_x'].to(device, non_blocking=non_blocking),
+        'ligand_pos': batch['ligand_pos'].to(device, non_blocking=non_blocking),
+        'ligand_edge_index': batch['ligand_edge_index'].to(device, non_blocking=non_blocking),
+        'ligand_edge_attr': batch['ligand_edge_attr'].to(device, non_blocking=non_blocking),
+        'ligand_batch': batch['ligand_batch'].to(device, non_blocking=non_blocking),
+        'ligand_to_protein': torch.zeros(B, max_atoms, 512).to(device, non_blocking=non_blocking),
+        'ligand_mask': batch['ligand_mask'].to(device, non_blocking=non_blocking),
+    }
+    return model_inputs
+
+
+def prepare_model_inputs_v11(
+    batch: Dict[str, torch.Tensor],
+    device: torch.device,
+    non_blocking: bool = True
+) -> Dict[str, torch.Tensor]:
+    """
+    Prepare model inputs for v11-family models.
+
+    This intentionally omits the legacy ligand_to_protein placeholder.  V11
+    reads ligand batch shape from ligand_mask and consumes the flat PyG ligand
+    graph produced by pocket_collate_fn_v10.
+    """
+    model_inputs = {
+        'esm_embeddings': batch['esm_embeddings'].to(device, non_blocking=non_blocking),
+        'protein_physchem': batch['protein_physchem'].to(device, non_blocking=non_blocking),
+        'protein_spatial_scalar': batch['protein_spatial_scalar'].to(device, non_blocking=non_blocking),
+        'protein_spatial_vector': batch['protein_spatial_vector'].to(device, non_blocking=non_blocking),
+        'protein_gvp_vectors': batch['protein_vectors'].to(device, non_blocking=non_blocking),
+        'protein_coords': batch['protein_coords'].to(device, non_blocking=non_blocking),
+        'protein_mask': batch['protein_mask'].to(device, non_blocking=non_blocking),
+        'chain_ids': batch['chain_ids'].to(device, non_blocking=non_blocking),
+        'ligand_x': batch['ligand_x'].to(device, non_blocking=non_blocking),
+        'ligand_pos': batch['ligand_pos'].to(device, non_blocking=non_blocking),
+        'ligand_edge_index': batch['ligand_edge_index'].to(device, non_blocking=non_blocking),
+        'ligand_edge_attr': batch['ligand_edge_attr'].to(device, non_blocking=non_blocking),
+        'ligand_batch': batch['ligand_batch'].to(device, non_blocking=non_blocking),
         'ligand_mask': batch['ligand_mask'].to(device, non_blocking=non_blocking),
     }
     return model_inputs

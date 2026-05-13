@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.pocket_dataset_v8 import PocketDatasetV8, set_seed
 from src.data.pocket_dataset import save_splits, load_splits, load_splits_with_cluster_size
-from src.data.collate import pocket_collate_fn_v10, prepare_model_inputs_v10
+from src.data.collate import pocket_collate_fn_v10, prepare_model_inputs_v11
 from src.models.pocket_gvp_fusion_v11m1 import PocketGVPFusionV11m1
 from src.data.pocket_dataset_v6 import create_data_splits_v5
 from src.metrics.metrics import compute_segmentation_metrics, compute_enhanced_metrics
@@ -987,7 +987,7 @@ def train_epoch(
             perf_monitor.start('data_loading')
 
         # Prepare inputs
-        inputs = prepare_model_inputs_v10(batch, device, non_blocking=True)
+        inputs = prepare_model_inputs_v11(batch, device, non_blocking=True)
         labels = batch['labels'].to(device, non_blocking=True)
         mask = batch['protein_mask'].to(device, non_blocking=True)
 
@@ -1012,7 +1012,6 @@ def train_epoch(
                 ligand_edge_index=inputs['ligand_edge_index'],
                 ligand_edge_attr=inputs['ligand_edge_attr'],
                 ligand_batch=inputs['ligand_batch'],
-                ligand_to_protein=inputs['ligand_to_protein'],
                 ligand_mask=inputs['ligand_mask']
             )
 
@@ -1142,8 +1141,8 @@ def train_epoch(
             perf_monitor.end('loss_computation')
             perf_monitor.start('backward')
 
-        # V10: Gradient accumulation
-        loss_scaled = loss / accumulation_steps
+        # V10: Gradient accumulation (loss already divided by accumulation_steps above)
+        loss_scaled = loss
         if use_amp and scaler is not None:
             scaler.scale(loss_scaled).backward()
         else:
@@ -1347,7 +1346,7 @@ def evaluate(
     all_labels_original = []
 
     for batch in dataloader:
-        inputs = prepare_model_inputs_v10(batch, device, non_blocking=True)
+        inputs = prepare_model_inputs_v11(batch, device, non_blocking=True)
         labels = batch['labels'].to(device, non_blocking=True)  # VDW labels
         mask = batch['protein_mask'].to(device, non_blocking=True)
 
@@ -1367,7 +1366,6 @@ def evaluate(
                 ligand_edge_index=inputs['ligand_edge_index'],
                 ligand_edge_attr=inputs['ligand_edge_attr'],
                 ligand_batch=inputs['ligand_batch'],
-                ligand_to_protein=inputs['ligand_to_protein'],
                 ligand_mask=inputs['ligand_mask']
             )
 

@@ -116,7 +116,8 @@ def apply_rotary_pos_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) 
 class RoPEGatedMultiHeadAttention(nn.Module):
     """GatedMultiHeadAttention with RoPE support."""
     def __init__(self, d_model: int, n_heads: int = 8, dropout: float = 0.1,
-                 use_gate: bool = True, attn_dropout: Optional[float] = None):
+                 use_gate: bool = True, attn_dropout: Optional[float] = None,
+                 use_sdpa: bool = False):
         super().__init__()
         assert d_model % n_heads == 0
         self.d_model = d_model
@@ -124,6 +125,7 @@ class RoPEGatedMultiHeadAttention(nn.Module):
         self.d_head = d_model // n_heads
         self.scale = self.d_head ** -0.5
         self.use_gate = use_gate
+        self.use_sdpa = use_sdpa
 
         self.w_q = nn.Linear(d_model, d_model, bias=False)
         self.w_k = nn.Linear(d_model, d_model, bias=False)
@@ -163,22 +165,45 @@ class RoPEGatedMultiHeadAttention(nn.Module):
         q = apply_rotary_pos_emb(q, cos_q, sin_q)
         k = apply_rotary_pos_emb(k, cos_k, sin_k)
 
-        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        if self.use_sdpa:
+            # SDPA accepts an additive float mask/bias broadcastable to
+            # [B, n_heads, L, S].  This path is intended for protein
+            # self-attention, where long L makes fused attention worthwhile.
+            sdpa_mask = attn_bias.to(dtype=q.dtype) if attn_bias is not None else None
+            if mask is not None:
+                if mask.dim() == 2:
+                    mask = mask.unsqueeze(1).unsqueeze(2)   # [B, 1, 1, S]
+                elif mask.dim() == 3:
+                    mask = mask.unsqueeze(1)                # [B, 1, L, S]
+                pad_bias = torch.zeros(
+                    mask.shape, device=x.device, dtype=q.dtype
+                ).masked_fill(~mask, float('-inf'))
+                sdpa_mask = pad_bias if sdpa_mask is None else sdpa_mask + pad_bias
 
-        # V10m4: add pre-softmax 3D distance bias (protein-internal, no leakage)
-        if attn_bias is not None:
-            attn = attn + attn_bias
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=sdpa_mask,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                is_causal=False,
+            )
+            out = out.transpose(1, 2).reshape(B, L, self.d_model)
+        else:
+            attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
 
-        if mask is not None:
-            if mask.dim() == 2:
-                mask = mask.unsqueeze(1).unsqueeze(2)
-            elif mask.dim() == 3:
-                mask = mask.unsqueeze(1)
-            attn = attn.masked_fill(~mask, float('-inf'))
+            # V10m4: add pre-softmax 3D distance bias (protein-internal, no leakage)
+            if attn_bias is not None:
+                attn = attn + attn_bias
 
-        attn = F.softmax(attn, dim=-1)
-        attn = self.attn_dropout(attn)
-        out = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, self.d_model)
+            if mask is not None:
+                if mask.dim() == 2:
+                    mask = mask.unsqueeze(1).unsqueeze(2)
+                elif mask.dim() == 3:
+                    mask = mask.unsqueeze(1)
+                attn = attn.masked_fill(~mask, float('-inf'))
+
+            attn = F.softmax(attn, dim=-1)
+            attn = self.attn_dropout(attn)
+            out = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, self.d_model)
         out = self.w_o(out)
 
         if self.use_gate:
@@ -260,6 +285,75 @@ class DistanceBias(nn.Module):
         return bias
 
 
+class LigandDistanceBias(nn.Module):
+    """
+    V11m2: 3D Distance-Biased Attention for ligand self-attention.
+
+    Symmetric to DistanceBias (protein), adapted for ligand's
+    [global_token, atom_1, ..., atom_M] layout:
+    - Global token (index 0) has no 3D atom position → its bias rows/columns are zero.
+    - Atom-atom pairs [1:, 1:] receive RBF(inter-atomic distance) → per-head bias.
+
+    Zero-init → starts as standard attention, bias learned gradually (safe to enable).
+
+    Args:
+        n_heads:  number of attention heads
+        n_rbf:    RBF bins (8 is sufficient; ligand atoms within ~8Å of each other)
+        max_dist: saturation distance (Å)
+    """
+    def __init__(self, n_heads: int, n_rbf: int = 8, max_dist: float = 8.0):
+        super().__init__()
+        self.n_heads  = n_heads
+        self.n_rbf    = n_rbf
+        self.max_dist = max_dist
+        self.register_buffer('rbf_mu', torch.linspace(0.0, max_dist, n_rbf))
+        self.rbf_sigma = max_dist / n_rbf
+        # Zero-init → no change at start, bias learned gradually
+        self.proj = nn.Linear(n_rbf, n_heads, bias=True)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, atom_pos: torch.Tensor,
+                atom_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Args:
+            atom_pos:  [B, M, 3]  atom positions (NO global token)
+            atom_mask: [B, M]     True = valid atom
+        Returns:
+            bias: [B, n_heads, M+1, M+1]
+                  row/col 0 (global token) = zero
+                  rows/cols [1:, 1:] = RBF atom-atom bias
+        """
+        B, M, _ = atom_pos.shape
+        device   = atom_pos.device
+        dtype    = atom_pos.dtype
+
+        # Pairwise atom-atom distances [B, M, M]
+        dist   = torch.cdist(atom_pos, atom_pos).clamp(max=self.max_dist)
+
+        # RBF encoding [B, M, M, n_rbf]
+        rbf_mu = self.rbf_mu.to(dtype=dtype)
+        rbf    = torch.exp(
+            -((dist.unsqueeze(-1) - rbf_mu) ** 2) / (2.0 * self.rbf_sigma ** 2)
+        )
+
+        # Project to per-head bias [B, M, M, n_heads] → [B, n_heads, M, M]
+        atom_bias = self.proj(rbf).permute(0, 3, 1, 2)
+
+        # Mask padding atoms (key columns)
+        if atom_mask is not None:
+            pad_mask  = (~atom_mask).unsqueeze(1).unsqueeze(2)  # [B, 1, 1, M]
+            atom_bias = atom_bias.masked_fill(pad_mask, float('-inf'))
+
+        # Prepend zero row and column for global token → [B, n_heads, M+1, M+1]
+        zeros_col = torch.zeros(B, self.n_heads, M, 1,     device=device, dtype=atom_bias.dtype)
+        atom_bias = torch.cat([zeros_col, atom_bias], dim=-1)            # [B, n_heads, M, M+1]
+        zeros_row = torch.zeros(B, self.n_heads, 1, M + 1, device=device, dtype=atom_bias.dtype)
+        full_bias  = torch.cat([zeros_row, atom_bias], dim=-2)           # [B, n_heads, M+1, M+1]
+
+        return full_bias
+
+
 class SwiGLU(nn.Module):
     """SwiGLU FFN (copied from transformer_layers.py)."""
     def __init__(self, d_model: int, d_ffn: Optional[int] = None, dropout: float = 0.1):
@@ -295,11 +389,13 @@ class RoPEGatedTransformerBlock(nn.Module):
     """Transformer block with RoPE, SwiGLU, and Stochastic Depth."""
     def __init__(self, d_model: int, n_heads: int = 8, dropout: float = 0.1,
                  use_gated_attn: bool = True, use_swiglu: bool = True,
-                 drop_path_prob: float = 0.0, attn_dropout: Optional[float] = None):
+                 drop_path_prob: float = 0.0, attn_dropout: Optional[float] = None,
+                 use_sdpa: bool = False):
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
         self.attn = RoPEGatedMultiHeadAttention(
-            d_model, n_heads, dropout, use_gate=use_gated_attn, attn_dropout=attn_dropout
+            d_model, n_heads, dropout, use_gate=use_gated_attn,
+            attn_dropout=attn_dropout, use_sdpa=use_sdpa
         )
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = SwiGLU(d_model, dropout=dropout) if use_swiglu else nn.Sequential(
@@ -330,13 +426,15 @@ class RoPEProteinContextEncoder(nn.Module):
                  attn_dropout: Optional[float] = None,
                  use_dist_bias: bool = False,        # V10m4
                  dist_bias_n_rbf: int = 16,          # V10m4
-                 dist_bias_max_dist: float = 20.0):  # V10m4
+                 dist_bias_max_dist: float = 20.0,    # V10m4
+                 use_sdpa: bool = False):
         super().__init__()
         drop_path_probs = [stochastic_depth_prob * i / max(n_layers - 1, 1) for i in range(n_layers)]
         self.layers = nn.ModuleList([
             RoPEGatedTransformerBlock(
                 d_model, n_heads, dropout, use_gated_attn=True, use_swiglu=True,
-                drop_path_prob=drop_path_probs[i], attn_dropout=attn_dropout
+                drop_path_prob=drop_path_probs[i], attn_dropout=attn_dropout,
+                use_sdpa=use_sdpa
             ) for i in range(n_layers)
         ])
         self.norm = nn.LayerNorm(d_model)
@@ -420,11 +518,17 @@ class LigandSelfAttentionEncoder(nn.Module):
     - Pre-LN, Gated MHA + SwiGLU FFN (consistent with protein_context_encoder)
     - No RoPE: atoms have no meaningful linear order; sequential default positions
       are used and act as a mild soft positional prior (acceptable for ≤128 atoms)
-    - No distance bias: ligand 3D geometry is already encoded by Ligand3DEncoder
     - Trailing LayerNorm for stable hand-off to cross-attention
+
+    V11m2 addition: optional per-layer 3D distance bias (LigandDistanceBias).
+    Symmetric to protein's DistanceBias. Global token (index 0) always has zero bias;
+    atom-atom pairs use RBF(inter-atomic distance). Zero-init, safe to enable.
     """
     def __init__(self, d_model: int, n_layers: int, n_heads: int,
-                 dropout: float, attn_dropout: Optional[float] = None):
+                 dropout: float, attn_dropout: Optional[float] = None,
+                 use_dist_bias: bool = False,
+                 dist_bias_n_rbf: int = 8,
+                 dist_bias_max_dist: float = 8.0):
         super().__init__()
         self.layers = nn.ModuleList([
             RoPEGatedTransformerBlock(
@@ -437,17 +541,31 @@ class LigandSelfAttentionEncoder(nn.Module):
         ])
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # V11m2: optional per-layer 3D distance bias
+        if use_dist_bias:
+            self.dist_bias_modules = nn.ModuleList([
+                LigandDistanceBias(n_heads, n_rbf=dist_bias_n_rbf, max_dist=dist_bias_max_dist)
+                for _ in range(n_layers)
+            ])
+        else:
+            self.dist_bias_modules = None
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None,
+                atom_pos: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
-            x:    [B, M+1, d_model]  (includes prepended global token)
-            mask: [B, M+1]           True = valid position
+            x:        [B, M+1, d_model]  global token + atoms
+            mask:     [B, M+1]           True = valid position
+            atom_pos: [B, M, 3]          atom positions (no global token); for dist bias
         Returns:
             [B, M+1, d_model]
         """
-        for layer in self.layers:
-            # position_ids=None → sequential RoPE [0,1,...,M], no attn_bias
-            x = layer(x, mask=mask)
+        for i, layer in enumerate(self.layers):
+            attn_bias = None
+            if self.dist_bias_modules is not None and atom_pos is not None:
+                atom_mask = mask[:, 1:] if mask is not None else None  # [B, M], skip global
+                attn_bias = self.dist_bias_modules[i](atom_pos, atom_mask=atom_mask)
+            x = layer(x, mask=mask, attn_bias=attn_bias)
         return self.norm(x)
 
 
@@ -506,6 +624,7 @@ class PocketGVPFusionV11(nn.Module):
         'use_dist_bias': True,        # enable distance bias in protein context encoder
         'dist_bias_n_rbf': 16,        # RBF bins for distance encoding
         'dist_bias_max_dist': 20.0,   # saturation distance (Å)
+        'use_sdpa_protein_self_attn': False,  # fused PyTorch SDPA for long protein self-attn
         # V10m4: enriched protein GVP edges
         'gvp_edge_rbf_bins': 16,      # RBF bins for CA-CA distance encoding
         'gvp_edge_rbf_dmax': 20.0,    # RBF max distance (Å)
@@ -531,6 +650,11 @@ class PocketGVPFusionV11(nn.Module):
         'use_dist_aux': False,
         # V11: Ligand internal self-attention (0 = disabled, backward compat)
         'n_ligand_self_attn_layers': 0,
+        # V11m2: Ligand self-attention distance bias + b_lig1 AttnRes anchor
+        'use_lig_dist_bias': False,       # enable 3D distance bias in ligand self-attention
+        'lig_dist_bias_n_rbf': 8,         # RBF bins (fewer than protein; ligand radius < 8Å)
+        'lig_dist_bias_max_dist': 8.0,    # saturation distance (Å)
+        'use_lig_attnres_b1': False,      # add b_lig1 (post-self-attn) as 2nd ligand AttnRes anchor
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -604,6 +728,7 @@ class PocketGVPFusionV11(nn.Module):
             use_dist_bias=c.get('use_dist_bias', False),
             dist_bias_n_rbf=c.get('dist_bias_n_rbf', 16),
             dist_bias_max_dist=c.get('dist_bias_max_dist', 20.0),
+            use_sdpa=c.get('use_sdpa_protein_self_attn', False),
         )
 
         # Module 5: 3D Ligand Encoder
@@ -637,6 +762,9 @@ class PocketGVPFusionV11(nn.Module):
                 n_heads=c['n_heads'],
                 dropout=c['dropout'],
                 attn_dropout=c.get('attn_dropout', None),
+                use_dist_bias=c.get('use_lig_dist_bias', False),          # V11m2
+                dist_bias_n_rbf=c.get('lig_dist_bias_n_rbf', 8),          # V11m2
+                dist_bias_max_dist=c.get('lig_dist_bias_max_dist', 8.0),  # V11m2
             )
         else:
             self.ligand_self_attn = None
@@ -713,9 +841,9 @@ class PocketGVPFusionV11(nn.Module):
         ligand_edge_index: torch.Tensor,
         ligand_edge_attr: torch.Tensor,
         ligand_batch: torch.Tensor,
-        ligand_to_protein: torch.Tensor,
         ligand_mask: torch.Tensor,
         chain_ids: Optional[torch.Tensor] = None,   # [B, L] integer chain indices
+        ligand_to_protein: Optional[torch.Tensor] = None,  # legacy placeholder, ignored
     ) -> Dict[str, torch.Tensor]:
 
         B, L, _ = esm_embeddings.shape
@@ -919,8 +1047,12 @@ class PocketGVPFusionV11(nn.Module):
             batch=ligand_batch
         )
 
-        B_dim, Max_M_dim, _ = ligand_to_protein.shape
+        B_dim, Max_M_dim = ligand_mask.shape
         h_ligand = torch.zeros(B_dim, Max_M_dim, c['d_model'], device=device, dtype=h_ligand_nodes.dtype)
+        # V11m2: flag for atom_pos scatter (needed only when ligand dist bias is active)
+        _need_atom_pos = (self.ligand_self_attn is not None and
+                          getattr(self.ligand_self_attn, 'dist_bias_modules', None) is not None)
+        atom_pos_padded = None
         N_atoms = h_ligand_nodes.size(0)
         if N_atoms > 0:
             # Vectorized scatter: requires ligand_batch to be sorted/contiguous by
@@ -935,6 +1067,10 @@ class PocketGVPFusionV11(nn.Module):
             local_idx = torch.arange(N_atoms, device=device) - cumsum[ligand_batch]  # atom pos within sample
             valid = local_idx < Max_M_dim
             h_ligand[ligand_batch[valid], local_idx[valid]] = h_ligand_nodes[valid]
+            # V11m2: scatter atom positions for ligand self-attn distance bias
+            if _need_atom_pos:
+                atom_pos_padded = torch.zeros(B_dim, Max_M_dim, 3, device=device, dtype=ligand_pos.dtype)
+                atom_pos_padded[ligand_batch[valid], local_idx[valid]] = ligand_pos[valid]
 
         # V10m5: Dynamic ligand global token via masked mean pool
         mask_f = ligand_mask.float().unsqueeze(-1)                        # [B, M, 1]
@@ -953,14 +1089,19 @@ class PocketGVPFusionV11(nn.Module):
         # point fed into the cross-attention loop.
         if self.ligand_self_attn is not None:
             h_lig_ctx = self.ligand_self_attn(
-                h_ligand_with_global, mask=ligand_mask_with_global
+                h_ligand_with_global, mask=ligand_mask_with_global,
+                atom_pos=atom_pos_padded                              # V11m2: for ligand dist bias
             )
         else:
             h_lig_ctx = h_ligand_with_global
 
         # Module 6: Cross-Attention with AttnRes
         attn_res_blocks = [b_gvp, b0, b1]  # V10m3: 3 protein blocks
-        lig_attn_res_blocks = [b_lig0]     # V10m3: 1 ligand block (raw encoder anchor)
+        # V11m2: optionally add b_lig1 (post-self-attn) as 2nd ligand AttnRes anchor.
+        # InterBlockAttnRes.proj is Linear(d,1) — operates per-position, source-count agnostic.
+        lig_attn_res_blocks = [b_lig0]     # base: 1 ligand block (raw encoder anchor)
+        if c.get('use_lig_attnres_b1', False) and self.ligand_self_attn is not None:
+            lig_attn_res_blocks = [b_lig0, h_lig_ctx]   # V11m2: add post-self-attn anchor
         h_prot_fused = h_prot_global
         h_lig_fused = h_lig_ctx            # V11: starts from self-attn output
 

@@ -62,9 +62,9 @@ class PocketGVPFusionV11m1(PocketGVPFusionV11):
         ligand_edge_index,
         ligand_edge_attr,
         ligand_batch,
-        ligand_to_protein,
         ligand_mask,
         chain_ids=None,
+        ligand_to_protein=None,
     ) -> Dict[str, torch.Tensor]:
         # Run V11 forward.  V11 exposes 'protein_physchem_encoded' and
         # 'h_ligand_fused' in its result dict so we can avoid recomputing.
@@ -81,9 +81,9 @@ class PocketGVPFusionV11m1(PocketGVPFusionV11):
             ligand_edge_index=ligand_edge_index,
             ligand_edge_attr=ligand_edge_attr,
             ligand_batch=ligand_batch,
-            ligand_to_protein=ligand_to_protein,
             ligand_mask=ligand_mask,
             chain_ids=chain_ids,
+            ligand_to_protein=ligand_to_protein,
         )
 
         # ── Ligand global gate ────────────────────────────────────────────────
