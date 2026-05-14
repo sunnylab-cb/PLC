@@ -75,6 +75,84 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 
 ---
 
+## V12 - 2026-05-15
+
+### 主要特性
+- ✅ Interleaved Co-Attention：以 `N=6` 个 `CoAttentionBlock` 取代 V11 中分离的 protein context encoder、ligand self-attention block 与 cross-attention loop
+- ✅ 标准 CrossAttentionBlock：移除跨模态几何 bias 路线，不再使用 `CrossModalDistanceBias` / `BiasedCrossAttentionBlock`
+- ✅ Uni-Mol conditioning：`unimol_embed [B,512]` 同时用于每个 co-attention block 的 protein FiLM，以及 ligand global token augmentation
+- ✅ RSA / SASA surface prior：新增 raw RSA + mask 输入，支持 co-attention 前 RSA input injection 与 classifier 前 SASA residual gate
+
+### 关键改进/变化
+1. **架构重排为 co-evolution blocks**：`src/models/pocket_gvp_fusion_v12.py` 保留 V11 的 GVP + ESM fusion 与 ligand GNN encoder，但将后续融合改成多层 interleaved co-attention。每个 block 顺序为 Uni-Mol FiLM、protein self-attention、ligand self-attention、P→L cross-attention、L→P cross-attention。
+2. **移除跨坐标系距离偏置**：V12 明确不计算 Cα ↔ ligand atom 的跨模态距离，因为 protein / ligand 坐标系不保证处于 holo 对齐态。cross-attention 仅使用标准 `src/models/transformer_layers.py::CrossAttentionBlock`；几何 bias 只保留在 protein 内部 Cα-Cα 与 ligand 内部 atom-atom self-attention。
+3. **Uni-Mol global token injection**：新增 `FiLMLayer` 与 `unimol_to_global`。若 `unimol_embed` 缺失，模型退化为零向量输入；相关投影 zero-init，因此初始行为接近 identity / 原 mean-pool global token。
+4. **RSA / SASA 输入契约**：`src/data/collate.py` 在 `pocket_collate_fn_v10` 中 padding `protein_rsa_raw` 与 `protein_rsa_mask`，并新增 `prepare_model_inputs_v12()`。V12 模型用 `rsa_input_proj` 在 co-attention 前注入 RSA，用 `SASAResidualGate` 在 classifier 前做 bounded residual gate；`protein_rsa_mask` 防止旧 `.pt` 缺失 RSA 被误判为 RSA=0。
+5. **V11 相关实际 diff**：当前 tracked diff 中 `scripts/train/train_v11.py` 只把文档示例的 `torchrun --nproc_per_node=4` 改为 `--nproc_per_node=2`；未看到新的 V11 train loop 行为改动。`src/data/collate.py` 的本轮 tracked 改动主要是 V12 RSA 输入与 `prepare_model_inputs_v12`。
+
+### 影响范围（改了哪些东西）
+- 模型：`src/models/pocket_gvp_fusion_v12.py`
+- 数据/输入：`src/data/collate.py`
+- Uni-Mol 预处理：`preparation/ligand/extract_unimol_embeddings.py`
+- 推理辅助：`scripts/infer/infer_v11.py`（V11/V11m1/V11m2 checkpoint auto-detect，支持 HOLO4K/COACH420 与 ligand ablation modes）
+- 训练脚本：`scripts/train/train_v11.py`（使用示例改为 2 GPU）
+- 计划/状态记录：`TODO.md`
+
+### 文件结构
+```text
+src/
+  ├── models/
+  │   └── pocket_gvp_fusion_v12.py       # V12 co-attention + Uni-Mol + RSA/SASA
+  └── data/
+      └── collate.py                     # protein_rsa_raw/mask + prepare_model_inputs_v12
+preparation/
+  └── ligand/
+      └── extract_unimol_embeddings.py   # 离线提取 Uni-Mol CLS embedding
+scripts/
+  ├── train/
+  │   └── train_v11.py                   # 示例 nproc_per_node 更新为 2
+  └── infer/
+      └── infer_v11.py                   # V11-family benchmark / ablation inference
+```
+
+### 配置变化
+```yaml
+model:
+  d_unimol: 512
+  n_co_attn_blocks: 6
+  use_film: true
+  use_prot_dist_bias: true
+  use_lig_dist_bias: true
+  sasa_gate_amplitude: 0.5
+```
+
+### 使用方法（当前状态）
+```bash
+# Uni-Mol embedding 离线提取
+conda run -n AIAA python preparation/ligand/extract_unimol_embeddings.py \
+  --source_root /home/husrcf/Code/ProtBind/New \
+  --output_root data/unimol_embeddings \
+  --batch_size 64 --workers 4
+
+# V11-family 推理 / ablation
+conda run -n AIAA python scripts/infer/infer_v11.py \
+  --checkpoint outputs/.../best_model.pt \
+  --set holo4k \
+  --ligand_mode real \
+  --output results/holo4k_real/
+```
+
+### 兼容性/迁移说明
+- 与 V11 checkpoint **不兼容**：V12 class、fusion path、co-attention block 与新增 Uni-Mol/RSA/SASA 参数均改变。
+- V12 forward 仍可在缺少 `unimol_embed` 时运行（零向量 fallback），缺少 `protein_rsa_raw` 时会跳过 RSA/SASA 路径。
+- 旧数据若没有 `protein_rsa_mask`，collate 默认 mask=0；这会让 SASA/RSA 注入保持 identity，避免把缺失值当成真实 buried signal。
+
+### 已知问题
+- 当前工作区尚未看到 `configs/pocket_gvp_v12.yaml` 与 `scripts/train/train_v12.py`。
+- `TODO.md` 记录完整 forward smoke test 仍待环境问题（`torch_scatter` / ROCm 兼容性）修复后验证。
+
+---
+
 ## V10m8 - 2026-04-14
 
 ### 主要特性
@@ -1169,4 +1247,3 @@ Cluster-Weighted Loss Statistics:
 - 无
 
 ---
-

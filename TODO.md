@@ -27,6 +27,80 @@
 
 ---
 
+## V11m2 → V12 候选路线（2026-05-13）
+
+这组事项以当前 V11m2 为基线：ESM2 + PhysChem + protein GVP + RoPE/DistanceBias transformer + ligand GVP/self-attn + bidirectional cross-attn + ordinal smoothing/CNC。目标不是继续堆模块，而是优先选择能提高 ligand-aware residue scoring、标签鲁棒性和几何先验的改动。
+
+### V12-A. 先做的低风险 ablation
+
+**A1. 配体全局物化条件，但必须复用 V6 provenance/mask**
+
+- 价值：模型现在有 ligand global token，但全局物化性质没有作为干净的 graph-level conditioning 明确进入模型。
+- 注意：`LogP/TPSA/Morgan` 已经部分存在于 V5/V6 ligand features，不能直接再用一套裸 RDKit 描述符无脑拼接，否则会重复且污染 metal/inorganic/multifragment ligand。
+- 建议：从 V6 的 `global_features`、`x_group_mask/source`、`ligand_type`、`operation_status` 中构建 masked graph-level ligand summary，再通过小 MLP 加到 ligand global token 或 gate。
+- 验收：普通 organic、metal、inorganic、multifragment 四类样本都不能出现 silent-zero global props。
+
+**A2. 表面曲率 / 局部形状特征**
+
+- 价值：binding pocket 是表面凹陷，局部 PCA 曲率是低成本几何先验。
+- 建议：先离线预计算 2-4D，例如 `lambda3/sum(lambda)`、`lambda2/lambda1`、邻域半径内 density-corrected curvature。
+- 风险：CA-only PCA 对多链界面和柔性 loop 会有噪声，需要按 protein length / chain 分开归一化。
+- 验收：加入 spatial scalar 后，特征归一化统计固定，不能按单蛋白自身最大值归一化。
+
+**A3. 对称 CNC，但要 warmup + cap**
+
+- 价值：BioLiP 正负标签都可能有噪声，正侧错误 contact 也会污染训练。
+- 风险：如果早期模型还没学好，`p_far` 高的 contact 可能是真难例，不是错标；直接下权会牺牲 recall。
+- 建议：只在 warmup 后启用，用 EMA confidence 或连续 N 次高置信 far，再 clip；并限制每 batch 正样本 clip 比例。
+- 验收：必须单独记录 `negative_clip_frac` 和 `positive_clip_frac`，并监控 Contact recall 是否下降。
+
+### V12-B. 架构核心候选
+
+**B1. Cross-attention 后的 ligand FiLM / gate**
+
+- 价值：V11m1 已经证明“ligand global token 调制 protein representation”是干净方向。V12 可以把 gate 从最终 classifier 前推进到 cross-attn block 间。
+- 建议：每层用 ligand global token 生成轻量 gate，优先用 zero-init / near-identity init，避免一开始扰乱已稳定的 protein branch。
+- 风险：FiLM 比最终 gate 更强，会改变优化动力学；必须和 V11m1 做 controlled ablation。
+
+**B2. 非对称 cross-attention 深度需要谨慎**
+
+- 价值：可能减少计算量。
+- 主要疑点：两个方向的 attention 都是 `L*M` 级别，减少 ligand update 不一定带来 30% 实测加速；而 ligand global token 当前被 classifier/gate 使用，削弱 ligand 更新可能伤害 ligand-aware scoring。
+- 建议：不要作为 V12 默认核心。可做 ablation：`4P+4L` vs `4P+2L` vs `4P+1L`，以 wall-clock、F1、Contact recall 一起评估。
+
+**B3. ESM2 多层融合是高价值但不是低风险**
+
+- 价值：多层 ESM 表征通常能补足局部化学语义和远程结构语义。
+- 成本：需要重新抽取/存储 ESM2 多层 latent，数据体积约按层数放大；dataset schema 会变。
+- 建议：先抽 `last4` 或固定若干层到一个小 pilot split，训练可学习 scalar mix；不要立刻全量重跑。
+
+### V12-C. 暂缓或独立项目
+
+**C1. 多尺度配体图边**
+
+- 暂缓理由：V11m2 已经有 ligand self-attn，天然提供 atom-level long-range mixing；额外多关系 GVP 会增加 encoder 复杂度，收益不确定。
+- 更稳替代：先给 ligand self-attn 加/保留 3D distance bias，并把 V6 ligand type/status/global summary 喂给 global token。
+
+**C2. Uni-Mol / ChemBERTa ligand embedding**
+
+- 价值可能高，尤其对稀有配体。
+- 暂缓理由：BioLiP 含 metal、inorganic、peptide、nucleotide、multifragment；通用 small-molecule LM 可能无法覆盖这些类别，缺失本身会成为新 bias。
+- 建议：作为独立 V13 数据工程项目，先定义 coverage、failure mask 和 fallback，再谈接入模型。
+
+**C3. 虚拟口袋节点**
+
+- 暂缓理由：需要改 GVP graph building 和训练时动态几何，调试成本高；当前更大的收益来自数据契约、loss 噪声和 ligand conditioning。
+
+### 推荐执行顺序
+
+1. V11m3: `A1 + A2 + A3`，只改 feature/loss/conditioning 输入，保留主架构。
+2. V12: `B1`，把 V11m1 的 ligand gate 扩展到 cross-attn block 间。
+3. V12 ablation: `B2` 非对称 cross-attn，只作为速度/精度权衡实验。
+4. V12 data pilot: `B3` ESM 多层 scalar mix，先小规模验证收益再全量重抽。
+5. V13+: `C2/C3`，作为独立数据和架构项目。
+
+---
+
 ## P0 立即处理
 
 ### P0-1. 修复 Flash Attention 死路径或移除卖点
@@ -431,4 +505,31 @@
 
 ---
 
-最后更新：2026-03-23
+---
+
+## V12 開發狀態（2026-05-15）
+
+### 已完成
+
+- Interleaved Co-Attention 架構（N=6 CoAttentionBlock，Evoformer 風格）
+- FiLM conditioning（Uni-Mol → protein，每個 block，zero-init identity）
+- Parallel bidirectional cross-attention（P→L + L→P 同時讀 pre-update h）
+- Ligand SA RoPE neutralization（all-zero position_ids，避免假序列偏差）
+- CrossModalDistanceBias 移除（protein/ligand 在各自坐標系，跨模態距離是偽特徵）
+- SASA residual gate（tanh-bounded，zero-init，classifier 前，rsa_mask 防缺失偏差）
+- protein_rsa_mask（1=有 RSA，0=舊 .pt 缺失，防 RSA=0 被誤判為 buried）
+- RSA pre-injection（Innovation #3：co-attention 前注入，zero-init，6 blocks 都能看到 surface prior）
+- Uni-Mol → global token augmentation（Innovation #4：mean-pool token + zero-init proj，讓 cross-attn 可主動查詢 Uni-Mol）
+
+### 待驗證
+
+- 環境問題修復後跑完整 forward smoke test（torch_scatter 與 ROCm 7.2 相容性）
+
+### 待實作
+
+- **dynamic FiLM（#3 ablation）**：blocks 2-5 改用 `h_lig[:, 0, :]`（protein-context-aware global token）做 FiLM conditioning，不是靜態 unimol_embed。方向合理但會改變優化動力學，需 controlled ablation，不和 #1/#2 同時上。
+- **V12 訓練配置**：`configs/pocket_gvp_v12.yaml`
+- **V12 訓練腳本**：`scripts/train/train_v12.py`（基於 train_v11.py，加 unimol_embed 載入 + prepare_model_inputs_v12）
+- **Uni-Mol 嵌入接入 dataset**：PocketDatasetV8 加載 `data/unimol_embeddings/{yr}/{pdb}/{pdb}_unimol.pt`
+
+最后更新：2026-05-15

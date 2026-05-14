@@ -20,7 +20,7 @@ V11 更新 (基于 V10m8):
 
 使用方法:
     python scripts/train/train_v11.py --config configs/pocket_gvp_v11.yaml
-    torchrun --nproc_per_node=4 scripts/train/train_v11.py --config configs/pocket_gvp_v11.yaml
+    torchrun --nproc_per_node=2 scripts/train/train_v11.py --config configs/pocket_gvp_v11.yaml
 """
 
 import argparse

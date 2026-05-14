@@ -1,0 +1,13 @@
+{
+  "benchmark": "coach420",
+  "model_version": "v11",
+  "checkpoint": "/home/husrcf/Code/ProtBind/PLC/outputs/pocket_gvp_fusion_v11_20260511_092851/checkpoint_epoch_60.pt",
+  "benchmark_root": "/home/husrcf/Code/ProtBind/coach420",
+  "ligand_mode": "real",
+  "shuffle_seed": null,
+  "n_samples": 420,
+  "contact_thresh": 5.0,
+  "near_thresh": 8.0,
+  "dcc_thresh": 4.0,
+  "timestamp": "20260514_145111"
+}

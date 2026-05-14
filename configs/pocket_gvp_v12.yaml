@@ -1,0 +1,156 @@
+# Pocket-GVP-Fusion V12 配置
+#
+# V12 架構 (基於 V11m2，完整重構 cross-modal interaction):
+#   - N=6 CoAttentionBlock (Evoformer-style interleaved co-attention)
+#       每個 block: FiLM → Protein SA → Ligand SA → Parallel Bidirectional CA
+#   - FiLM conditioning: Uni-Mol CLS → protein 全域化學調製 (zero-init identity)
+#   - RSA pre-injection: 在 co-attention 前注入 surface prior (zero-init identity)
+#   - Uni-Mol → global token: Uni-Mol embed 加到 ligand global token (zero-init)
+#   - SASA residual gate: final_norm 後、classifier 前的軟性 surface weighting
+#   - Ligand SA RoPE neutralization: 避免假序列偏差 (all-zero position_ids)
+#   - Parallel bidirectional cross-attention (真正的 Evoformer 風格)
+#
+# 坐標系限制 (寫入 memory):
+#   蛋白質與配體各自在獨立坐標系，絕不計算跨模態幾何距離。
+#
+# Label scheme: Contact < 5.0Å, Near 5.0-8.0Å, Far > 8.0Å
+
+experiment:
+  name: "pocket_gvp_fusion_v12"
+  seed: 42
+  output_dir: "outputs"
+
+data:
+  data_root: "data"
+  ligand_features_dir: "ligand_features_v5"
+  protein_features_dir: "complete_features_v4"
+  nma_features_dir: "complete_features_v4_nma"
+  nma_n_confs: 1
+  nma_max_conf: 9
+  distances_file: "data/residue_ligand_distances_dcenter.pt"
+  split_file: "configs/splits/splits.txt"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1800
+  max_atoms: 128
+  label_contact_thresh: 5.0
+  label_near_thresh: 8.0
+  # Uni-Mol pre-extracted embeddings directory (under data_root)
+  unimol_embeddings_dir: "unimol_embeddings"
+
+model:
+  # ── 與 V11 共享 (相同 key 名稱) ────────────────────────────────────────────
+  d_esm: 1280
+  d_phys: 62
+  d_spatial_scalar: 89
+  d_phys_encoded: 128
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 109
+  n_gvp_vectors: 12
+  n_gvp_vector_hidden: 20
+
+  n_gvp_layers: 3
+  n_ligand_layers: 3
+  n_heads: 8
+
+  dropout: 0.15
+  attn_dropout: 0.15
+  classifier_dropout: 0.2
+  stochastic_depth_prob: 0.15
+
+  esm_dropout_prob: 0.05
+  physchem_dropout_prob: 0.05
+  gvp_dropout_prob: 0.05
+  coord_noise_std: 0.2
+
+  gvp_edge_rbf_bins: 16
+  gvp_edge_rbf_dmax: 20.0
+  ligand_edge_rbf_bins: 8
+
+  gvp_radius: 15.0
+  gvp_k_neighbors: 30
+  use_gradient_checkpointing: false
+
+  use_chain_features: true
+  chain_gap_size: 1000
+
+  use_dist_aux: true
+
+  n_classes: 3
+  edge_dim: 6
+
+  # ── V12 專屬 ────────────────────────────────────────────────────────────────
+  # Co-Attention blocks (replaces n_transformer_layers + n_cross_attention_layers)
+  n_co_attn_blocks: 4
+
+  # FiLM conditioning from Uni-Mol (zero-init → identity at start)
+  use_film: true
+  d_unimol: 512
+
+  # Intra-protein and intra-ligand 3D distance bias in SA
+  use_prot_dist_bias: true
+  use_lig_dist_bias: true
+
+  # SASA residual gate amplitude (tanh range: [1-amp, 1+amp])
+  sasa_gate_amplitude: 0.5
+
+training:
+  batch_size: 16
+  num_epochs: 100
+  num_workers: 8
+
+  optimizer: "adamw"
+  learning_rate: 5.0e-5
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+
+  scheduler: "cosine"
+  warmup_epochs: 3
+  min_lr: 1.0e-6
+
+  focal_gamma: 2.0
+  class_weights: [9.0, 7.0, 1.0]
+
+  focal_weight: 0.7
+  tversky_weight: 0.3
+  tversky_alpha: 0.3
+  tversky_beta: 0.7
+  tversky_smooth: 1.0
+
+  weighted_dice_weight: 0.0
+  weighted_dice_smooth: 1.0
+
+  label_smoothing: 0.05
+  ordinal_label_smoothing: true
+
+  cnc:
+    enabled: true
+    clip_thresh: 0.85
+    clip_ratio: 0.1
+    warmup_epochs: 5
+    max_clip_frac: 0.3
+
+  dist_aux:
+    enabled: true
+    weight: 0.1
+    max_dist: 20.0
+
+  gradient_clip: 1.0
+  enable_profiling: false
+
+  save_every: 5
+  early_stopping_patience: 100
+
+  use_amp: true
+  use_bf16: true
+  accumulation_steps: 1
+  pin_memory: true
+  prefetch_factor: 2
+
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false

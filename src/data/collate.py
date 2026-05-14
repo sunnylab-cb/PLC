@@ -505,6 +505,8 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     protein_physchem = torch.zeros(B, max_residues, physchem_dim)
     protein_spatial_scalar = torch.zeros(B, max_residues, spatial_scalar_dim)
     protein_spatial_vector = torch.zeros(B, max_residues, spatial_vector_channels, 3)
+    protein_rsa_raw  = torch.zeros(B, max_residues, 1)   # raw RSA [0,1] for SASA gate
+    protein_rsa_mask = torch.zeros(B, max_residues, 1)   # 1=real RSA present, 0=absent
     protein_coords = torch.zeros(B, max_residues, 3)
     protein_vectors = torch.zeros(B, max_residues, 4, 3)
     protein_mask = torch.zeros(B, max_residues, dtype=torch.bool)
@@ -533,6 +535,10 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         protein_physchem[i, :n_res] = sample['protein_physchem'][:n_res]
         protein_spatial_scalar[i, :n_res] = sample['protein_spatial_scalar'][:n_res]
         protein_spatial_vector[i, :n_res] = sample['protein_spatial_vector'][:n_res]
+        if 'protein_rsa_raw' in sample:
+            protein_rsa_raw[i, :n_res]  = sample['protein_rsa_raw'][:n_res]
+        if 'protein_rsa_mask' in sample:
+            protein_rsa_mask[i, :n_res] = sample['protein_rsa_mask'][:n_res]
         protein_coords[i, :n_res] = sample['gvp_coords'][:n_res]
         protein_vectors[i, :n_res] = sample['gvp_vectors'][:n_res]
         protein_mask[i, :n_res] = True
@@ -591,6 +597,8 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'protein_physchem': protein_physchem,
         'protein_spatial_scalar': protein_spatial_scalar,
         'protein_spatial_vector': protein_spatial_vector,
+        'protein_rsa_raw':  protein_rsa_raw,
+        'protein_rsa_mask': protein_rsa_mask,
         'protein_coords': protein_coords,
         'protein_vectors': protein_vectors,
         'protein_mask': protein_mask,
@@ -680,6 +688,40 @@ def prepare_model_inputs_v11(
         'ligand_mask': batch['ligand_mask'].to(device, non_blocking=non_blocking),
     }
     return model_inputs
+
+
+def prepare_model_inputs_v12(
+    batch: Dict[str, torch.Tensor],
+    device: torch.device,
+    non_blocking: bool = True,
+    unimol_embed: Optional[torch.Tensor] = None,
+) -> Dict[str, torch.Tensor]:
+    """
+    Prepare model inputs for V12 (Interleaved Co-Attention + Uni-Mol FiLM).
+
+    Adds protein_rsa_raw  [B, L, 1] raw RSA values for SASA residual gate.
+    Adds protein_rsa_mask [B, L, 1] validity mask (1=real RSA, 0=absent/old .pt).
+    Adds unimol_embed     [B, 512]  for FiLM conditioning (may be None).
+    """
+    return {
+        'esm_embeddings':         batch['esm_embeddings'].to(device, non_blocking=non_blocking),
+        'protein_physchem':       batch['protein_physchem'].to(device, non_blocking=non_blocking),
+        'protein_spatial_scalar': batch['protein_spatial_scalar'].to(device, non_blocking=non_blocking),
+        'protein_spatial_vector': batch['protein_spatial_vector'].to(device, non_blocking=non_blocking),
+        'protein_gvp_vectors':    batch['protein_vectors'].to(device, non_blocking=non_blocking),
+        'protein_coords':         batch['protein_coords'].to(device, non_blocking=non_blocking),
+        'protein_mask':           batch['protein_mask'].to(device, non_blocking=non_blocking),
+        'protein_rsa_raw':        batch['protein_rsa_raw'].to(device, non_blocking=non_blocking),
+        'protein_rsa_mask':       batch['protein_rsa_mask'].to(device, non_blocking=non_blocking),
+        'chain_ids':              batch['chain_ids'].to(device, non_blocking=non_blocking),
+        'ligand_x':               batch['ligand_x'].to(device, non_blocking=non_blocking),
+        'ligand_pos':             batch['ligand_pos'].to(device, non_blocking=non_blocking),
+        'ligand_edge_index':      batch['ligand_edge_index'].to(device, non_blocking=non_blocking),
+        'ligand_edge_attr':       batch['ligand_edge_attr'].to(device, non_blocking=non_blocking),
+        'ligand_batch':           batch['ligand_batch'].to(device, non_blocking=non_blocking),
+        'ligand_mask':            batch['ligand_mask'].to(device, non_blocking=non_blocking),
+        'unimol_embed':           unimol_embed.to(device, non_blocking=non_blocking) if unimol_embed is not None else None,
+    }
 
 
 def pocket_collate_fn_auto(batch: List[Dict]) -> Dict[str, torch.Tensor]:
