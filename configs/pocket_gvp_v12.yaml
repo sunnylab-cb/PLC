@@ -97,7 +97,7 @@ model:
   sasa_gate_amplitude: 0.5
 
 training:
-  batch_size: 16
+  batch_size: 15
   num_epochs: 100
   num_workers: 8
 
@@ -144,7 +144,7 @@ training:
   early_stopping_patience: 100
 
   use_amp: true
-  use_bf16: true
+  use_bf16: false
   accumulation_steps: 1
   pin_memory: true
   prefetch_factor: 2

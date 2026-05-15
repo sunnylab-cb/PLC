@@ -142,12 +142,14 @@ def setup_distributed():
         local_rank = 0
 
     if world_size > 1:
-        # 初始化进程组
+        # 初始化进程组；指定 device_id 避免 NCCL 依 global rank 猜 GPU 導致 hang
+        _device_id = torch.device(f'cuda:{local_rank}') if torch.cuda.is_available() else None
         dist.init_process_group(
             backend='nccl' if torch.cuda.is_available() else 'gloo',
             init_method='env://',
             world_size=world_size,
-            rank=rank
+            rank=rank,
+            device_id=_device_id,
         )
 
         # 设置当前设备

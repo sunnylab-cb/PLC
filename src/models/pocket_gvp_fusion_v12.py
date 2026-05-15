@@ -49,7 +49,6 @@ from .pocket_gvp_fusion_v11 import (
     SwiGLU,
     RoPEGatedTransformerBlock,
     PairwiseBridge,
-    InterBlockAttnRes,
     drop_path,
 )
 
@@ -185,7 +184,12 @@ class InterBlockAttnResV2(nn.Module):
         sources = torch.stack(blocks + [partial], dim=0)   # [K+1, B, L, d]
         keys    = self.key_norm(sources)
         logits  = self.proj(keys).squeeze(-1)              # [K+1, B, L]
-        logits[-1] = logits[-1] + self.partial_logit_bias  # boost partial
+        # Fully functional bias: one_hot selects last index, no slice assignment.
+        bias = F.one_hot(
+            torch.tensor(logits.shape[0] - 1, device=logits.device),
+            num_classes=logits.shape[0],
+        ).to(dtype=logits.dtype) * self.partial_logit_bias  # [K+1]
+        logits = logits + bias[:, None, None]               # boost partial logit
         alpha   = logits.softmax(dim=0)                    # [K+1, B, L]
         return (alpha.unsqueeze(-1) * sources).sum(dim=0)  # [B, L, d]
 
@@ -202,8 +206,8 @@ class CoAttentionBlock(nn.Module):
       1. FiLM:  Uni-Mol CLS embed → (γ, β) applied to h_prot
       2. Prot SA: protein residues attend to each other (RoPE + intra-protein 3D dist bias)
       3. Lig SA:  ligand atoms attend to each other (intra-ligand 3D dist bias)
-      4. P→L CA: protein queries ligand atoms
-      5. L→P CA: ligand atoms query updated protein residues
+      4. P→L CA: protein residues query ligand atoms (reads pre-update h_lig)
+      5. L→P CA: ligand atoms query protein residues (reads pre-update h_prot, parallel with 4)
 
     Geometric distances used:
       - Protein self-attn: Cα-Cα distances (within protein coordinate system)
@@ -727,7 +731,7 @@ class PocketGVPFusionV12(nn.Module):
         # AttnRes anchor: h_prot_0 / h_lig_0 are the representations after
         # encoder fusion + RSA/UniMol injection, before any co-attention.
         # At each block i, AttnRes blends [anchor, current_partial] with learned
-        # per-position weights (∂98% partial at init → does not disrupt baseline).
+        # per-position weights (~98% partial at init → does not disrupt baseline).
         h_prot_0 = h_prot   # protein anchor: post-encoders, pre-co-attn
         h_lig_0  = h_lig    # ligand  anchor: post-encoders, pre-co-attn
 
