@@ -1093,6 +1093,7 @@ def train_epoch(
     dist_aux_weight: float = 0.1,        # V10m8: weight for dist aux loss
     dist_aux_warmup_epochs: int = 0,     # V12: warm up dist aux to avoid early co-attn gradient spike
     dist_aux_max_dist: float = 20.0,     # V10m8: clamp distance
+    fail_on_nonfinite_grad: bool = True, # V12: fail fast before optimizer poisoning
 ) -> Dict[str, float]:
     """Train for one epoch. V10m8: V10m7 + per-layer dist bias + dist aux head."""
     model.train()
@@ -1340,7 +1341,6 @@ def train_epoch(
             # If a bf16/fp16 run produces Inf/NaN grads, do not let clipping
             # turn them into corrupted optimizer updates. Fail fast with the
             # first bad tensors instead of silently poisoning the checkpoint.
-            fail_on_nonfinite_grad = config['training'].get('fail_on_nonfinite_grad', True)
             if gradient_clip > 0:
                 try:
                     torch.nn.utils.clip_grad_norm_(
@@ -2177,6 +2177,7 @@ def main():
             dist_aux_weight=dist_aux_weight,
             dist_aux_warmup_epochs=dist_aux_warmup_epochs,
             dist_aux_max_dist=dist_aux_max_dist,
+            fail_on_nonfinite_grad=train_cfg.get('fail_on_nonfinite_grad', True),
             unimol_cache=unimol_cache,
             d_unimol=d_unimol,
         )
