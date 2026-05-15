@@ -1700,6 +1700,10 @@ def evaluate(
 # ============================================================================
 
 def main():
+    # Keep config module-global for backward compatibility with older helper
+    # paths that may still read `config` as a global during resumed runs.
+    global config
+
     parser = argparse.ArgumentParser(description='Train Pocket-GVP-Fusion v2 (Optimized)')
     parser.add_argument('--config', type=str, required=True, help='Path to config YAML')
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume')
