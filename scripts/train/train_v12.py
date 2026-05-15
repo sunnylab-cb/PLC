@@ -1336,8 +1336,36 @@ def train_epoch(
                     writer.add_scalar(f'Gradients/{key}', value, global_step)
 
             # Gradient clipping
+            # V12 stability guard:
+            # If a bf16/fp16 run produces Inf/NaN grads, do not let clipping
+            # turn them into corrupted optimizer updates. Fail fast with the
+            # first bad tensors instead of silently poisoning the checkpoint.
+            fail_on_nonfinite_grad = config['training'].get('fail_on_nonfinite_grad', True)
             if gradient_clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                try:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(),
+                        gradient_clip,
+                        error_if_nonfinite=fail_on_nonfinite_grad,
+                    )
+                except RuntimeError as e:
+                    bad_grads = []
+                    for name, p in model.named_parameters():
+                        if p.grad is None:
+                            continue
+                        g = p.grad.detach()
+                        if not torch.isfinite(g).all():
+                            bad_grads.append(
+                                f"{name}: nan={torch.isnan(g).sum().item()} "
+                                f"inf={torch.isinf(g).sum().item()} shape={tuple(g.shape)}"
+                            )
+                            if len(bad_grads) >= 8:
+                                break
+                    detail = "; ".join(bad_grads) if bad_grads else "no individual non-finite grad tensor found; total norm likely overflowed"
+                    raise RuntimeError(
+                        f"Non-finite gradient norm before clipping at epoch={epoch}, "
+                        f"batch={batch_idx}. Bad gradients: {detail}"
+                    ) from e
 
             # Optimizer step
             if use_amp and scaler is not None:

@@ -92,12 +92,18 @@ model:
   # Intra-protein and intra-ligand 3D distance bias in SA
   use_prot_dist_bias: true
   use_lig_dist_bias: true
+  use_attn_res: false
+  co_attn_residual_scale: 0.25
 
   # SASA residual gate amplitude (tanh range: [1-amp, 1+amp])
+  # Diagnostic toggles: keep residue training mask unchanged; these only control
+  # soft RSA/SASA feature injection/gating paths.
+  use_rsa_input: false
+  use_sasa_gate: false
   sasa_gate_amplitude: 0.5
 
 training:
-  batch_size: 15
+  batch_size: 12
   num_epochs: 100
   num_workers: 8
 
@@ -139,12 +145,13 @@ training:
     max_dist: 20.0
 
   gradient_clip: 1.0
+  fail_on_nonfinite_grad: true
   enable_profiling: false
 
   save_every: 5
   early_stopping_patience: 100
 
-  use_amp: true
+  use_amp: false
   use_bf16: false
   accumulation_steps: 1
   pin_memory: true

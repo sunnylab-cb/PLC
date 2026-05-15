@@ -371,6 +371,8 @@ class PocketGVPFusionV12(nn.Module):
         'use_film':             True,
         'use_prot_dist_bias':   True,
         'use_lig_dist_bias':    True,
+        'use_attn_res':         True,
+        'co_attn_residual_scale': 0.25,
         'sasa_gate_amplitude':  0.5,   # tanh gate range: [1-amp, 1+amp] × h_prot
     }
 
@@ -732,7 +734,7 @@ class PocketGVPFusionV12(nn.Module):
         # before co-attention so all 6 blocks see RSA.  rsa_mask zeroes out
         # the contribution for residues with missing raw RSA data.
         # Also multiply by protein_mask to ensure padding positions stay zero.
-        if protein_rsa_raw is not None:
+        if c.get('use_rsa_input', True) and protein_rsa_raw is not None:
             rsa_f = protein_rsa_raw.to(dtype=h_prot.dtype)           # [B, L, 1]
             rsa_m = protein_rsa_mask.to(dtype=h_prot.dtype) \
                     if protein_rsa_mask is not None \
@@ -751,24 +753,37 @@ class PocketGVPFusionV12(nn.Module):
         for i, block in enumerate(self.co_attn_blocks):
             # AttnRes before each block: weighted merge of anchor + current repr.
             # Equivalent to V11's attn_res([b0], partial=h_prot_fused) before CA.
-            h_prot = self.prot_attn_res[i](blocks=[h_prot_0], partial=h_prot)
-            h_lig  = self.lig_attn_res[i](blocks=[h_lig_0],   partial=h_lig)
+            if c.get('use_attn_res', True):
+                h_prot = self.prot_attn_res[i](blocks=[h_prot_0], partial=h_prot)
+                h_lig  = self.lig_attn_res[i](blocks=[h_lig_0],   partial=h_lig)
+            h_prot_in, h_lig_in = h_prot, h_lig
 
             if c.get('use_gradient_checkpointing', False) and self.training:
                 def _run(_hp, _hl, _ue, _pm, _lm, _pc, _lc, _pid, _b=block):
                     return _b(_hp, _hl, _ue, _pm, _lm, _pc, _lc, _pid)
-                h_prot, h_lig = checkpoint(
+                h_prot_new, h_lig_new = checkpoint(
                     _run, h_prot, h_lig, unimol_embed,
                     protein_mask, lig_mask_g, protein_coords, lig_coords, position_ids,
                     use_reentrant=False,
                 )
             else:
-                h_prot, h_lig = block(
+                h_prot_new, h_lig_new = block(
                     h_prot, h_lig, unimol_embed,
                     prot_mask=protein_mask, lig_mask=lig_mask_g,
                     prot_coords=protein_coords, lig_coords=lig_coords,
                     position_ids=position_ids,
                 )
+
+            # V12 stability: CoAttentionBlock contains multiple full residual
+            # paths (self-attn FFN + cross-attn FFN on both streams).  Scaling
+            # the whole block delta prevents early training from overwriting
+            # the V11-style fused baseline and avoids backward gradient spikes.
+            co_scale = c.get('co_attn_residual_scale', 1.0)
+            if co_scale != 1.0:
+                h_prot = h_prot_in + co_scale * (h_prot_new - h_prot_in)
+                h_lig  = h_lig_in  + co_scale * (h_lig_new  - h_lig_in)
+            else:
+                h_prot, h_lig = h_prot_new, h_lig_new
 
         # ── Module 7: Classifier ─────────────────────────────────────────────
         h_prot = self.final_norm(h_prot)
@@ -778,7 +793,7 @@ class PocketGVPFusionV12(nn.Module):
         # rsa_mask zeros out delta for residues with absent raw RSA (old .pt files),
         # preventing spurious bias from treating missing data as RSA=0 ("fully buried").
         # Skipped entirely if protein_rsa_raw is None (backward compat).
-        if protein_rsa_raw is not None:
+        if c.get('use_sasa_gate', True) and protein_rsa_raw is not None:
             rsa = protein_rsa_raw.to(dtype=h_prot.dtype)
             rsa_m = protein_rsa_mask.to(dtype=h_prot.dtype) if protein_rsa_mask is not None else None
             h_prot = self.sasa_gate(h_prot, rsa, rsa_mask=rsa_m, prot_mask=protein_mask)
