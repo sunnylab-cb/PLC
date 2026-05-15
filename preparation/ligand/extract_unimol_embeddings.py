@@ -140,28 +140,50 @@ def run_unimol_batch(
     mol_data: list of (pdb_id, atom_symbols, coords_np)
     Returns: {pdb_id: embedding_np [512]}
     """
-    batch_input = [
-        {'atoms': atoms, 'coordinates': [coords]}
-        for _, atoms, coords in mol_data
-    ]
+    # unimol-tools UniMolRepr.get_repr expects either:
+    #   - a list of SMILES strings, or
+    #   - a single dict with batched custom conformers:
+    #       {'atoms': [[...], ...], 'coordinates': [coords_np, ...]}
+    # Passing a list of dicts is rejected by current unimol-tools and was the
+    # cause of silently written all-zero embeddings in the previous extractor.
+    batch_input = {
+        'atoms':       [atoms for _, atoms, _ in mol_data],
+        'coordinates': [coords for _, _, coords in mol_data],
+    }
     try:
-        result = model.get_repr(batch_input, return_atomic_reprs=False)
-        cls_reprs = result['cls_repr']  # [N, 512]
+        cls_reprs = model.get_repr(
+            batch_input,
+            return_atomic_reprs=False,
+            return_tensor=True,
+        )  # torch.Tensor [N, 512]
+        cls_reprs = cls_reprs.detach().cpu().numpy()
     except Exception as e:
         log.warning(f"Uni-Mol batch failed: {e}, falling back to per-sample")
         cls_reprs = []
-        for item in batch_input:
+        for _, atoms, coords in mol_data:
             try:
-                r = model.get_repr([item], return_atomic_reprs=False)
-                cls_reprs.append(r['cls_repr'][0])
+                r = model.get_repr(
+                    {'atoms': atoms, 'coordinates': coords},
+                    return_atomic_reprs=False,
+                    return_tensor=True,
+                )
+                cls_reprs.append(r.detach().cpu().numpy()[0])
             except Exception as e2:
-                log.debug(f"  per-sample also failed: {e2}")
-                cls_reprs.append(np.zeros(512, dtype=np.float32))
+                raise RuntimeError(f"Uni-Mol per-sample inference failed: {e2}") from e2
 
     embeddings = {}
     for i, (pdb_id, _, _) in enumerate(mol_data):
-        emb = cls_reprs[i] if isinstance(cls_reprs, list) else cls_reprs[i]
-        embeddings[pdb_id] = np.array(emb, dtype=np.float32)
+        emb = cls_reprs[i]
+        if emb is None:
+            raise RuntimeError(f"Uni-Mol returned None embedding for {pdb_id}")
+        emb = np.array(emb, dtype=np.float32)
+        if emb.shape != (512,) or not np.isfinite(emb).all() or np.abs(emb).sum() <= 1e-6:
+            raise RuntimeError(
+                f"Invalid Uni-Mol embedding for {pdb_id}: "
+                f"shape={emb.shape}, finite={np.isfinite(emb).all()}, "
+                f"abs_sum={np.abs(emb).sum():.3e}"
+            )
+        embeddings[pdb_id] = emb
     return embeddings
 
 
@@ -276,7 +298,9 @@ def main():
 
         # Save each embedding
         for pdb_id, atoms, coords, out_path, yr in batch:
-            emb_np   = embeddings.get(pdb_id, np.zeros(512, dtype=np.float32))
+            emb_np = embeddings.get(pdb_id)
+            if emb_np is None:
+                raise RuntimeError(f"Missing Uni-Mol embedding after inference for {pdb_id}")
             out_file = Path(out_path)
             out_file.parent.mkdir(parents=True, exist_ok=True)
             torch.save(
@@ -292,7 +316,7 @@ def main():
     elapsed = time.time() - t0
     log.info(
         f"Done. {n_done} embeddings saved to {output_root}  "
-        f"({elapsed:.0f}s, {n_done/elapsed:.1f} mol/s)"
+        f"({elapsed:.0f}s, {n_done/max(elapsed, 1e-6):.1f} mol/s)"
     )
 
 

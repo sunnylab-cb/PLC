@@ -654,6 +654,15 @@ class PocketGVPFusionV12(nn.Module):
             torch.cat([gate * h_gvp_proj, (1.0 - gate) * h_esm_proj], dim=-1)
         )  # [B, L, d_model]
 
+        # Cache modality features for training diagnostics (ESM/GVP contribution).
+        self._cached_gvp_scalar = h_s_gvp.detach()
+        self._cached_gvp_vector = h_v_gvp.detach()
+        self._cached_h_geo = h_geo.detach()
+        self._cached_current_esm = current_esm.detach()
+        self._cached_h_gvp_proj = h_gvp_proj.detach()
+        self._cached_h_esm_proj = h_esm_proj.detach()
+        self._cached_esm_mask = em.detach() if 'em' in locals() else None
+
         # ── Module 5a: Ligand GNN Encoder ───────────────────────────────────
         _lig_rbf_bins = c.get('ligand_edge_rbf_bins', 8)
         if ligand_edge_index.size(1) > 0:
@@ -705,6 +714,7 @@ class PocketGVPFusionV12(nn.Module):
             unimol_embed = torch.zeros(B_dim, c['d_unimol'], device=device, dtype=h_prot.dtype)
         else:
             unimol_embed = unimol_embed.to(dtype=h_prot.dtype)
+        self._cached_unimol_embed = unimol_embed.detach()
 
         # [Innovation #4] Augment ligand global token with Uni-Mol embedding.
         # h_lig[:, 0, :] starts as masked mean-pool; adding Uni-Mol projection
@@ -712,7 +722,10 @@ class PocketGVPFusionV12(nn.Module):
         # via P→L cross-attention (selective), not only broadcast via FiLM.
         # zero-init proj → no change at start of training.
         # Non-in-place cat to avoid autograd / torch.compile instability.
-        h_lig_global = h_lig[:, 0:1, :] + self.unimol_to_global(unimol_embed).unsqueeze(1)
+        unimol_global_delta = self.unimol_to_global(unimol_embed).unsqueeze(1)
+        self._cached_unimol_global_base = h_lig[:, 0:1, :].detach()
+        self._cached_unimol_global_delta = unimol_global_delta.detach()
+        h_lig_global = h_lig[:, 0:1, :] + unimol_global_delta
         h_lig = torch.cat([h_lig_global, h_lig[:, 1:, :]], dim=1)
 
         # [Innovation #3] RSA pre-injection: inject surface prior into h_prot

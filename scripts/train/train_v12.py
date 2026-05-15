@@ -81,6 +81,9 @@ def load_unimol_cache(data_root: str, unimol_dir: str) -> Dict[str, torch.Tensor
         return {}
     cache: Dict[str, torch.Tensor] = {}
     n_failed = 0
+    n_zero = 0
+    n_nonfinite = 0
+    bad_shape = []
     for fpath in root.rglob("*_unimol.pt"):
         pdb_id = fpath.stem.replace("_unimol", "")
         try:
@@ -91,16 +94,35 @@ def load_unimol_cache(data_root: str, unimol_dir: str) -> Dict[str, torch.Tensor
             else:
                 embed = obj
             if isinstance(embed, torch.Tensor) and embed.shape == (512,):
-                cache[pdb_id] = embed.float()
+                embed = embed.float()
+                if not torch.isfinite(embed).all():
+                    n_nonfinite += 1
+                    n_failed += 1
+                elif embed.abs().sum() <= 1e-6:
+                    n_zero += 1
+                    n_failed += 1
+                else:
+                    cache[pdb_id] = embed
             else:
+                bad_shape.append(f"{fpath}: {type(embed).__name__}, shape={getattr(embed, 'shape', None)}")
                 n_failed += 1
         except Exception as e:
             n_failed += 1
             if n_failed <= 5:   # 前 5 筆印出詳情，避免大量 log 刷屏
                 print_rank0(f"[Uni-Mol] 載入失敗 {fpath.name}: {e}")
+    if bad_shape:
+        raise RuntimeError(
+            "[Uni-Mol] 壞 cache：embedding shape/type invalid. "
+            f"examples={bad_shape[:5]}。請重新提取 Uni-Mol embeddings。"
+        )
+    if n_zero > 0 or n_nonfinite > 0:
+        raise RuntimeError(
+            f"[Uni-Mol] 壞 cache：zero={n_zero}, nonfinite={n_nonfinite}. "
+            "請重新提取 Uni-Mol embeddings；禁止用全零 embedding 繼續訓練。"
+        )
     if n_failed > 5:
         print_rank0(f"[Uni-Mol] ... 共 {n_failed} 筆載入失敗（僅顯示前 5 筆）")
-    print_rank0(f"[Uni-Mol] 載入 {len(cache)} 個嵌入，{n_failed} 筆失敗 (失敗樣本退化為零向量)")
+    print_rank0(f"[Uni-Mol] 載入 {len(cache)} 個有效嵌入，{n_failed} 筆失敗 (失敗樣本退化為零向量)")
     return cache
 
 
@@ -113,7 +135,13 @@ def get_batch_unimol(
     """從 cache 取 batch Uni-Mol 嵌入 [B, 512]。cache 為空時返回 None。"""
     if not cache:
         return None
-    embeds = [cache.get(pid, torch.zeros(d_unimol, dtype=torch.float32)) for pid in pdb_ids]
+    missing = [pid for pid in pdb_ids if pid not in cache]
+    if missing:
+        raise RuntimeError(
+            f"[Uni-Mol] batch 中有 {len(missing)} 個 PDB 缺少 embedding，例如 {missing[:5]}。"
+            "禁止用零向量 fallback；請補齊或重新提取 Uni-Mol embeddings。"
+        )
+    embeds = [cache[pid] for pid in pdb_ids]
     t = torch.stack(embeds, dim=0)
     return t.to(device, non_blocking=True) if device is not None else t
 
@@ -978,6 +1006,47 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     return stats
 
 
+def compute_unimol_stats(model: nn.Module, unimol_embed: Optional[torch.Tensor]) -> Dict[str, float]:
+    """V12: monitor Uni-Mol coverage and actual injected signal magnitude."""
+    if isinstance(model, DDP):
+        model = model.module
+    stats: Dict[str, float] = {}
+    if unimol_embed is None:
+        stats['unimol_coverage'] = 0.0
+        return stats
+
+    with torch.no_grad():
+        ue = unimol_embed.detach().float()
+        row_valid = torch.isfinite(ue).all(dim=-1) & (ue.abs().sum(dim=-1) > 1e-6)
+        stats['unimol_coverage'] = row_valid.float().mean().item()
+        if row_valid.any():
+            valid_ue = ue[row_valid]
+            stats['unimol_raw_norm'] = (valid_ue.norm(dim=-1).mean() / (valid_ue.shape[-1] ** 0.5)).item()
+
+        base = getattr(model, '_cached_unimol_global_base', None)
+        delta = getattr(model, '_cached_unimol_global_delta', None)
+        if base is not None and delta is not None and row_valid.any():
+            base = base.detach().float().squeeze(1)[row_valid]
+            delta = delta.detach().float().squeeze(1)[row_valid]
+            base_norm = base.norm(dim=-1).mean() / (base.shape[-1] ** 0.5)
+            delta_norm = delta.norm(dim=-1).mean() / (delta.shape[-1] ** 0.5)
+            denom = base_norm + delta_norm
+            stats['lig_global_base_norm'] = base_norm.item()
+            stats['unimol_global_delta_norm'] = delta_norm.item()
+            stats['unimol_global_contribution_ratio'] = (delta_norm / denom).item() if denom > 0 else 0.0
+
+        film_norms = []
+        if hasattr(model, 'co_attn_blocks') and row_valid.any():
+            for block in model.co_attn_blocks:
+                if getattr(block, 'film', None) is not None:
+                    params = block.film.proj(valid_ue.to(device=next(block.film.parameters()).device))
+                    film_norms.append(params.float().norm(dim=-1).mean() / (params.shape[-1] ** 0.5))
+        if film_norms:
+            stats['unimol_film_signal_norm'] = torch.stack(film_norms).mean().item()
+
+    return stats
+
+
 def train_epoch(
     model: nn.Module,
     dataloader,
@@ -1022,6 +1091,7 @@ def train_epoch(
     cnc_max_clip_frac: float = 0.3,      # V10m7
     dist_aux_enabled: bool = False,      # V10m8: Distance regression aux head
     dist_aux_weight: float = 0.1,        # V10m8: weight for dist aux loss
+    dist_aux_warmup_epochs: int = 0,     # V12: warm up dist aux to avoid early co-attn gradient spike
     dist_aux_max_dist: float = 20.0,     # V10m8: clamp distance
 ) -> Dict[str, float]:
     """Train for one epoch. V10m8: V10m7 + per-layer dist bias + dist aux head."""
@@ -1052,6 +1122,10 @@ def train_epoch(
     # V10: BF16 support
     amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
     optimizer.zero_grad(set_to_none=True)
+    if dist_aux_enabled and dist_aux_warmup_epochs > 0:
+        dist_aux_weight_eff = dist_aux_weight * min(1.0, float(epoch + 1) / float(dist_aux_warmup_epochs))
+    else:
+        dist_aux_weight_eff = dist_aux_weight
 
     start_time = time.time()
 
@@ -1193,7 +1267,7 @@ def train_epoch(
                     mask=mask,
                     max_dist=dist_aux_max_dist,
                 )
-                loss = loss + dist_aux_weight * dist_aux_loss
+                loss = loss + dist_aux_weight_eff * dist_aux_loss
             else:
                 dist_aux_loss = torch.tensor(0.0, device=device)
 
@@ -1238,11 +1312,16 @@ def train_epoch(
             if perf_monitor:
                 perf_monitor.start('optimizer_step')
 
-            # ✅ Record gradients BEFORE clipping and optimizer step
+            # AMP gradients are scaled after backward. Unscale BEFORE logging so
+            # component grad norms represent true pre-clipping gradients.
+            if use_amp and scaler is not None:
+                scaler.unscale_(optimizer)
+
+            # ✅ Record gradients AFTER unscale, BEFORE clipping and optimizer step
             if writer is not None and is_main_process() and (batch_idx + 1) % log_every == 0:
                 global_step = epoch * len(dataloader) + batch_idx
 
-                # 梯度统计（在清零之前记录）
+                # 梯度统计（true pre-clipping norm）
                 total_norm = 0.0
                 for p in model.parameters():
                     if p.grad is not None:
@@ -1258,8 +1337,6 @@ def train_epoch(
 
             # Gradient clipping
             if gradient_clip > 0:
-                if use_amp and scaler is not None:
-                    scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
 
             # Optimizer step
@@ -1328,6 +1405,8 @@ def train_epoch(
                 # V10m8: dist aux loss
                 if dist_aux_enabled:
                     writer.add_scalar('Train/dist_aux_loss', dist_aux_loss.item(), global_step)
+                    writer.add_scalar('Train/dist_aux_weight_effective', dist_aux_weight_eff, global_step)
+                writer.add_scalar('Train/learning_rate_batch', optimizer.param_groups[0]['lr'], global_step)
 
                 # 健康诊断（GVP范数、门控开放度、注意力熵）
                 diagnostics = collect_model_diagnostics(model)
@@ -1358,6 +1437,11 @@ def train_epoch(
                     for key, value in feature_stats.items():
                         writer.add_scalar(f'Health/{key}', value, global_step)
 
+                # V12: Uni-Mol coverage and actual contribution through global token / FiLM.
+                unimol_stats = compute_unimol_stats(_model, inputs.get('unimol_embed'))
+                for key, value in unimol_stats.items():
+                    writer.add_scalar(f'Health/{key}', value, global_step)
+
     # V10: Aggregate metrics - convert tensors to scalars
     avg_loss          = (total_loss / max(total_samples, 1)).item()
     avg_tversky_loss  = (total_tversky_loss / max(total_samples, 1)).item()   # V10m4
@@ -1378,6 +1462,7 @@ def train_epoch(
         'accuracy':     sum(m['accuracy'] for m in all_metrics) / len(all_metrics),
         'cnc_clip_fraction': total_cnc_clipped / max(total_cnc_valid, 1),  # V10m7
         'dist_aux_loss': (total_dist_aux_loss / max(total_samples, 1)).item(),  # V10m8
+        'dist_aux_weight_effective': dist_aux_weight_eff if dist_aux_enabled else 0.0,
     }
 
     return avg_metrics
@@ -2011,9 +2096,13 @@ def main():
         dist_aux_cfg = train_cfg.get('dist_aux', {})
         dist_aux_enabled = dist_aux_cfg.get('enabled', False)
         dist_aux_weight = dist_aux_cfg.get('weight', 0.1)
+        dist_aux_warmup_epochs = dist_aux_cfg.get('warmup_epochs', 0)
         dist_aux_max_dist = dist_aux_cfg.get('max_dist', 20.0)
         if epoch == start_epoch and dist_aux_enabled:
-            print_rank0(f"  Dist aux enabled: weight={dist_aux_weight}, max_dist={dist_aux_max_dist}")
+            print_rank0(
+                f"  Dist aux enabled: target_weight={dist_aux_weight}, "
+                f"warmup_epochs={dist_aux_warmup_epochs}, max_dist={dist_aux_max_dist}"
+            )
 
         # Train
         train_metrics = train_epoch(
@@ -2058,6 +2147,7 @@ def main():
             cnc_max_clip_frac=cnc_max_clip_frac,
             dist_aux_enabled=dist_aux_enabled,
             dist_aux_weight=dist_aux_weight,
+            dist_aux_warmup_epochs=dist_aux_warmup_epochs,
             dist_aux_max_dist=dist_aux_max_dist,
             unimol_cache=unimol_cache,
             d_unimol=d_unimol,
@@ -2090,7 +2180,11 @@ def main():
         # Logging
         if rank == 0:
             cnc_frac_str = f", CNC clip: {train_metrics['cnc_clip_fraction']:.3f}" if cnc_enabled else ""
-            dist_aux_str = f", DistAux: {train_metrics['dist_aux_loss']:.4f}" if dist_aux_enabled else ""
+            dist_aux_str = (
+                f", DistAux: {train_metrics['dist_aux_loss']:.4f}"
+                f"@w={train_metrics['dist_aux_weight_effective']:.4f}"
+                if dist_aux_enabled else ""
+            )
             print_rank0(f"Train Loss: {train_metrics['loss']:.4f}, Tversky: {train_metrics['tversky_loss']:.4f}, Focal: {train_metrics['focal_loss']:.4f}, Acc: {train_metrics['accuracy']:.4f}{cnc_frac_str}{dist_aux_str}")
             print_rank0(f"Val Loss (d_center): {val_metrics['loss']:.4f}, Tversky: {val_metrics['dice_loss']:.4f}, Focal: {val_metrics['focal_loss']:.4f}, Acc: {val_metrics['accuracy']:.4f}")
 
@@ -2111,6 +2205,7 @@ def main():
                 # V10m8: dist aux epoch stats
                 if dist_aux_enabled:
                     writer.add_scalar('Train/epoch_dist_aux_loss', train_metrics['dist_aux_loss'], epoch)
+                    writer.add_scalar('Train/epoch_dist_aux_weight_effective', train_metrics['dist_aux_weight_effective'], epoch)
 
                 # 训练指标
                 writer.add_scalar('Train/epoch_loss', train_metrics['loss'], epoch)

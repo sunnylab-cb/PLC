@@ -421,8 +421,10 @@ def compute_feature_statistics(
     
     # Contribution ratio using h_geo (full structural pathway) vs ESM
     if h_geo is not None and esm_norm_for_ratio > 0:
-        h_geo_norm_normalized = h_geo_norm / (320 ** 0.5)
-        esm_norm_normalized = esm_norm_for_ratio / (1280 ** 0.5)
+        h_geo_dim = h_geo.shape[-1]
+        esm_dim = esm_embeddings.shape[-1]
+        h_geo_norm_normalized = h_geo_norm / (h_geo_dim ** 0.5)
+        esm_norm_normalized = esm_norm_for_ratio / (esm_dim ** 0.5)
         
         total_norm = h_geo_norm_normalized + esm_norm_normalized
         if total_norm > 0:
@@ -430,8 +432,10 @@ def compute_feature_statistics(
             stats['esm_contribution_ratio'] = esm_norm_normalized / total_norm
     elif h_geo is None and esm_norm_for_ratio > 0:
         # Fallback: use just scalar if h_geo not available
-        gvp_norm_normalized = gvp_scalar_norm / (256 ** 0.5)
-        esm_norm_normalized = esm_norm_for_ratio / (1280 ** 0.5)
+        gvp_dim = gvp_scalar.shape[-1]
+        esm_dim = esm_embeddings.shape[-1]
+        gvp_norm_normalized = gvp_scalar_norm / (gvp_dim ** 0.5)
+        esm_norm_normalized = esm_norm_for_ratio / (esm_dim ** 0.5)
         
         total_norm = gvp_norm_normalized + esm_norm_normalized
         if total_norm > 0:
@@ -439,4 +443,3 @@ def compute_feature_statistics(
             stats['esm_contribution_ratio'] = esm_norm_normalized / total_norm
     
     return stats
-

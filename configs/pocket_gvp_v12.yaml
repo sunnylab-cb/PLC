@@ -134,7 +134,8 @@ training:
 
   dist_aux:
     enabled: true
-    weight: 0.1
+    weight: 0.05
+    warmup_epochs: 5
     max_dist: 20.0
 
   gradient_clip: 1.0
