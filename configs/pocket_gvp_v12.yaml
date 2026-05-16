@@ -131,7 +131,7 @@ model:
   # Backward guard for late ESM-path spikes.  This clamps dL/d(h_esm_proj)
   # before LinearBackward forms dW = grad_output^T @ ESM; post-backward grad
   # clipping is too late once esm_proj.0.weight.grad has already become Inf.
-  esm_proj_output_grad_clip: 100.0
+  esm_proj_output_grad_clip: 1.0
 
   # SASA residual gate amplitude (tanh range: [1-amp, 1+amp])
   # Diagnostic toggles: keep residue training mask unchanged; these only control
