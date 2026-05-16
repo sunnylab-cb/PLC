@@ -37,20 +37,340 @@ from typing import Dict, List, Optional, Tuple
 from .gvp_layers import GVPEncoder, build_protein_graph, rbf_encode
 from .ligand_encoder_3d import Ligand3DEncoder
 from .chain_encoding import get_cumulative_gap_position_ids
-from .transformer_layers import CrossAttentionBlock
-
 # Re-use from V11 (avoid code duplication)
 from .pocket_gvp_fusion_v11 import (
     RotaryEmbedding,
     apply_rotary_pos_emb,
-    RoPEGatedMultiHeadAttention,
     DistanceBias,
     LigandDistanceBias,
     SwiGLU,
-    RoPEGatedTransformerBlock,
     PairwiseBridge,
     drop_path,
 )
+
+
+def convert_layernorm_to_rmsnorm(module: nn.Module) -> None:
+    """
+    V12-local normalization swap.
+
+    ROCm training probes showed repeated non-finite gradients in LayerNorm
+    affine parameters after optimizer steps, even with co-attn disabled.
+    RMSNorm removes the mean-subtraction/bias path and was stable in the same
+    probes.  This helper intentionally mutates only the V12 model instance; it
+    does not touch V11 or shared transformer classes.
+    """
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.LayerNorm):
+            rms = nn.RMSNorm(
+                child.normalized_shape,
+                eps=child.eps,
+                elementwise_affine=child.elementwise_affine,
+            )
+            if child.elementwise_affine:
+                with torch.no_grad():
+                    rms.weight.copy_(child.weight.detach())
+            setattr(module, name, rms)
+        else:
+            convert_layernorm_to_rmsnorm(child)
+
+
+def freeze_norm_parameters(module: nn.Module) -> int:
+    """Freeze direct parameters of norm modules under a given module tree."""
+    norm_types = (nn.LayerNorm, nn.RMSNorm)
+    n_frozen = 0
+    for child in module.modules():
+        if isinstance(child, norm_types):
+            for p in child.parameters(recurse=False):
+                if p.requires_grad:
+                    p.requires_grad_(False)
+                    n_frozen += p.numel()
+    return n_frozen
+
+
+# ===========================================================================
+# V12-local RoPE Self-Attention
+# ===========================================================================
+
+class V12RoPEGatedMultiHeadAttention(nn.Module):
+    """
+    V12-local RoPE gated attention.
+
+    This intentionally does not reuse V11's RoPEGatedMultiHeadAttention because
+    V12 needs stricter numerical guards for repeated co-attention blocks:
+    fp32 softmax, optional finite-logit clipping, all-masked-row protection, and
+    query-padding output zeroing.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int = 8,
+        dropout: float = 0.1,
+        use_gate: bool = True,
+        attn_dropout: Optional[float] = None,
+        attn_logit_clip: Optional[float] = None,
+    ):
+        super().__init__()
+        assert d_model % n_heads == 0
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+        self.scale = self.d_head ** -0.5
+        self.use_gate = use_gate
+        self.attn_logit_clip = attn_logit_clip
+
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.w_k = nn.Linear(d_model, d_model, bias=False)
+        self.w_v = nn.Linear(d_model, d_model, bias=False)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
+        if use_gate:
+            self.gate = nn.Linear(d_model, d_model, bias=False)
+
+        _attn_dropout = attn_dropout if attn_dropout is not None else dropout
+        self.attn_dropout = nn.Dropout(_attn_dropout)
+        self.rope = RotaryEmbedding(self.d_head)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        attn_bias: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B, L, _ = x.shape
+        q = self.w_q(x).view(B, L, self.n_heads, self.d_head).transpose(1, 2)
+        k = self.w_k(x).view(B, L, self.n_heads, self.d_head).transpose(1, 2)
+        v = self.w_v(x).view(B, L, self.n_heads, self.d_head).transpose(1, 2)
+
+        cos, sin = self.rope(L, x.device, position_ids=position_ids)
+        q = apply_rotary_pos_emb(q, cos, sin)
+        k = apply_rotary_pos_emb(k, cos, sin)
+
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        if attn_bias is not None:
+            attn = attn + attn_bias
+
+        if self.attn_logit_clip is not None:
+            clip = float(self.attn_logit_clip)
+            attn = torch.nan_to_num(
+                attn, nan=0.0, posinf=clip, neginf=-clip
+            )
+            attn = attn.clamp(-clip, clip)
+
+        query_mask = None
+        if mask is not None:
+            if mask.dim() == 2:
+                query_mask = mask
+                key_mask = mask.unsqueeze(1).unsqueeze(2)   # [B, 1, 1, L]
+            elif mask.dim() == 3:
+                key_mask = mask.unsqueeze(1)                # [B, 1, L, L]
+            else:
+                raise ValueError(f"Unsupported attention mask shape: {mask.shape}")
+            attn = attn.masked_fill(~key_mask, float('-inf'))
+
+        all_masked = torch.isneginf(attn).all(dim=-1, keepdim=True)
+        if all_masked.any():
+            attn = torch.where(all_masked, torch.zeros_like(attn), attn)
+
+        attn = F.softmax(attn.float(), dim=-1).to(dtype=q.dtype)
+        attn = self.attn_dropout(attn)
+        out = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, self.d_model)
+
+        if query_mask is not None:
+            out = out.masked_fill(~query_mask.unsqueeze(-1), 0.0)
+
+        out = self.w_o(out)
+        if self.use_gate:
+            out = out * torch.sigmoid(self.gate(x))
+        return out
+
+
+class V12RoPEGatedTransformerBlock(nn.Module):
+    """V12-local Transformer block with padding-safe self-attention and FFN."""
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int = 8,
+        dropout: float = 0.1,
+        use_gated_attn: bool = True,
+        use_swiglu: bool = True,
+        drop_path_prob: float = 0.0,
+        attn_dropout: Optional[float] = None,
+        attn_logit_clip: Optional[float] = None,
+    ):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.attn = V12RoPEGatedMultiHeadAttention(
+            d_model=d_model,
+            n_heads=n_heads,
+            dropout=dropout,
+            use_gate=use_gated_attn,
+            attn_dropout=attn_dropout,
+            attn_logit_clip=attn_logit_clip,
+        )
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = SwiGLU(d_model, dropout=dropout) if use_swiglu else nn.Sequential(
+            nn.Linear(d_model, d_model * 4), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model),
+        )
+        self.drop_path_prob = drop_path_prob
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        attn_bias: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        query_mask = mask if mask is not None and mask.dim() == 2 else None
+
+        attn_out = self.attn(
+            self.norm1(x),
+            mask=mask,
+            attn_bias=attn_bias,
+            position_ids=position_ids,
+        )
+        x = x + drop_path(attn_out, self.drop_path_prob, self.training)
+        if query_mask is not None:
+            x = x.masked_fill(~query_mask.unsqueeze(-1), 0.0)
+
+        ffn_out = self.ffn(self.norm2(x))
+        if query_mask is not None:
+            ffn_out = ffn_out.masked_fill(~query_mask.unsqueeze(-1), 0.0)
+        x = x + drop_path(ffn_out, self.drop_path_prob, self.training)
+        if query_mask is not None:
+            x = x.masked_fill(~query_mask.unsqueeze(-1), 0.0)
+        return x
+
+
+class V12GatedCrossAttention(nn.Module):
+    """V12-local cross attention with all-masked-row protection."""
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int = 8,
+        dropout: float = 0.1,
+        attn_dropout: Optional[float] = None,
+        attn_logit_clip: Optional[float] = None,
+    ):
+        super().__init__()
+        assert d_model % n_heads == 0
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+        self.scale = self.d_head ** -0.5
+        self.attn_logit_clip = attn_logit_clip
+
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.w_k = nn.Linear(d_model, d_model, bias=False)
+        self.w_v = nn.Linear(d_model, d_model, bias=False)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
+        self.gate = nn.Linear(d_model, d_model, bias=False)
+
+        _attn_dropout = attn_dropout if attn_dropout is not None else dropout
+        self.attn_dropout = nn.Dropout(_attn_dropout)
+
+    def forward(
+        self,
+        q_in: torch.Tensor,
+        kv: torch.Tensor,
+        kv_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B, L, _ = q_in.shape
+        S = kv.size(1)
+
+        q = self.w_q(q_in).view(B, L, self.n_heads, self.d_head).transpose(1, 2)
+        k = self.w_k(kv).view(B, S, self.n_heads, self.d_head).transpose(1, 2)
+        v = self.w_v(kv).view(B, S, self.n_heads, self.d_head).transpose(1, 2)
+
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        if self.attn_logit_clip is not None:
+            clip = float(self.attn_logit_clip)
+            attn = torch.nan_to_num(
+                attn, nan=0.0, posinf=clip, neginf=-clip
+            )
+            attn = attn.clamp(-clip, clip)
+
+        if kv_mask is not None:
+            if kv_mask.dim() == 2:
+                key_mask = kv_mask.unsqueeze(1).unsqueeze(2)  # [B, 1, 1, S]
+            elif kv_mask.dim() == 3:
+                key_mask = kv_mask.unsqueeze(1)               # [B, 1, L, S]
+            else:
+                raise ValueError(f"Unsupported cross-attn mask shape: {kv_mask.shape}")
+            attn = attn.masked_fill(~key_mask, float('-inf'))
+
+        all_masked = torch.isneginf(attn).all(dim=-1, keepdim=True)
+        if all_masked.any():
+            attn = torch.where(all_masked, torch.zeros_like(attn), attn)
+
+        attn = F.softmax(attn.float(), dim=-1).to(dtype=q.dtype)
+        if all_masked.any():
+            attn = torch.where(all_masked, torch.zeros_like(attn), attn)
+        attn = self.attn_dropout(attn)
+
+        out = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, self.d_model)
+        out = self.w_o(out)
+        out = out * torch.sigmoid(self.gate(q_in))
+        return out
+
+
+class V12CrossAttentionBlock(nn.Module):
+    """V12-local CrossAttentionBlock with padding-safe attention and FFN."""
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int = 8,
+        dropout: float = 0.1,
+        drop_path_prob: float = 0.0,
+        attn_dropout: Optional[float] = None,
+        attn_logit_clip: Optional[float] = None,
+    ):
+        super().__init__()
+        self.norm_q = nn.LayerNorm(d_model)
+        self.norm_kv = nn.LayerNorm(d_model)
+        self.cross_attn = V12GatedCrossAttention(
+            d_model=d_model,
+            n_heads=n_heads,
+            dropout=dropout,
+            attn_dropout=attn_dropout,
+            attn_logit_clip=attn_logit_clip,
+        )
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = SwiGLU(d_model, dropout=dropout)
+        self.dropout = nn.Dropout(dropout)
+        self.drop_path_prob = drop_path_prob
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        kv: torch.Tensor,
+        q_mask: Optional[torch.Tensor] = None,
+        kv_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        residual = q
+        q_normed = self.norm_q(q)
+        kv_normed = self.norm_kv(kv)
+        if q_mask is not None:
+            q_normed = q_normed.masked_fill(~q_mask.unsqueeze(-1), 0.0)
+        if kv_mask is not None and kv_mask.dim() == 2:
+            kv_normed = kv_normed.masked_fill(~kv_mask.unsqueeze(-1), 0.0)
+        out = self.cross_attn(q_normed, kv_normed, kv_mask=kv_mask)
+        out = drop_path(self.dropout(out), self.drop_path_prob, self.training) + residual
+        if q_mask is not None:
+            out = out.masked_fill(~q_mask.unsqueeze(-1), 0.0)
+
+        residual = out
+        ffn_out = self.ffn(self.norm2(out))
+        if q_mask is not None:
+            ffn_out = ffn_out.masked_fill(~q_mask.unsqueeze(-1), 0.0)
+        out = drop_path(self.dropout(ffn_out), self.drop_path_prob, self.training) + residual
+        if q_mask is not None:
+            out = out.masked_fill(~q_mask.unsqueeze(-1), 0.0)
+        return out
 
 
 # ===========================================================================
@@ -71,14 +391,25 @@ class FiLMLayer(nn.Module):
     stable while leaving h_prot unmodified when unimol_embed is absent.
     """
 
-    def __init__(self, d_unimol: int = 512, d_model: int = 512):
+    def __init__(
+        self,
+        d_unimol: int = 512,
+        d_model: int = 512,
+        zero_init: bool = True,
+    ):
         super().__init__()
         self.proj = nn.Linear(d_unimol, 2 * d_model, bias=True)
-        nn.init.zeros_(self.proj.weight)
-        nn.init.zeros_(self.proj.bias)
+        if zero_init:
+            nn.init.zeros_(self.proj.weight)
+            nn.init.zeros_(self.proj.bias)
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, h_prot: torch.Tensor, unimol_embed: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        h_prot: torch.Tensor,
+        unimol_embed: torch.Tensor,
+        prot_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Args:
             h_prot:       [B, L, d_model]
@@ -89,7 +420,12 @@ class FiLMLayer(nn.Module):
         params = self.proj(unimol_embed)               # [B, 2*d_model]
         gamma, beta = params.chunk(2, dim=-1)          # [B, d_model] each
         delta = gamma.unsqueeze(1) * self.norm(h_prot) + beta.unsqueeze(1)
-        return h_prot + delta
+        if prot_mask is not None:
+            delta = delta.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
+        h_out = h_prot + delta
+        if prot_mask is not None:
+            h_out = h_out.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
+        return h_out
 
 
 # ===========================================================================
@@ -180,6 +516,7 @@ class InterBlockAttnResV2(nn.Module):
         self,
         blocks:  List[torch.Tensor],   # anchor tensors  [B, L, d] each
         partial: torch.Tensor,          # current repr    [B, L, d]
+        mask:    Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         sources = torch.stack(blocks + [partial], dim=0)   # [K+1, B, L, d]
         keys    = self.key_norm(sources)
@@ -191,7 +528,10 @@ class InterBlockAttnResV2(nn.Module):
         ).to(dtype=logits.dtype) * self.partial_logit_bias  # [K+1]
         logits = logits + bias[:, None, None]               # boost partial logit
         alpha   = logits.softmax(dim=0)                    # [K+1, B, L]
-        return (alpha.unsqueeze(-1) * sources).sum(dim=0)  # [B, L, d]
+        out = (alpha.unsqueeze(-1) * sources).sum(dim=0)    # [B, L, d]
+        if mask is not None:
+            out = out.masked_fill(~mask.unsqueeze(-1), 0.0)
+        return out
 
 
 # ===========================================================================
@@ -230,31 +570,117 @@ class CoAttentionBlock(nn.Module):
         use_film: bool = True,
         use_prot_dist_bias: bool = True,
         use_lig_dist_bias: bool = True,
+        cross_attn_logit_clip: Optional[float] = None,
+        self_attn_logit_clip: Optional[float] = None,
+        inner_residual_scale: float = 1.0,
+        use_rezero_branch_gates: bool = True,
+        rezero_gate_init: float = 0.0,
+        rezero_film_init: Optional[float] = None,
+        rezero_prot_sa_init: Optional[float] = None,
+        rezero_lig_sa_init: Optional[float] = None,
+        rezero_p2l_init: Optional[float] = None,
+        rezero_l2p_init: Optional[float] = None,
+        p2l_length_scale: bool = False,
+        p2l_length_ref: float = 256.0,
+        p2l_rezero_gate_max: Optional[float] = None,
     ):
         super().__init__()
+        self.inner_residual_scale = inner_residual_scale
+        self.use_rezero_branch_gates = use_rezero_branch_gates
+        self.p2l_length_scale = bool(p2l_length_scale)
+        self.p2l_length_ref = float(p2l_length_ref)
+        self.p2l_rezero_gate_max = p2l_rezero_gate_max
 
         # 1. FiLM conditioning
-        self.film = FiLMLayer(d_unimol, d_model) if use_film else None
+        self.film = FiLMLayer(
+            d_unimol,
+            d_model,
+            zero_init=not use_rezero_branch_gates,
+        ) if use_film else None
 
         # 2. Protein Self-Attention (RoPE + intra-protein 3D dist bias)
-        self.prot_self_attn = RoPEGatedTransformerBlock(
+        self.prot_self_attn = V12RoPEGatedTransformerBlock(
             d_model, n_heads, dropout,
             use_gated_attn=True, use_swiglu=True,
             drop_path_prob=drop_path_prob, attn_dropout=attn_dropout,
+            attn_logit_clip=self_attn_logit_clip,
         )
         self.prot_dist_bias = DistanceBias(n_heads) if use_prot_dist_bias else None
 
         # 3. Ligand Self-Attention (intra-ligand 3D dist bias; no RoPE)
-        self.lig_self_attn = RoPEGatedTransformerBlock(
+        self.lig_self_attn = V12RoPEGatedTransformerBlock(
             d_model, n_heads, dropout,
             use_gated_attn=True, use_swiglu=True,
             drop_path_prob=drop_path_prob, attn_dropout=attn_dropout,
+            attn_logit_clip=self_attn_logit_clip,
         )
         self.lig_dist_bias = LigandDistanceBias(n_heads) if use_lig_dist_bias else None
 
         # 4 & 5. Bidirectional Cross-Attention (standard; no geometric bias)
-        self.prot_to_lig = CrossAttentionBlock(d_model, n_heads, dropout, drop_path_prob, attn_dropout)
-        self.lig_to_prot = CrossAttentionBlock(d_model, n_heads, dropout, drop_path_prob, attn_dropout)
+        self.prot_to_lig = V12CrossAttentionBlock(
+            d_model, n_heads, dropout, drop_path_prob, attn_dropout,
+            attn_logit_clip=cross_attn_logit_clip,
+        )
+        self.lig_to_prot = V12CrossAttentionBlock(
+            d_model, n_heads, dropout, drop_path_prob, attn_dropout,
+            attn_logit_clip=cross_attn_logit_clip,
+        )
+
+        if use_rezero_branch_gates:
+            init = float(rezero_gate_init)
+            film_init = init if rezero_film_init is None else float(rezero_film_init)
+            prot_sa_init = init if rezero_prot_sa_init is None else float(rezero_prot_sa_init)
+            lig_sa_init = init if rezero_lig_sa_init is None else float(rezero_lig_sa_init)
+            p2l_init = init if rezero_p2l_init is None else float(rezero_p2l_init)
+            l2p_init = init if rezero_l2p_init is None else float(rezero_l2p_init)
+
+            self.rezero_film = nn.Parameter(torch.tensor(film_init)) if use_film else None
+            self.rezero_prot_sa = nn.Parameter(torch.tensor(prot_sa_init))
+            self.rezero_lig_sa = nn.Parameter(torch.tensor(lig_sa_init))
+            self.rezero_p2l = nn.Parameter(torch.tensor(
+                self._raw_bounded_gate_init(p2l_init, p2l_rezero_gate_max)
+            ))
+            self.rezero_l2p = nn.Parameter(torch.tensor(l2p_init))
+        else:
+            self.rezero_film = None
+            self.register_buffer('rezero_prot_sa', torch.tensor(1.0), persistent=False)
+            self.register_buffer('rezero_lig_sa', torch.tensor(1.0), persistent=False)
+            self.register_buffer('rezero_p2l', torch.tensor(1.0), persistent=False)
+            self.register_buffer('rezero_l2p', torch.tensor(1.0), persistent=False)
+
+    @staticmethod
+    def _bounded_gate(gate: torch.Tensor, max_abs: Optional[float]) -> torch.Tensor:
+        if max_abs is None:
+            return gate
+        return float(max_abs) * torch.tanh(gate)
+
+    @staticmethod
+    def _raw_bounded_gate_init(effective_init: float, max_abs: Optional[float]) -> float:
+        """Convert desired effective gate init to raw tanh-param init."""
+        if max_abs is None:
+            return float(effective_init)
+        max_abs = float(max_abs)
+        if max_abs <= 0:
+            raise ValueError(f"p2l_rezero_gate_max must be positive, got {max_abs}")
+        if abs(effective_init) >= max_abs:
+            raise ValueError(
+                f"rezero_p2l_init={effective_init} must satisfy "
+                f"abs(init) < p2l_rezero_gate_max={max_abs}"
+            )
+        ratio = float(effective_init) / max_abs
+        return math.atanh(ratio)
+
+    def _scale_p2l_delta(
+        self,
+        delta: torch.Tensor,
+        prot_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if not self.p2l_length_scale or prot_mask is None:
+            return delta
+        n_res = prot_mask.sum(dim=1).clamp_min(1).to(dtype=delta.dtype)
+        ref = torch.as_tensor(self.p2l_length_ref, device=delta.device, dtype=delta.dtype)
+        scale = torch.sqrt(ref / n_res).clamp(max=1.0)
+        return delta * scale.view(-1, 1, 1)
 
     def forward(
         self,
@@ -270,15 +696,26 @@ class CoAttentionBlock(nn.Module):
 
         # 1. FiLM: global ligand chemistry conditions protein repr
         if self.film is not None:
-            h_prot = self.film(h_prot, unimol_embed)
+            h_prot_film = self.film(h_prot, unimol_embed, prot_mask=prot_mask)
+            if self.rezero_film is not None:
+                h_prot = h_prot + self.rezero_film * (h_prot_film - h_prot)
+                if prot_mask is not None:
+                    h_prot = h_prot.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
+            else:
+                h_prot = h_prot_film
 
         # 2. Protein Self-Attention (intra-protein geometry only)
         prot_attn_bias = None
         if self.prot_dist_bias is not None and prot_coords is not None:
             prot_attn_bias = self.prot_dist_bias(prot_coords, mask=prot_mask)
-        h_prot = self.prot_self_attn(
+        h_prot_full = self.prot_self_attn(
             h_prot, mask=prot_mask, attn_bias=prot_attn_bias, position_ids=position_ids
         )
+        h_prot = h_prot + (
+            self.rezero_prot_sa * self.inner_residual_scale * (h_prot_full - h_prot)
+        )
+        if prot_mask is not None:
+            h_prot = h_prot.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
 
         # 3. Ligand Self-Attention (intra-ligand geometry only)
         # lig_coords [B, M+1, 3]: position 0 = global token (zeros), 1..M = atoms.
@@ -296,21 +733,65 @@ class CoAttentionBlock(nn.Module):
             lig_attn_bias = self.lig_dist_bias(atom_coords, atom_mask=atom_mask)
         B_lig, M1, _ = h_lig.shape
         lig_zero_pos = torch.zeros(B_lig, M1, dtype=torch.long, device=h_lig.device)
-        h_lig = self.lig_self_attn(
+        h_lig_full = self.lig_self_attn(
             h_lig, mask=lig_mask, attn_bias=lig_attn_bias, position_ids=lig_zero_pos
         )
+        h_lig = h_lig + (
+            self.rezero_lig_sa * self.inner_residual_scale * (h_lig_full - h_lig)
+        )
+        if lig_mask is not None:
+            h_lig = h_lig.masked_fill(~lig_mask.unsqueeze(-1), 0.0)
 
         # 4 & 5. Parallel Bidirectional Cross-Attention (true Evoformer-style)
         # Both branches read from pre-update h_prot / h_lig so neither side
         # influences the other within the same block — gradient flows are symmetric.
-        h_prot_new = self.prot_to_lig(
+        h_prot_full = self.prot_to_lig(
             q=h_prot, kv=h_lig, q_mask=prot_mask, kv_mask=lig_mask
         )
-        h_lig_new = self.lig_to_prot(
+        h_lig_full = self.lig_to_prot(
             q=h_lig, kv=h_prot, q_mask=lig_mask, kv_mask=prot_mask   # note: h_prot not h_prot_new
         )
+        p2l_delta = self._scale_p2l_delta(h_prot_full - h_prot, prot_mask)
+        p2l_gate = self._bounded_gate(self.rezero_p2l, self.p2l_rezero_gate_max)
+        h_prot_new = h_prot + (
+            p2l_gate * self.inner_residual_scale * p2l_delta
+        )
+        h_lig_new = h_lig + (
+            self.rezero_l2p * self.inner_residual_scale * (h_lig_full - h_lig)
+        )
+        if prot_mask is not None:
+            h_prot_new = h_prot_new.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
+        if lig_mask is not None:
+            h_lig_new = h_lig_new.masked_fill(~lig_mask.unsqueeze(-1), 0.0)
 
         return h_prot_new, h_lig_new
+
+
+def zero_init_co_attention_residuals(block: CoAttentionBlock) -> None:
+    """
+    Make a CoAttentionBlock identity-like at initialization.
+
+    V12 stacks several strong residual branches per block:
+      protein SA+FFN, ligand SA+FFN, P->L CA+FFN, L->P CA+FFN.
+    Default random initialization lets these branches rewrite V11-style fused
+    representations from step 0 and can produce huge LayerNorm gradients.
+
+    Zero-initializing each residual branch's final projection is the standard
+    ReZero/LayerScale-style safe start: branch output is exactly zero at init,
+    but gradients still update the final projection so the branch can open
+    gradually during training.
+    """
+    for self_block_name in ("prot_self_attn", "lig_self_attn"):
+        self_block = getattr(block, self_block_name)
+        nn.init.zeros_(self_block.attn.w_o.weight)
+        if hasattr(self_block.ffn, "w_2"):
+            nn.init.zeros_(self_block.ffn.w_2.weight)
+
+    for cross_block_name in ("prot_to_lig", "lig_to_prot"):
+        cross_block = getattr(block, cross_block_name)
+        nn.init.zeros_(cross_block.cross_attn.w_o.weight)
+        if hasattr(cross_block.ffn, "w_2"):
+            nn.init.zeros_(cross_block.ffn.w_2.weight)
 
 
 # ===========================================================================
@@ -373,7 +854,20 @@ class PocketGVPFusionV12(nn.Module):
         'use_lig_dist_bias':    True,
         'use_attn_res':         True,
         'co_attn_residual_scale': 0.25,
+        'zero_init_co_attn_residuals': True,
+        'cross_attn_logit_clip': 30.0,
+        'self_attn_logit_clip': 30.0,
+        'co_attn_inner_residual_scale': 0.05,
+        'use_rezero_branch_gates': True,
+        'rezero_gate_init': 0.0,
+        'p2l_length_scale': True,
+        'p2l_length_ref': 256.0,
+        'p2l_rezero_gate_max': None,
+        'norm_type': 'rmsnorm',
+        'freeze_all_norms': True,
+        'freeze_co_attn_norms': True,
         'sasa_gate_amplitude':  0.5,   # tanh gate range: [1-amp, 1+amp] × h_prot
+        'debug_asserts':        False,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -464,9 +958,28 @@ class PocketGVPFusionV12(nn.Module):
                 use_film         = c['use_film'],
                 use_prot_dist_bias = c['use_prot_dist_bias'],
                 use_lig_dist_bias  = c['use_lig_dist_bias'],
+                cross_attn_logit_clip = c.get('cross_attn_logit_clip', None),
+                self_attn_logit_clip = c.get('self_attn_logit_clip', None),
+                inner_residual_scale = c.get('co_attn_inner_residual_scale', 1.0),
+                use_rezero_branch_gates = c.get('use_rezero_branch_gates', True),
+                rezero_gate_init = c.get('rezero_gate_init', 0.0),
+                rezero_film_init = c.get('rezero_film_init', None),
+                rezero_prot_sa_init = c.get('rezero_prot_sa_init', None),
+                rezero_lig_sa_init = c.get('rezero_lig_sa_init', None),
+                rezero_p2l_init = c.get('rezero_p2l_init', None),
+                rezero_l2p_init = c.get('rezero_l2p_init', None),
+                p2l_length_scale = c.get('p2l_length_scale', True),
+                p2l_length_ref = c.get('p2l_length_ref', 256.0),
+                p2l_rezero_gate_max = c.get('p2l_rezero_gate_max', None),
             )
             for i in range(n_blocks)
         ])
+        if (
+            c.get('zero_init_co_attn_residuals', True)
+            and not c.get('use_rezero_branch_gates', True)
+        ):
+            for block in self.co_attn_blocks:
+                zero_init_co_attention_residuals(block)
 
         # ── RSA Input Projection  [V12 Innovation #3] ───────────────────────
         # Inject surface signal into h_prot BEFORE co-attention so that protein
@@ -474,7 +987,9 @@ class PocketGVPFusionV12(nn.Module):
         # Zero-init → identity at training start.  rsa_mask guards against
         # missing-RSA samples being treated as RSA=0 ("fully buried").
         self.rsa_input_proj = nn.Linear(1, c['d_model'], bias=False)
-        nn.init.zeros_(self.rsa_input_proj.weight)
+        self.rsa_input_alpha = nn.Parameter(torch.tensor(c.get('rezero_gate_init', 0.0)))
+        if not c.get('use_rezero_branch_gates', True):
+            nn.init.zeros_(self.rsa_input_proj.weight)
 
         # ── Uni-Mol → ligand global token  [V12 Innovation #4] ─────────────
         # Augments the mean-pool global token (h_lig[:,0]) with Uni-Mol info
@@ -482,7 +997,9 @@ class PocketGVPFusionV12(nn.Module):
         # not just receive it as a global FiLM broadcast.
         # Zero-init → starts as pure mean-pool; learns to expose Uni-Mol signal.
         self.unimol_to_global = nn.Linear(c['d_unimol'], c['d_model'], bias=False)
-        nn.init.zeros_(self.unimol_to_global.weight)
+        self.unimol_global_alpha = nn.Parameter(torch.tensor(c.get('rezero_gate_init', 0.0)))
+        if not c.get('use_rezero_branch_gates', True):
+            nn.init.zeros_(self.unimol_to_global.weight)
 
         # Final LN before classifier
         self.final_norm = nn.LayerNorm(c['d_model'])
@@ -520,6 +1037,26 @@ class PocketGVPFusionV12(nn.Module):
             )
         else:
             self.dist_aux_head = None
+
+        # V12 stability controls.  Keep these instance-local so V11/shared
+        # modules are unaffected.
+        norm_type = str(c.get('norm_type', 'layernorm')).lower()
+        if norm_type in ('rmsnorm', 'rms'):
+            convert_layernorm_to_rmsnorm(self)
+        elif norm_type not in ('layernorm', 'layer_norm', 'ln'):
+            raise ValueError(f"Unsupported V12 norm_type: {c.get('norm_type')}")
+
+        if c.get('freeze_all_norms', False):
+            self._frozen_norm_params = freeze_norm_parameters(self)
+            self._frozen_co_attn_norm_params = 0
+        elif c.get('freeze_co_attn_norms', False):
+            self._frozen_co_attn_norm_params = sum(
+                freeze_norm_parameters(block) for block in self.co_attn_blocks
+            )
+            self._frozen_norm_params = self._frozen_co_attn_norm_params
+        else:
+            self._frozen_co_attn_norm_params = 0
+            self._frozen_norm_params = 0
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -655,6 +1192,8 @@ class PocketGVPFusionV12(nn.Module):
         h_prot     = self.input_norm(
             torch.cat([gate * h_gvp_proj, (1.0 - gate) * h_esm_proj], dim=-1)
         )  # [B, L, d_model]
+        # Keep padded residues out of V12 anchors/AttnRes/FiLM gradients.
+        h_prot = h_prot.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
 
         # Cache modality features for training diagnostics (ESM/GVP contribution).
         self._cached_gvp_scalar = h_s_gvp.detach()
@@ -690,11 +1229,48 @@ class PocketGVPFusionV12(nn.Module):
         lig_coords = torch.zeros(B_dim, Max_M, 3,            device=device, dtype=ligand_pos.dtype)
         N_atoms = h_ligand_nodes.size(0)
         if N_atoms > 0:
+            if c.get('debug_asserts', False):
+                if ligand_batch.numel() != N_atoms:
+                    raise RuntimeError(
+                        f"ligand_batch length mismatch: {ligand_batch.numel()} vs {N_atoms}"
+                    )
+                if not torch.isfinite(h_ligand_nodes).all():
+                    raise RuntimeError("h_ligand_nodes contains NaN/Inf")
+                if not torch.isfinite(ligand_pos).all():
+                    raise RuntimeError("ligand_pos contains NaN/Inf")
+                if ligand_batch.min().item() < 0 or ligand_batch.max().item() >= B_dim:
+                    raise RuntimeError(
+                        f"ligand_batch out of range: min={ligand_batch.min().item()} "
+                        f"max={ligand_batch.max().item()} B={B_dim}"
+                    )
             counts    = torch.bincount(ligand_batch, minlength=B_dim)
+            if c.get('debug_asserts', False):
+                mask_counts = ligand_mask.sum(dim=1).to(dtype=counts.dtype)
+                if not torch.equal(counts[:B_dim], mask_counts):
+                    raise RuntimeError(
+                        "ligand_batch counts do not match ligand_mask counts: "
+                        f"counts={counts[:B_dim].detach().cpu().tolist()} "
+                        f"mask={mask_counts.detach().cpu().tolist()}"
+                    )
+                if (counts[:B_dim] > Max_M).any():
+                    raise RuntimeError(
+                        f"ligand atoms exceed dense Max_M={Max_M}: "
+                        f"{counts[:B_dim].detach().cpu().tolist()}"
+                    )
             cumsum    = torch.zeros(B_dim + 1, dtype=torch.long, device=device)
             cumsum[1:] = counts.cumsum(0)
             local_idx  = torch.arange(N_atoms, device=device) - cumsum[ligand_batch]
             valid_m    = local_idx < Max_M
+            if c.get('debug_asserts', False):
+                if (local_idx < 0).any():
+                    raise RuntimeError(
+                        f"negative ligand local_idx detected: min={local_idx.min().item()}"
+                    )
+                if not valid_m.all():
+                    bad = (~valid_m).sum().item()
+                    raise RuntimeError(
+                        f"ligand dense scatter would drop {bad} atoms with Max_M={Max_M}"
+                    )
             h_lig     [ligand_batch[valid_m], local_idx[valid_m]] = h_ligand_nodes[valid_m]
             lig_coords[ligand_batch[valid_m], local_idx[valid_m]] = ligand_pos[valid_m]
 
@@ -724,7 +1300,9 @@ class PocketGVPFusionV12(nn.Module):
         # via P→L cross-attention (selective), not only broadcast via FiLM.
         # zero-init proj → no change at start of training.
         # Non-in-place cat to avoid autograd / torch.compile instability.
-        unimol_global_delta = self.unimol_to_global(unimol_embed).unsqueeze(1)
+        unimol_global_delta = (
+            self.unimol_global_alpha * self.unimol_to_global(unimol_embed).unsqueeze(1)
+        )
         self._cached_unimol_global_base = h_lig[:, 0:1, :].detach()
         self._cached_unimol_global_delta = unimol_global_delta.detach()
         h_lig_global = h_lig[:, 0:1, :] + unimol_global_delta
@@ -740,22 +1318,27 @@ class PocketGVPFusionV12(nn.Module):
                     if protein_rsa_mask is not None \
                     else torch.ones_like(rsa_f)                       # [B, L, 1]
             rsa_m = rsa_m * protein_mask.unsqueeze(-1).to(dtype=h_prot.dtype)
-            h_prot = h_prot + rsa_m * self.rsa_input_proj(rsa_f)
+            h_prot = h_prot + self.rsa_input_alpha * rsa_m * self.rsa_input_proj(rsa_f)
+            h_prot = h_prot.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
 
         # ── Module 6 (V12): N × CoAttentionBlock with per-block AttnRes ─────
         # AttnRes anchor: h_prot_0 / h_lig_0 are the representations after
         # encoder fusion + RSA/UniMol injection, before any co-attention.
         # At each block i, AttnRes blends [anchor, current_partial] with learned
         # per-position weights (~98% partial at init → does not disrupt baseline).
-        h_prot_0 = h_prot   # protein anchor: post-encoders, pre-co-attn
-        h_lig_0  = h_lig    # ligand  anchor: post-encoders, pre-co-attn
+        h_prot_0 = h_prot.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
+        h_lig_0  = h_lig.masked_fill(~lig_mask_g.unsqueeze(-1), 0.0)
 
         for i, block in enumerate(self.co_attn_blocks):
             # AttnRes before each block: weighted merge of anchor + current repr.
             # Equivalent to V11's attn_res([b0], partial=h_prot_fused) before CA.
             if c.get('use_attn_res', True):
-                h_prot = self.prot_attn_res[i](blocks=[h_prot_0], partial=h_prot)
-                h_lig  = self.lig_attn_res[i](blocks=[h_lig_0],   partial=h_lig)
+                h_prot = self.prot_attn_res[i](
+                    blocks=[h_prot_0], partial=h_prot, mask=protein_mask
+                )
+                h_lig = self.lig_attn_res[i](
+                    blocks=[h_lig_0], partial=h_lig, mask=lig_mask_g
+                )
             h_prot_in, h_lig_in = h_prot, h_lig
 
             if c.get('use_gradient_checkpointing', False) and self.training:
@@ -787,6 +1370,7 @@ class PocketGVPFusionV12(nn.Module):
 
         # ── Module 7: Classifier ─────────────────────────────────────────────
         h_prot = self.final_norm(h_prot)
+        h_prot = h_prot.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
 
         # SASA Residual Gate: learnable modulation conditioned on RSA.
         # Identity at init (zero-init linear → delta = 0).
@@ -798,7 +1382,11 @@ class PocketGVPFusionV12(nn.Module):
             rsa_m = protein_rsa_mask.to(dtype=h_prot.dtype) if protein_rsa_mask is not None else None
             h_prot = self.sasa_gate(h_prot, rsa, rsa_mask=rsa_m, prot_mask=protein_mask)
 
+        protein_physchem_encoded = protein_physchem_encoded.masked_fill(
+            ~protein_mask.unsqueeze(-1), 0.0
+        )
         x_final = torch.cat([h_prot, protein_physchem_encoded], dim=-1)
+        x_final = x_final.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
         logits  = self.classifier(self.classifier_input_norm(x_final))
 
         result: Dict[str, torch.Tensor] = {

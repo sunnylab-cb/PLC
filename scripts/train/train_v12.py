@@ -29,13 +29,14 @@ V12 架構更新 (基於 V11m2):
 """
 
 import argparse
+import math
 import os
 import sys
 import time
 import yaml
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -545,28 +546,42 @@ def compute_combined_loss_v4(
 
     # ── Focal Loss ──────────────────────────────────────────────────────────
     if _need_focal:
-        log_probs, probs, labels_one_hot = _get_shared()
-
-        if label_smoothing > 0:
-            smooth_labels = labels_one_hot * (1.0 - label_smoothing) + label_smoothing / C
+        # Compute focal only on valid residues.  Doing log_softmax over padded
+        # [B, L] positions and masking afterwards is mathematically equivalent
+        # in exact arithmetic, but it left V12/ROCm exposed to non-finite norm
+        # gradients on long padded batches.  This path matches the stable CE
+        # probe: gather valid tokens first, then scatter per-sample losses.
+        valid_idx = mask.nonzero(as_tuple=False)                               # [N, 2] = (b, l)
+        if valid_idx.numel() == 0:
+            focal_per_sample = torch.zeros(B, device=device)
         else:
-            smooth_labels = labels_one_hot
+            sample_idx = valid_idx[:, 0]
+            logits_v = logits[mask].float()                                    # [N, C]
+            labels_v = labels[mask]                                            # [N]
+            labels_oh_v = F.one_hot(labels_v, num_classes=C).float()
 
-        p_t          = (probs * labels_one_hot).sum(dim=-1, keepdim=True)      # [B, L, 1]
-        focal_w      = (1.0 - p_t) ** focal_gamma                              # [B, L, 1]
-        ce_loss      = -(smooth_labels * log_probs).sum(dim=-1)                # [B, L]
-        weighted_ce  = ce_loss * focal_w.squeeze(-1)                           # [B, L]
+            if label_smoothing > 0:
+                smooth_v = labels_oh_v * (1.0 - label_smoothing) + label_smoothing / C
+            else:
+                smooth_v = labels_oh_v
 
-        cls_w = class_weights.to(device).view(1, 1, C)
-        cls_w_per_pos = (labels_one_hot * cls_w).sum(dim=-1)                   # [B, L]
-        weighted_ce   = weighted_ce * cls_w_per_pos                            # [B, L]
+            log_probs_v = F.log_softmax(logits_v, dim=-1)                      # [N, C]
+            probs_v = log_probs_v.exp()
+            p_t = (probs_v * labels_oh_v).sum(dim=-1).clamp(0.0, 1.0)          # [N]
+            focal_w = (1.0 - p_t) ** focal_gamma                               # [N]
+            ce_v = -(smooth_v * log_probs_v).sum(dim=-1)                       # [N]
 
-        masked_focal = weighted_ce * mask.float()                              # [B, L]
-        # V10m7: CNC — reduce focal loss for clipped c_2 residues
-        if cnc_weights is not None:
-            masked_focal = masked_focal * cnc_weights                          # [B, L]
-        n_valid      = mask.float().sum(dim=1).clamp(min=1.0)                  # [B]
-        focal_per_sample = masked_focal.sum(dim=1) / n_valid                   # [B]
+            cls_w_v = class_weights.to(device)[labels_v].float()               # [N]
+            token_w = cls_w_v
+            if cnc_weights is not None:
+                token_w = token_w * cnc_weights[mask].float()
+
+            token_loss = ce_v * focal_w * token_w                              # [N]
+            loss_sum = torch.zeros(B, device=device, dtype=token_loss.dtype)
+            denom_sum = torch.zeros(B, device=device, dtype=token_loss.dtype)
+            loss_sum.scatter_add_(0, sample_idx, token_loss)
+            denom_sum.scatter_add_(0, sample_idx, token_w)
+            focal_per_sample = loss_sum / denom_sum.clamp(min=1.0)             # [B]
     else:
         focal_per_sample = torch.zeros(B, device=device)
 
@@ -1047,6 +1062,164 @@ def compute_unimol_stats(model: nn.Module, unimol_embed: Optional[torch.Tensor])
     return stats
 
 
+@torch.no_grad()
+def safe_clip_grad_norm_(
+    named_parameters,
+    max_norm: float,
+    norm_type: float = 2.0,
+    error_if_nonfinite: bool = True,
+) -> float:
+    """
+    Robust gradient clipping for V12.
+
+    torch.nn.utils.clip_grad_norm_ can report a non-finite total norm even when
+    every individual gradient tensor is finite, because the norm accumulation
+    itself may overflow.  This helper fails only on real NaN/Inf gradient
+    entries, computes the total norm in fp64, then manually scales gradients.
+    """
+    params = [(name, p) for name, p in named_parameters if p.grad is not None]
+    if not params:
+        return 0.0
+
+    bad_grads = []
+    total = 0.0
+    top = []
+    for name, p in params:
+        grad = p.grad.detach()
+        grad_values = grad.coalesce()._values() if grad.is_sparse else grad
+
+        if not torch.isfinite(grad_values).all():
+            bad_grads.append(
+                f"{name}: nan={torch.isnan(grad_values).sum().item()} "
+                f"inf={torch.isinf(grad_values).sum().item()} shape={tuple(grad.shape)}"
+            )
+            # Even when fail-fast is disabled, never let NaN/Inf gradients enter
+            # AdamW state. Otherwise one skipped warning poisons all later steps.
+            p.grad = None
+            continue
+
+        grad_norm = torch.linalg.vector_norm(
+            grad_values.to(torch.float64), ord=norm_type
+        ).item()
+        total += grad_norm ** norm_type
+        top.append((grad_norm, name))
+
+    if bad_grads:
+        if error_if_nonfinite:
+            raise RuntimeError("; ".join(bad_grads))
+        return float("nan")
+
+    total_norm = total ** (1.0 / norm_type)
+    if not math.isfinite(total_norm):
+        top.sort(reverse=True)
+        detail = "; ".join(f"{name}: norm={norm:.4e}" for norm, name in top[:8])
+        if error_if_nonfinite:
+            raise RuntimeError(
+                "no individual non-finite grad tensor found, but fp64 total "
+                f"norm is non-finite. Top finite grad norms: {detail}"
+            )
+        return total_norm
+
+    clip_coef = float(max_norm) / (total_norm + 1e-6)
+    if clip_coef < 1.0:
+        for _, p in params:
+            p.grad.mul_(clip_coef)
+    return total_norm
+
+
+ZERO_OPEN_PARAM_TOKENS = (
+    "rezero_",
+    "unimol_global_alpha",
+    "rsa_input_alpha",
+    ".prot_attn_res.",
+    ".lig_attn_res.",
+)
+
+
+def build_adamw_param_groups(
+    model: nn.Module,
+    weight_decay: float,
+    base_lr: Optional[float] = None,
+    zero_open_lr_mult: float = 1.0,
+    zero_open_eps: Optional[float] = None,
+) -> Tuple[List[Dict], Dict[str, object]]:
+    """
+    Build AdamW groups with robust no-decay handling.
+
+    Name-based rules like "norm.weight" miss parameters named norm1.weight,
+    norm2.weight, norm_q.weight, and norm_kv.weight. V12 failures are
+    concentrated in these affine norm parameters, so classify no-decay by
+    module type plus tensor shape instead of fragile substrings.
+    """
+    norm_types = (
+        nn.LayerNorm,
+        nn.RMSNorm,
+        nn.BatchNorm1d,
+        nn.BatchNorm2d,
+        nn.BatchNorm3d,
+        nn.GroupNorm,
+        nn.InstanceNorm1d,
+        nn.InstanceNorm2d,
+        nn.InstanceNorm3d,
+    )
+
+    norm_param_ids = set()
+    for module in model.modules():
+        if isinstance(module, norm_types):
+            for p in module.parameters(recurse=False):
+                norm_param_ids.add(id(p))
+
+    decay_params = []
+    no_decay_params = []
+    zero_open_params = []
+    decay_names = []
+    no_decay_names = []
+    zero_open_names = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        is_zero_open = any(tok in name for tok in ZERO_OPEN_PARAM_TOKENS)
+        is_no_decay = (
+            p.ndim <= 1
+            or name.endswith(".bias")
+            or id(p) in norm_param_ids
+        )
+        if is_zero_open:
+            zero_open_params.append(p)
+            zero_open_names.append(name)
+        elif is_no_decay:
+            no_decay_params.append(p)
+            no_decay_names.append(name)
+        else:
+            decay_params.append(p)
+            decay_names.append(name)
+
+    groups: List[Dict] = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': no_decay_params, 'weight_decay': 0.0},
+    ]
+    if zero_open_params:
+        zero_group = {
+            'params': zero_open_params,
+            'weight_decay': 0.0,
+        }
+        if base_lr is not None:
+            zero_group['lr'] = float(base_lr) * float(zero_open_lr_mult)
+        if zero_open_eps is not None:
+            zero_group['eps'] = float(zero_open_eps)
+        groups.append(zero_group)
+
+    info = {
+        'decay_count': len(decay_params),
+        'no_decay_count': len(no_decay_params),
+        'zero_open_count': len(zero_open_params),
+        'decay_names': decay_names,
+        'no_decay_names': no_decay_names,
+        'zero_open_names': zero_open_names,
+    }
+    return groups, info
+
+
 def train_epoch(
     model: nn.Module,
     dataloader,
@@ -1326,9 +1499,15 @@ def train_epoch(
                 total_norm = 0.0
                 for p in model.parameters():
                     if p.grad is not None:
-                        param_norm = p.grad.data.norm(2)
-                        total_norm += param_norm.item() ** 2
-                total_norm = total_norm ** 0.5
+                        grad = p.grad.detach()
+                        vals = grad.coalesce()._values() if grad.is_sparse else grad
+                        if torch.isfinite(vals).all():
+                            param_norm = torch.linalg.vector_norm(vals.float(), ord=2)
+                            total_norm += param_norm.item() ** 2
+                        else:
+                            total_norm = float("nan")
+                            break
+                total_norm = total_norm ** 0.5 if math.isfinite(total_norm) else total_norm
                 writer.add_scalar('Train/grad_norm', total_norm, global_step)
 
                 # 组件级梯度统计
@@ -1338,33 +1517,20 @@ def train_epoch(
 
             # Gradient clipping
             # V12 stability guard:
-            # If a bf16/fp16 run produces Inf/NaN grads, do not let clipping
-            # turn them into corrupted optimizer updates. Fail fast with the
-            # first bad tensors instead of silently poisoning the checkpoint.
+            # Use fp64 norm accumulation so finite-but-huge gradients can still
+            # be clipped safely. Real NaN/Inf entries still fail fast before
+            # they can poison the optimizer state.
             if gradient_clip > 0:
                 try:
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(),
+                    safe_clip_grad_norm_(
+                        model.named_parameters(),
                         gradient_clip,
                         error_if_nonfinite=fail_on_nonfinite_grad,
                     )
                 except RuntimeError as e:
-                    bad_grads = []
-                    for name, p in model.named_parameters():
-                        if p.grad is None:
-                            continue
-                        g = p.grad.detach()
-                        if not torch.isfinite(g).all():
-                            bad_grads.append(
-                                f"{name}: nan={torch.isnan(g).sum().item()} "
-                                f"inf={torch.isinf(g).sum().item()} shape={tuple(g.shape)}"
-                            )
-                            if len(bad_grads) >= 8:
-                                break
-                    detail = "; ".join(bad_grads) if bad_grads else "no individual non-finite grad tensor found; total norm likely overflowed"
                     raise RuntimeError(
                         f"Non-finite gradient norm before clipping at epoch={epoch}, "
-                        f"batch={batch_idx}. Bad gradients: {detail}"
+                        f"batch={batch_idx}. Bad gradients: {e}"
                     ) from e
 
             # Optimizer step
@@ -1992,24 +2158,57 @@ def main():
         print_rank0("Model wrapped with DistributedDataParallel")
 
     # Optimizer
-    # V9: param groups to exclude LayerNorm and bias from weight decay
-    no_decay_keywords = ['bias', 'norm.weight', 'norm.bias', 'LayerNorm.weight', 'LayerNorm.bias']
-    decay_params = [
-        p for n, p in model.named_parameters()
-        if p.requires_grad and not any(kw in n for kw in no_decay_keywords)
-    ]
-    no_decay_params = [
-        p for n, p in model.named_parameters()
-        if p.requires_grad and any(kw in n for kw in no_decay_keywords)
-    ]
-    optimizer = AdamW(
-        [
-            {'params': decay_params,    'weight_decay': train_cfg['weight_decay']},
-            {'params': no_decay_params, 'weight_decay': 0.0},
-        ],
-        lr=train_cfg['learning_rate'],
-        betas=train_cfg['betas']
+    # V12: exclude all normalization affine params by module type, not by name.
+    # Names like norm_q.weight / norm1.weight do not match "norm.weight".
+    adamw_eps = float(train_cfg.get('adamw_eps', 1e-4))
+    zero_open_lr_mult = float(train_cfg.get('zero_open_lr_mult', 0.01))
+    zero_open_eps = float(train_cfg.get('zero_open_adamw_eps', 1e-3))
+    param_groups, param_group_info = build_adamw_param_groups(
+        model,
+        train_cfg['weight_decay'],
+        base_lr=float(train_cfg['learning_rate']),
+        zero_open_lr_mult=zero_open_lr_mult,
+        zero_open_eps=zero_open_eps,
     )
+    if is_main_process():
+        bad_norm_decay = [
+            n for n in param_group_info['decay_names']
+            if any(tok in n for tok in ('.norm', 'norm_', 'norm1', 'norm2', 'key_norm'))
+        ]
+        print_rank0(
+            f"AdamW groups: decay={param_group_info['decay_count']}, "
+            f"no_decay={param_group_info['no_decay_count']}, "
+            f"zero_open={param_group_info['zero_open_count']} "
+            f"(lr_mult={zero_open_lr_mult}, eps={zero_open_eps})"
+        )
+        if bad_norm_decay:
+            print_rank0(
+                "WARNING: norm-like parameters still in decay group: "
+                + ", ".join(bad_norm_decay[:12])
+            )
+        print_rank0(
+            f"AdamW eps={adamw_eps}, foreach={train_cfg.get('adamw_foreach', False)}, "
+            f"fused={train_cfg.get('adamw_fused', False)}"
+        )
+
+    adamw_kwargs = dict(
+        lr=float(train_cfg['learning_rate']),
+        betas=tuple(train_cfg['betas']),
+        eps=adamw_eps,
+        foreach=bool(train_cfg.get('adamw_foreach', False)),
+    )
+    try:
+        optimizer = AdamW(
+            param_groups,
+            fused=bool(train_cfg.get('adamw_fused', False)),
+            **adamw_kwargs,
+        )
+    except TypeError:
+        try:
+            optimizer = AdamW(param_groups, **adamw_kwargs)
+        except TypeError:
+            adamw_kwargs.pop('foreach', None)
+            optimizer = AdamW(param_groups, **adamw_kwargs)
 
     # Scheduler
     warmup_epochs = train_cfg['warmup_epochs']
@@ -2105,6 +2304,20 @@ def main():
         tversky_smooth        = train_cfg.get('tversky_smooth', 1.0)
         weighted_dice_weight  = train_cfg.get('weighted_dice_weight', 0.0)
         weighted_dice_smooth  = train_cfg.get('weighted_dice_smooth', 1.0)
+        focal_gamma_target = float(train_cfg.get('focal_gamma', 2.0))
+        focal_gamma_warmup_epochs = int(train_cfg.get('focal_gamma_warmup_epochs', 0))
+        if focal_gamma_warmup_epochs > 0:
+            focal_gamma_eff = focal_gamma_target * min(
+                1.0,
+                float(epoch) / float(focal_gamma_warmup_epochs),
+            )
+        else:
+            focal_gamma_eff = focal_gamma_target
+        if epoch == start_epoch and focal_gamma_warmup_epochs > 0:
+            print_rank0(
+                f"  Focal gamma warmup: target={focal_gamma_target}, "
+                f"warmup_epochs={focal_gamma_warmup_epochs}"
+            )
 
         # V7m2: 获取 IoU Loss 配置
         iou_weight = train_cfg.get('iou_weight', 0.0)
@@ -2142,7 +2355,7 @@ def main():
             dataloader=train_loader,
             optimizer=optimizer,
             class_weights=class_weights,
-            gamma=train_cfg['focal_gamma'],
+            gamma=focal_gamma_eff,
             gradient_clip=train_cfg['gradient_clip'],
             device=device,
             epoch=epoch,
@@ -2191,7 +2404,7 @@ def main():
             model=model,
             dataloader=val_loader,
             class_weights=class_weights,
-            gamma=train_cfg['focal_gamma'],
+            gamma=focal_gamma_eff,
             device=device,
             use_amp=use_amp,
             use_bf16=train_cfg.get('use_bf16', False),
