@@ -128,6 +128,10 @@ model:
   norm_type: "rmsnorm"
   freeze_all_norms: true
   freeze_co_attn_norms: true
+  # Backward guard for late ESM-path spikes.  This clamps dL/d(h_esm_proj)
+  # before LinearBackward forms dW = grad_output^T @ ESM; post-backward grad
+  # clipping is too late once esm_proj.0.weight.grad has already become Inf.
+  esm_proj_output_grad_clip: 100.0
 
   # SASA residual gate amplitude (tanh range: [1-amp, 1+amp])
   # Diagnostic toggles: keep residue training mask unchanged; these only control
@@ -190,6 +194,11 @@ training:
 
   gradient_clip: 1.0
   fail_on_nonfinite_grad: true
+  # Finite-gradient spike guard.  Applied before global norm clipping and only
+  # to matching parameter names; NaN/Inf gradients still fail/skip instead of
+  # being sanitized into optimizer state.
+  grad_value_clip: 1000.0
+  grad_value_clip_param_tokens: ["esm_proj.0.weight"]
   enable_profiling: false
 
   save_every: 5

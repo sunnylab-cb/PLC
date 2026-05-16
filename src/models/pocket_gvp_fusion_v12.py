@@ -866,6 +866,7 @@ class PocketGVPFusionV12(nn.Module):
         'norm_type': 'rmsnorm',
         'freeze_all_norms': True,
         'freeze_co_attn_norms': True,
+        'esm_proj_output_grad_clip': 0.0,
         'sasa_gate_amplitude':  0.5,   # tanh gate range: [1-amp, 1+amp] × h_prot
         'debug_asserts':        False,
     }
@@ -1186,7 +1187,28 @@ class PocketGVPFusionV12(nn.Module):
             current_esm = current_esm * em
 
         h_gvp_proj = self.gvp_proj(h_geo)
-        h_esm_proj = self.esm_proj(current_esm)
+        h_gvp_proj = h_gvp_proj.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
+
+        # Keep the public module/state_dict layout as `esm_proj.0/1/2`, but run
+        # the steps explicitly so the hook can sit directly on Linear output.
+        z_esm = self.esm_proj[0](current_esm)
+        esm_grad_clip = float(c.get('esm_proj_output_grad_clip', 0.0) or 0.0)
+        if self.training and esm_grad_clip > 0.0 and z_esm.requires_grad:
+            # Clamp dL/d(z_esm) before LinearBackward computes
+            # dW = grad_output^T @ ESM.  Hooking after Norm/Dropout is too late
+            # if Norm backward itself produces the spike.
+            def _clip_esm_linear_output_grad(grad: torch.Tensor) -> torch.Tensor:
+                return torch.nan_to_num(
+                    grad,
+                    nan=0.0,
+                    posinf=esm_grad_clip,
+                    neginf=-esm_grad_clip,
+                ).clamp_(min=-esm_grad_clip, max=esm_grad_clip)
+
+            z_esm.register_hook(_clip_esm_linear_output_grad)
+        h_esm_proj = self.esm_proj[1](z_esm)
+        h_esm_proj = self.esm_proj[2](h_esm_proj)
+        h_esm_proj = h_esm_proj.masked_fill(~protein_mask.unsqueeze(-1), 0.0)
         h_concat   = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
         gate       = self.modality_gate(h_concat)
         h_prot     = self.input_norm(

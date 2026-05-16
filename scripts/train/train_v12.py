@@ -29,6 +29,7 @@ V12 架構更新 (基於 V11m2):
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -1063,11 +1064,102 @@ def compute_unimol_stats(model: nn.Module, unimol_embed: Optional[torch.Tensor])
 
 
 @torch.no_grad()
+def _tensor_debug_stats(t: Optional[torch.Tensor]) -> Dict[str, object]:
+    """Compact finite/scale stats for bad-batch diagnostics."""
+    if t is None:
+        return {'present': False}
+    x = t.detach()
+    finite = torch.isfinite(x)
+    out: Dict[str, object] = {
+        'present': True,
+        'shape': list(x.shape),
+        'dtype': str(x.dtype),
+        'finite': bool(finite.all().item()) if x.numel() > 0 else True,
+        'nan': int(torch.isnan(x).sum().item()),
+        'inf': int(torch.isinf(x).sum().item()),
+    }
+    if finite.any():
+        xf = x[finite].float()
+        out.update({
+            'min': float(xf.min().item()),
+            'max': float(xf.max().item()),
+            'mean': float(xf.mean().item()),
+            'std': float(xf.std(unbiased=False).item()) if xf.numel() > 1 else 0.0,
+            'abs_max': float(xf.abs().max().item()),
+        })
+    return out
+
+
+@torch.no_grad()
+def dump_bad_batch_debug(
+    *,
+    model: nn.Module,
+    exp_dir: Optional[Path],
+    epoch: int,
+    batch_idx: int,
+    batch: Dict,
+    inputs: Dict[str, torch.Tensor],
+    outputs: Dict[str, torch.Tensor],
+    labels: torch.Tensor,
+    mask: torch.Tensor,
+    loss: torch.Tensor,
+    focal_loss: torch.Tensor,
+    tversky_loss: torch.Tensor,
+    dist_aux_loss: torch.Tensor,
+    error: RuntimeError,
+) -> str:
+    """Write bad-batch diagnostics to JSON and return a concise summary."""
+    pdb_ids = list(batch.get('pdb_ids', []))
+    labels_valid = labels[mask] if mask is not None else labels.reshape(-1)
+    label_counts = (
+        torch.bincount(labels_valid.detach().long().cpu(), minlength=3).tolist()
+        if labels_valid.numel() > 0 else [0, 0, 0]
+    )
+
+    model_outputs = outputs if isinstance(outputs, dict) else {}
+    debug = {
+        'epoch': int(epoch),
+        'batch_idx': int(batch_idx),
+        'pdb_ids': pdb_ids,
+        'error': str(error),
+        'loss': float(loss.detach().float().item()) if torch.is_tensor(loss) else float(loss),
+        'focal_loss': float(focal_loss.detach().float().item()) if torch.is_tensor(focal_loss) else float(focal_loss),
+        'tversky_loss': float(tversky_loss.detach().float().item()) if torch.is_tensor(tversky_loss) else float(tversky_loss),
+        'dist_aux_loss': float(dist_aux_loss.detach().float().item()) if torch.is_tensor(dist_aux_loss) else float(dist_aux_loss),
+        'label_counts': label_counts,
+        'n_valid_residues': int(mask.detach().sum().item()) if mask is not None else None,
+        'esm': _tensor_debug_stats(inputs.get('esm_embeddings')),
+        'logits': _tensor_debug_stats(model_outputs.get('logits')),
+        'h_esm_proj': {'present': False},
+    }
+
+    _model = model.module if isinstance(model, DDP) else model
+    debug['h_esm_proj'] = _tensor_debug_stats(getattr(_model, '_cached_h_esm_proj', None))
+
+    out_path = None
+    if exp_dir is not None:
+        debug_dir = Path(exp_dir) / 'debug_bad_batches'
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        out_path = debug_dir / f'bad_batch_epoch{epoch:03d}_batch{batch_idx:05d}.json'
+        with open(out_path, 'w') as f:
+            json.dump(debug, f, indent=2)
+
+    return (
+        f"debug_file={out_path}; pdb_ids={pdb_ids[:6]}; "
+        f"label_counts={label_counts}; loss={debug['loss']:.6g}; "
+        f"esm_abs_max={debug['esm'].get('abs_max')}; "
+        f"logits_abs_max={debug['logits'].get('abs_max')}"
+    )
+
+
+@torch.no_grad()
 def safe_clip_grad_norm_(
     named_parameters,
     max_norm: float,
     norm_type: float = 2.0,
     error_if_nonfinite: bool = True,
+    value_clip: float = 0.0,
+    value_clip_param_tokens: Tuple[str, ...] = (),
 ) -> float:
     """
     Robust gradient clipping for V12.
@@ -1076,6 +1168,9 @@ def safe_clip_grad_norm_(
     every individual gradient tensor is finite, because the norm accumulation
     itself may overflow.  This helper fails only on real NaN/Inf gradient
     entries, computes the total norm in fp64, then manually scales gradients.
+
+    value_clip is intentionally applied only to finite gradients and only to
+    matching parameter names.  It is a spike guard, not a NaN/Inf sanitizer.
     """
     params = [(name, p) for name, p in named_parameters if p.grad is not None]
     if not params:
@@ -1097,6 +1192,13 @@ def safe_clip_grad_norm_(
             # AdamW state. Otherwise one skipped warning poisons all later steps.
             p.grad = None
             continue
+
+        if (
+            value_clip > 0
+            and value_clip_param_tokens
+            and any(tok in name for tok in value_clip_param_tokens)
+        ):
+            grad_values.clamp_(min=-float(value_clip), max=float(value_clip))
 
         grad_norm = torch.linalg.vector_norm(
             grad_values.to(torch.float64), ord=norm_type
@@ -1267,6 +1369,8 @@ def train_epoch(
     dist_aux_warmup_epochs: int = 0,     # V12: warm up dist aux to avoid early co-attn gradient spike
     dist_aux_max_dist: float = 20.0,     # V10m8: clamp distance
     fail_on_nonfinite_grad: bool = True, # V12: fail fast before optimizer poisoning
+    grad_value_clip: float = 0.0,        # V12: finite spike guard for selected params
+    grad_value_clip_param_tokens: Optional[List[str]] = None,
 ) -> Dict[str, float]:
     """Train for one epoch. V10m8: V10m7 + per-layer dist bias + dist aux head."""
     model.train()
@@ -1526,11 +1630,29 @@ def train_epoch(
                         model.named_parameters(),
                         gradient_clip,
                         error_if_nonfinite=fail_on_nonfinite_grad,
+                        value_clip=grad_value_clip,
+                        value_clip_param_tokens=tuple(grad_value_clip_param_tokens or ()),
                     )
                 except RuntimeError as e:
+                    debug_summary = dump_bad_batch_debug(
+                        model=model,
+                        exp_dir=exp_dir,
+                        epoch=epoch,
+                        batch_idx=batch_idx,
+                        batch=batch,
+                        inputs=inputs,
+                        outputs=outputs,
+                        labels=labels,
+                        mask=mask,
+                        loss=loss.detach() * accumulation_steps,
+                        focal_loss=focal_loss,
+                        tversky_loss=tversky_loss_val,
+                        dist_aux_loss=dist_aux_loss,
+                        error=e,
+                    )
                     raise RuntimeError(
                         f"Non-finite gradient norm before clipping at epoch={epoch}, "
-                        f"batch={batch_idx}. Bad gradients: {e}"
+                        f"batch={batch_idx}. Bad gradients: {e}. {debug_summary}"
                     ) from e
 
             # Optimizer step
@@ -2395,6 +2517,11 @@ def main():
             dist_aux_warmup_epochs=dist_aux_warmup_epochs,
             dist_aux_max_dist=dist_aux_max_dist,
             fail_on_nonfinite_grad=train_cfg.get('fail_on_nonfinite_grad', True),
+            grad_value_clip=float(train_cfg.get('grad_value_clip', 0.0)),
+            grad_value_clip_param_tokens=train_cfg.get(
+                'grad_value_clip_param_tokens',
+                ['esm_proj.0.weight'],
+            ),
             unimol_cache=unimol_cache,
             d_unimol=d_unimol,
         )
