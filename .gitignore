@@ -1,4 +1,4 @@
-data/
+/data/
 database/
 venv/
 __pycache__
