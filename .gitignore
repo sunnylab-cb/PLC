@@ -11,3 +11,4 @@ outputs/
 logs/
 *.tar
 *.tar.gz
+/memory/
