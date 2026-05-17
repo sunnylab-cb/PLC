@@ -1,0 +1,220 @@
+# Pocket-GVP-Fusion V12 HPC 配置
+#
+# 這份配置固定為目前 HPC 上跑得最快/最穩的 V12 版本，避免和本地
+# configs/pocket_gvp_v12.yaml 的調試配置互相覆蓋。
+#
+# V12 架構 (基於 V11m2，完整重構 cross-modal interaction):
+#   - N=4 CoAttentionBlock (Evoformer-style interleaved co-attention)
+#       每個 block: FiLM → Protein SA → Ligand SA → Parallel Bidirectional CA
+#   - FiLM conditioning: Uni-Mol CLS → protein 全域化學調製 (zero-init identity)
+#   - RSA pre-injection: 在 co-attention 前注入 surface prior (zero-init identity)
+#   - Uni-Mol → global token: Uni-Mol embed 加到 ligand global token (zero-init)
+#   - SASA residual gate: final_norm 後、classifier 前的軟性 surface weighting
+#   - Ligand SA RoPE neutralization: 避免假序列偏差 (all-zero position_ids)
+#   - Parallel bidirectional cross-attention (真正的 Evoformer 風格)
+#
+# 坐標系限制:
+#   蛋白質與配體各自在獨立坐標系，絕不計算跨模態幾何距離。
+#
+# Label scheme: Contact < 5.0Å, Near 5.0-8.0Å, Far > 8.0Å
+
+experiment:
+  name: "pocket_gvp_fusion_v12"
+  seed: 42
+  output_dir: "outputs"
+
+data:
+  data_root: "data"
+  ligand_features_dir: "ligand_features_v5"
+  protein_features_dir: "complete_features_v4"
+  nma_features_dir: "complete_features_v4_nma"
+  nma_n_confs: 1
+  nma_max_conf: 9
+  distances_file: "data/residue_ligand_distances_dcenter.pt"
+  split_file: "configs/splits/splits.txt"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1800
+  max_atoms: 128
+  label_contact_thresh: 5.0
+  label_near_thresh: 8.0
+  # Uni-Mol pre-extracted embeddings directory (under data_root)
+  unimol_embeddings_dir: "unimol_embeddings"
+
+model:
+  # ── 與 V11 共享 (相同 key 名稱) ────────────────────────────────────────────
+  d_esm: 1280
+  d_phys: 62
+  d_spatial_scalar: 89
+  d_phys_encoded: 128
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 109
+  n_gvp_vectors: 12
+  n_gvp_vector_hidden: 20
+
+  n_gvp_layers: 3
+  n_ligand_layers: 3
+  n_heads: 8
+
+  # V12 stability mode: long-sequence probes pass with deterministic forward,
+  # while the original stochastic regularizers can trigger non-finite gradients
+  # in early training. Re-enable these one-by-one after the model survives
+  # initial epochs.
+  dropout: 0.0
+  attn_dropout: 0.0
+  classifier_dropout: 0.0
+  stochastic_depth_prob: 0.0
+
+  esm_dropout_prob: 0.0
+  physchem_dropout_prob: 0.0
+  gvp_dropout_prob: 0.0
+  coord_noise_std: 0.0
+
+  gvp_edge_rbf_bins: 16
+  gvp_edge_rbf_dmax: 20.0
+  ligand_edge_rbf_bins: 8
+
+  gvp_radius: 15.0
+  gvp_k_neighbors: 30
+  use_gradient_checkpointing: false
+
+  use_chain_features: true
+  chain_gap_size: 1000
+
+  use_dist_aux: true
+
+  n_classes: 3
+  edge_dim: 6
+
+  # ── V12 專屬 ────────────────────────────────────────────────────────────────
+  # Co-Attention blocks (replaces n_transformer_layers + n_cross_attention_layers)
+  n_co_attn_blocks: 4
+
+  # FiLM conditioning from Uni-Mol (zero-init → identity at start)
+  use_film: true
+  d_unimol: 512
+
+  # Intra-protein and intra-ligand 3D distance bias in SA
+  use_prot_dist_bias: true
+  use_lig_dist_bias: true
+  use_attn_res: false
+  co_attn_residual_scale: 0.25
+  # ReZero/SkiP-Init style branch gates replace zero-matrix residual init.
+  # Branch matrices keep normal init; scalar gates start at 0 and open slowly.
+  use_rezero_branch_gates: true
+  rezero_gate_init: 0.0
+  # Gate-specific init: keep FiLM/self-attn closed, but open cross-modal
+  # branches slightly from step 0 so ligand/protein interaction receives
+  # non-zero gradients immediately.  rezero_p2l_init is an effective gate
+  # value even when p2l_rezero_gate_max uses tanh bounding internally.
+  rezero_film_init: 0.0
+  rezero_prot_sa_init: 0.0
+  rezero_lig_sa_init: 0.0
+  rezero_p2l_init: 0.02
+  rezero_l2p_init: 0.02
+  zero_init_co_attn_residuals: false
+  # Long proteins amplify gradients through the protein-query-ligand branch.
+  # Scale only P→L residual deltas by sqrt(p2l_length_ref / n_res), capped at 1.
+  p2l_length_scale: true
+  p2l_length_ref: 256.0
+  # Debug-stability cap for the protein-query-ligand ReZero scalar.  The branch
+  # remains trainable, but cannot dominate early long-sequence CE gradients.
+  p2l_rezero_gate_max: 0.03
+  cross_attn_logit_clip: 30.0
+  self_attn_logit_clip: 30.0
+  co_attn_inner_residual_scale: 0.05
+  # ROCm/V12 stability: probes showed LayerNorm affine gradients can become
+  # non-finite after optimizer steps; RMSNorm + frozen co-attn norms passed
+  # clean CE/full-loss probes while preserving the V12 block topology.
+  norm_type: "rmsnorm"
+  freeze_all_norms: true
+  freeze_co_attn_norms: true
+  # Backward guard for late ESM-path spikes.  This clamps dL/d(h_esm_proj)
+  # before LinearBackward forms dW = grad_output^T @ ESM; post-backward grad
+  # clipping is too late once esm_proj.0.weight.grad has already become Inf.
+  esm_proj_output_grad_clip: 1.0
+
+  # SASA residual gate amplitude (tanh range: [1-amp, 1+amp])
+  # Diagnostic toggles: keep residue training mask unchanged; these only control
+  # soft RSA/SASA feature injection/gating paths.
+  use_rsa_input: false
+  use_sasa_gate: false
+  sasa_gate_amplitude: 0.5
+
+training:
+  batch_size: 24
+  num_epochs: 100
+  num_workers: 8
+
+  optimizer: "adamw"
+  learning_rate: 5.0e-5
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  adamw_eps: 1.0e-4
+  adamw_foreach: false
+  adamw_fused: false
+  # Zero-init branch-opening params use a gentler AdamW group.  AdamW's first
+  # step is sign-like; this prevents opening all identity branches at full LR.
+  zero_open_lr_mult: 0.03
+  zero_open_adamw_eps: 1.0e-3
+
+  scheduler: "cosine"
+  warmup_epochs: 3
+  min_lr: 1.0e-6
+
+  focal_gamma: 2.0
+  # V12 warmup: focal modulation can create large early gradients on long,
+  # positive-sparse proteins.  Start from weighted CE (gamma=0) and ramp up.
+  focal_gamma_warmup_epochs: 5
+  class_weights: [9.0, 7.0, 1.0]
+
+  focal_weight: 0.7
+  tversky_weight: 0.0
+  tversky_alpha: 0.3
+  tversky_beta: 0.7
+  tversky_smooth: 1.0
+
+  weighted_dice_weight: 0.0
+  weighted_dice_smooth: 1.0
+
+  label_smoothing: 0.05
+  ordinal_label_smoothing: true
+
+  cnc:
+    enabled: true
+    clip_thresh: 0.85
+    clip_ratio: 0.1
+    warmup_epochs: 5
+    max_clip_frac: 0.3
+
+  dist_aux:
+    enabled: false
+    weight: 0.05
+    warmup_epochs: 5
+    max_dist: 20.0
+
+  gradient_clip: 1.0
+  fail_on_nonfinite_grad: true
+  # Finite-gradient spike guard.  Applied before global norm clipping and only
+  # to matching parameter names; NaN/Inf gradients still fail/skip instead of
+  # being sanitized into optimizer state.
+  grad_value_clip: 1000.0
+  grad_value_clip_param_tokens: ["esm_proj.0.weight"]
+  enable_profiling: false
+
+  save_every: 5
+  early_stopping_patience: 100
+
+  use_amp: false
+  use_bf16: true
+  accumulation_steps: 1
+  pin_memory: true
+  prefetch_factor: 2
+
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false
