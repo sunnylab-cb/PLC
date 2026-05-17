@@ -131,6 +131,10 @@ model:
   cross_attn_logit_clip: 30.0
   self_attn_logit_clip: 30.0
   co_attn_inner_residual_scale: 0.05
+  # Keep FiLM/protein-SA/ligand-SA conservative, but let cross-modal branches
+  # carry stronger signal.  Effective P→L still keeps outer co_attn scale and
+  # length scaling, so this is a controlled 4x increase over 0.05.
+  co_attn_cross_residual_scale: 0.2
   # ROCm/V12 stability: probes showed LayerNorm affine gradients can become
   # non-finite after optimizer steps; RMSNorm + frozen co-attn norms passed
   # clean CE/full-loss probes while preserving the V12 block topology.

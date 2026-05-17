@@ -573,6 +573,7 @@ class CoAttentionBlock(nn.Module):
         cross_attn_logit_clip: Optional[float] = None,
         self_attn_logit_clip: Optional[float] = None,
         inner_residual_scale: float = 1.0,
+        cross_residual_scale: Optional[float] = None,
         use_rezero_branch_gates: bool = True,
         rezero_gate_init: float = 0.0,
         rezero_film_init: Optional[float] = None,
@@ -586,6 +587,9 @@ class CoAttentionBlock(nn.Module):
     ):
         super().__init__()
         self.inner_residual_scale = inner_residual_scale
+        self.cross_residual_scale = (
+            inner_residual_scale if cross_residual_scale is None else float(cross_residual_scale)
+        )
         self.use_rezero_branch_gates = use_rezero_branch_gates
         self.p2l_length_scale = bool(p2l_length_scale)
         self.p2l_length_ref = float(p2l_length_ref)
@@ -765,10 +769,10 @@ class CoAttentionBlock(nn.Module):
             l2p_delta.detach().float().norm(dim=-1).mean()
         )
         h_prot_new = h_prot + (
-            p2l_gate * self.inner_residual_scale * p2l_delta
+            p2l_gate * self.cross_residual_scale * p2l_delta
         )
         h_lig_new = h_lig + (
-            self.rezero_l2p * self.inner_residual_scale * l2p_delta
+            self.rezero_l2p * self.cross_residual_scale * l2p_delta
         )
         if prot_mask is not None:
             h_prot_new = h_prot_new.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
@@ -872,6 +876,7 @@ class PocketGVPFusionV12(nn.Module):
         'cross_attn_logit_clip': 30.0,
         'self_attn_logit_clip': 30.0,
         'co_attn_inner_residual_scale': 0.05,
+        'co_attn_cross_residual_scale': None,
         'use_rezero_branch_gates': True,
         'rezero_gate_init': 0.0,
         'p2l_length_scale': True,
@@ -999,6 +1004,7 @@ class PocketGVPFusionV12(nn.Module):
                 cross_attn_logit_clip = c.get('cross_attn_logit_clip', None),
                 self_attn_logit_clip = c.get('self_attn_logit_clip', None),
                 inner_residual_scale = c.get('co_attn_inner_residual_scale', 1.0),
+                cross_residual_scale = c.get('co_attn_cross_residual_scale', None),
                 use_rezero_branch_gates = c.get('use_rezero_branch_gates', True),
                 rezero_gate_init = c.get('rezero_gate_init', 0.0),
                 rezero_film_init = c.get('rezero_film_init', None),
