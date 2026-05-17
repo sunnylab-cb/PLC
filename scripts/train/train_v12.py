@@ -977,6 +977,13 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     if hasattr(model, 'ligand_encoder') and model.ligand_encoder is not None:
         stats['grad_norm_ligand_encoder'] = get_grad_norm(model.ligand_encoder)
 
+    if hasattr(model, 'unimol_ligand_proj') and model.unimol_ligand_proj is not None:
+        stats['grad_norm_unimol_ligand_proj'] = get_grad_norm(model.unimol_ligand_proj)
+    if hasattr(model, 'unimol_ligand_alpha') and getattr(model, 'unimol_ligand_alpha') is not None:
+        p = getattr(model, 'unimol_ligand_alpha')
+        if hasattr(p, 'grad') and p.grad is not None:
+            stats['grad_norm_unimol_ligand_alpha'] = p.grad.detach().float().norm().item()
+
     # V12: CoAttentionBlocks (replaces protein_context_encoder + ligand_self_attn + cross_attention)
     if hasattr(model, 'co_attn_blocks') and model.co_attn_blocks is not None:
         co_norm = sum(get_grad_norm(b) ** 2 for b in model.co_attn_blocks) ** 0.5
@@ -1051,6 +1058,16 @@ def compute_unimol_stats(model: nn.Module, unimol_embed: Optional[torch.Tensor])
             stats['unimol_global_delta_norm'] = delta_norm.item()
             stats['unimol_global_contribution_ratio'] = (delta_norm / denom).item() if denom > 0 else 0.0
 
+        atom_delta = getattr(model, '_cached_unimol_ligand_delta', None)
+        if atom_delta is not None and atom_delta.numel() > 0:
+            atom_delta = atom_delta.detach().float()
+            atom_norm = atom_delta.norm(dim=-1).mean() / (atom_delta.shape[-1] ** 0.5)
+            stats['unimol_atom_delta_norm'] = atom_norm.item()
+            if hasattr(model, 'unimol_ligand_alpha'):
+                alpha = getattr(model, 'unimol_ligand_alpha')
+                if torch.is_tensor(alpha):
+                    stats['unimol_ligand_alpha'] = alpha.detach().float().item()
+
         film_norms = []
         if hasattr(model, 'co_attn_blocks') and row_valid.any():
             for block in model.co_attn_blocks:
@@ -1059,6 +1076,39 @@ def compute_unimol_stats(model: nn.Module, unimol_embed: Optional[torch.Tensor])
                     film_norms.append(params.float().norm(dim=-1).mean() / (params.shape[-1] ** 0.5))
         if film_norms:
             stats['unimol_film_signal_norm'] = torch.stack(film_norms).mean().item()
+
+        p2l_gates = []
+        l2p_gates = []
+        p2l_delta_norms = []
+        l2p_delta_norms = []
+        p2l_length_scales = []
+        if hasattr(model, 'co_attn_blocks'):
+            for block in model.co_attn_blocks:
+                p2l_gate = getattr(block, '_cached_p2l_gate', None)
+                l2p_gate = getattr(block, '_cached_l2p_gate', None)
+                p2l_delta_norm = getattr(block, '_cached_p2l_delta_norm', None)
+                l2p_delta_norm = getattr(block, '_cached_l2p_delta_norm', None)
+                p2l_scale = getattr(block, '_cached_p2l_length_scale', None)
+                if p2l_gate is not None:
+                    p2l_gates.append(p2l_gate.detach().float().abs().mean())
+                if l2p_gate is not None:
+                    l2p_gates.append(l2p_gate.detach().float().abs().mean())
+                if p2l_delta_norm is not None:
+                    p2l_delta_norms.append(p2l_delta_norm.detach().float())
+                if l2p_delta_norm is not None:
+                    l2p_delta_norms.append(l2p_delta_norm.detach().float())
+                if p2l_scale is not None:
+                    p2l_length_scales.append(p2l_scale.detach().float().mean())
+        if p2l_gates:
+            stats['p2l_gate_abs_mean'] = torch.stack(p2l_gates).mean().item()
+        if l2p_gates:
+            stats['l2p_gate_abs_mean'] = torch.stack(l2p_gates).mean().item()
+        if p2l_delta_norms:
+            stats['p2l_delta_norm'] = torch.stack(p2l_delta_norms).mean().item()
+        if l2p_delta_norms:
+            stats['l2p_delta_norm'] = torch.stack(l2p_delta_norms).mean().item()
+        if p2l_length_scales:
+            stats['p2l_length_scale_mean'] = torch.stack(p2l_length_scales).mean().item()
 
     return stats
 

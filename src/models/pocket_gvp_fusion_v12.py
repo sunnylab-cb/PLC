@@ -676,10 +676,12 @@ class CoAttentionBlock(nn.Module):
         prot_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
         if not self.p2l_length_scale or prot_mask is None:
+            self._cached_p2l_length_scale = None
             return delta
         n_res = prot_mask.sum(dim=1).clamp_min(1).to(dtype=delta.dtype)
         ref = torch.as_tensor(self.p2l_length_ref, device=delta.device, dtype=delta.dtype)
         scale = torch.sqrt(ref / n_res).clamp(max=1.0)
+        self._cached_p2l_length_scale = scale.detach()
         return delta * scale.view(-1, 1, 1)
 
     def forward(
@@ -753,11 +755,20 @@ class CoAttentionBlock(nn.Module):
         )
         p2l_delta = self._scale_p2l_delta(h_prot_full - h_prot, prot_mask)
         p2l_gate = self._bounded_gate(self.rezero_p2l, self.p2l_rezero_gate_max)
+        l2p_delta = h_lig_full - h_lig
+        self._cached_p2l_gate = p2l_gate.detach()
+        self._cached_l2p_gate = self.rezero_l2p.detach()
+        self._cached_p2l_delta_norm = (
+            p2l_delta.detach().float().norm(dim=-1).mean()
+        )
+        self._cached_l2p_delta_norm = (
+            l2p_delta.detach().float().norm(dim=-1).mean()
+        )
         h_prot_new = h_prot + (
             p2l_gate * self.inner_residual_scale * p2l_delta
         )
         h_lig_new = h_lig + (
-            self.rezero_l2p * self.inner_residual_scale * (h_lig_full - h_lig)
+            self.rezero_l2p * self.inner_residual_scale * l2p_delta
         )
         if prot_mask is not None:
             h_prot_new = h_prot_new.masked_fill(~prot_mask.unsqueeze(-1), 0.0)
@@ -848,6 +859,9 @@ class PocketGVPFusionV12(nn.Module):
         'use_dist_aux':       False,
         # ── V12-specific ─────────────────────────────────────────────────────
         'd_unimol':             512,
+        'use_unimol_ligand_input': False,
+        'd_unimol_ligand_proj': 64,
+        'unimol_ligand_alpha_init': 0.02,
         'n_co_attn_blocks':     6,
         'use_film':             True,
         'use_prot_dist_bias':   True,
@@ -875,6 +889,12 @@ class PocketGVPFusionV12(nn.Module):
         super().__init__()
         self.config = {**self.DEFAULT_CONFIG, **(config or {})}
         c = self.config
+        self.raw_ligand_atom_dim = int(c['d_ligand_atom'])
+        self.use_unimol_ligand_input = bool(c.get('use_unimol_ligand_input', False))
+        self.d_unimol_ligand_proj = int(c.get('d_unimol_ligand_proj', 64))
+        if self.use_unimol_ligand_input:
+            c['raw_ligand_atom_dim'] = self.raw_ligand_atom_dim
+            c['d_ligand_atom'] = self.raw_ligand_atom_dim + self.d_unimol_ligand_proj
 
         # Resolve chain flags (None → inherit master switch)
         _master = c.get('use_chain_features', True)
@@ -926,6 +946,23 @@ class PocketGVPFusionV12(nn.Module):
             nn.Sigmoid(),
         )
         self.input_norm = nn.LayerNorm(c['d_model'])
+
+        # ── Optional Uni-Mol ligand atom augmentation (V11m3-style) ───────────
+        # Unlike the global-token path, this makes ligand chemistry visible to
+        # Ligand3DEncoder from its first layer and gives it direct gradients.
+        if self.use_unimol_ligand_input:
+            self.unimol_ligand_proj = nn.Sequential(
+                nn.LayerNorm(c['d_unimol']),
+                nn.Linear(c['d_unimol'], self.d_unimol_ligand_proj),
+                nn.GELU(),
+                nn.LayerNorm(self.d_unimol_ligand_proj),
+            )
+            self.unimol_ligand_alpha = nn.Parameter(
+                torch.tensor(float(c.get('unimol_ligand_alpha_init', 0.02)))
+            )
+        else:
+            self.unimol_ligand_proj = None
+            self.register_buffer('unimol_ligand_alpha', torch.tensor(0.0), persistent=False)
 
         # ── Module 5a: Ligand 3D GNN Encoder (identical to V11) ─────────────
         _lig_edge_in = c['edge_dim'] + c.get('ligand_edge_rbf_bins', 8)
@@ -1060,6 +1097,48 @@ class PocketGVPFusionV12(nn.Module):
             self._frozen_norm_params = 0
 
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _augment_ligand_x(
+        self,
+        ligand_x: torch.Tensor,
+        ligand_batch: torch.Tensor,
+        unimol_embed: torch.Tensor,
+        batch_size: int,
+    ) -> torch.Tensor:
+        """Optionally concatenate Uni-Mol chemistry to every ligand atom."""
+        if not self.use_unimol_ligand_input:
+            self._cached_unimol_ligand_delta = None
+            return ligand_x
+
+        expected_aug_dim = self.raw_ligand_atom_dim + self.d_unimol_ligand_proj
+        if ligand_x.size(-1) == expected_aug_dim:
+            self._cached_unimol_ligand_delta = None
+            return ligand_x
+        if ligand_x.size(-1) != self.raw_ligand_atom_dim:
+            raise ValueError(
+                f"Unexpected ligand_x dim={ligand_x.size(-1)}; expected "
+                f"{self.raw_ligand_atom_dim} or {expected_aug_dim}"
+            )
+
+        if ligand_x.size(0) == 0:
+            unimol_atom = ligand_x.new_zeros((0, self.d_unimol_ligand_proj))
+        else:
+            if ligand_batch.min().item() < 0 or ligand_batch.max().item() >= batch_size:
+                raise ValueError(
+                    f"ligand_batch out of range for batch_size={batch_size}: "
+                    f"min={ligand_batch.min().item()} max={ligand_batch.max().item()}"
+                )
+            ue = unimol_embed.to(device=ligand_x.device, dtype=ligand_x.dtype)
+            if ue.shape != (batch_size, self.config['d_unimol']):
+                raise ValueError(
+                    f"unimol_embed shape={tuple(ue.shape)}, "
+                    f"expected ({batch_size}, {self.config['d_unimol']})"
+                )
+            unimol_atom = self.unimol_ligand_proj(ue)[ligand_batch]
+            unimol_atom = self.unimol_ligand_alpha.to(dtype=ligand_x.dtype) * unimol_atom
+
+        self._cached_unimol_ligand_delta = unimol_atom.detach()
+        return torch.cat([ligand_x, unimol_atom], dim=-1)
 
     def forward(
         self,
@@ -1231,7 +1310,20 @@ class PocketGVPFusionV12(nn.Module):
         self._cached_h_esm_proj = h_esm_proj.detach()
         self._cached_esm_mask = em.detach() if 'em' in locals() else None
 
+        # ── Uni-Mol embedding ────────────────────────────────────────────────
+        if unimol_embed is None:
+            unimol_embed = torch.zeros(B, c['d_unimol'], device=device, dtype=h_prot.dtype)
+        else:
+            unimol_embed = unimol_embed.to(device=device, dtype=h_prot.dtype)
+        self._cached_unimol_embed = unimol_embed.detach()
+
         # ── Module 5a: Ligand GNN Encoder ───────────────────────────────────
+        ligand_x = self._augment_ligand_x(
+            ligand_x=ligand_x,
+            ligand_batch=ligand_batch,
+            unimol_embed=unimol_embed,
+            batch_size=B,
+        )
         _lig_rbf_bins = c.get('ligand_edge_rbf_bins', 8)
         if ligand_edge_index.size(1) > 0:
             lig_row, lig_col = ligand_edge_index
@@ -1313,13 +1405,6 @@ class PocketGVPFusionV12(nn.Module):
             torch.zeros(B_dim, 1, 3, device=device, dtype=lig_coords.dtype),
             lig_coords,
         ], dim=1)                                                           # [B, M+1, 3]
-
-        # ── Uni-Mol global embedding ─────────────────────────────────────────
-        if unimol_embed is None:
-            unimol_embed = torch.zeros(B_dim, c['d_unimol'], device=device, dtype=h_prot.dtype)
-        else:
-            unimol_embed = unimol_embed.to(dtype=h_prot.dtype)
-        self._cached_unimol_embed = unimol_embed.detach()
 
         # [Innovation #4] Augment ligand global token with Uni-Mol embedding.
         # h_lig[:, 0, :] starts as masked mean-pool; adding Uni-Mol projection
