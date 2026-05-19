@@ -39,6 +39,9 @@ data:
   max_atoms: 128
   label_contact_thresh: 5.0
   label_near_thresh: 8.0
+  use_spatial_clamp: true
+  spatial_clamp_dims: [62, 76, 78, 79]
+  spatial_clamp_range: [-5.0, 5.0]
   # Uni-Mol pre-extracted embeddings directory (under data_root)
   unimol_embeddings_dir: "unimol_embeddings"
 
@@ -118,8 +121,8 @@ model:
   rezero_film_init: 0.0
   rezero_prot_sa_init: 0.0
   rezero_lig_sa_init: 0.0
-  rezero_p2l_init: 0.02
-  rezero_l2p_init: 0.02
+  rezero_p2l_init: 0.10
+  rezero_l2p_init: 0.10
   zero_init_co_attn_residuals: false
   # Long proteins amplify gradients through the protein-query-ligand branch.
   # Scale only P→L residual deltas by sqrt(p2l_length_ref / n_res), capped at 1.
@@ -127,7 +130,7 @@ model:
   p2l_length_ref: 256.0
   # Debug-stability cap for the protein-query-ligand ReZero scalar.  The branch
   # remains trainable, but cannot dominate early long-sequence CE gradients.
-  p2l_rezero_gate_max: 0.05
+  p2l_rezero_gate_max: 0.15
   cross_attn_logit_clip: 30.0
   self_attn_logit_clip: 30.0
   co_attn_inner_residual_scale: 0.05

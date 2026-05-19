@@ -36,6 +36,9 @@ data:
   max_atoms: 128
   label_contact_thresh: 5.0
   label_near_thresh: 8.0
+  use_spatial_clamp: true
+  spatial_clamp_dims: [62, 76, 78, 79]
+  spatial_clamp_range: [-5.0, 5.0]
   # Uni-Mol pre-extracted embeddings directory (under data_root)
   unimol_embeddings_dir: "unimol_embeddings"
 

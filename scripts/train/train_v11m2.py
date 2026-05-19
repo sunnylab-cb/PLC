@@ -1645,6 +1645,9 @@ def main():
     # V10m3: d_center label thresholds (Contact < 5.0Å, Near 5.0-8.0Å, Far > 8.0Å)
     label_contact_thresh = data_cfg.get('label_contact_thresh', 5.0)
     label_near_thresh = data_cfg.get('label_near_thresh', 8.0)
+    use_spatial_clamp = data_cfg.get('use_spatial_clamp', False)
+    spatial_clamp_dims = data_cfg.get('spatial_clamp_dims', [62, 76, 78, 79])
+    spatial_clamp_range = data_cfg.get('spatial_clamp_range', [-5.0, 5.0])
 
     if is_main_process():
         print_rank0("Data sources:")
@@ -1654,6 +1657,7 @@ def main():
         print_rank0(f"  ligand_features_dir: data/{ligand_features_dir}")
         print_rank0(f"  distances_file (d_center): {distances_file or 'DEFAULT'}")
         print_rank0(f"  label_thresholds: Contact<{label_contact_thresh}Å, Near<{label_near_thresh}Å")
+        print_rank0(f"  spatial_clamp: enabled={use_spatial_clamp}, dims={spatial_clamp_dims}, range={spatial_clamp_range}")
         if distances_file_original:
             print_rank0(f"  distances_file_original: {distances_file_original}")
 
@@ -1672,6 +1676,9 @@ def main():
         use_nma=True,                       # V9: enable NMA augmentation for train
         label_contact_thresh=label_contact_thresh,
         label_near_thresh=label_near_thresh,
+        use_spatial_clamp=use_spatial_clamp,
+        spatial_clamp_dims=spatial_clamp_dims,
+        spatial_clamp_range=spatial_clamp_range,
         split="train",
         verbose=is_main_process(),
         print_fn=print_rank0
@@ -1689,6 +1696,9 @@ def main():
         nma_features_dir=nma_features_dir,
         label_contact_thresh=label_contact_thresh,
         label_near_thresh=label_near_thresh,
+        use_spatial_clamp=use_spatial_clamp,
+        spatial_clamp_dims=spatial_clamp_dims,
+        spatial_clamp_range=spatial_clamp_range,
         use_nma=False,                      # V9: val always uses conf0 only
         split="val",
         verbose=False,

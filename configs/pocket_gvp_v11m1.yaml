@@ -32,6 +32,9 @@ data:
   # 改回 PoC 設定，對齊 benchmark 標準
   label_contact_thresh: 5.0   # Contact: d_min < 4.0Å
   label_near_thresh: 8.0      # Near: 4.0–6.0Å; Far: > 6.0Å
+  use_spatial_clamp: true
+  spatial_clamp_dims: [62, 76, 78, 79]
+  spatial_clamp_range: [-5.0, 5.0]
 
 model:
   d_esm: 1280

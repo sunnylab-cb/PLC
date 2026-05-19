@@ -107,6 +107,9 @@ class PocketDatasetV8(Dataset):
         use_nma: bool = False,       # V8: False for val/test, True for train
         label_contact_thresh: float = 3.5,   # d_min Contact threshold (Å)
         label_near_thresh: float = 6.0,      # d_min Near threshold (Å)
+        use_spatial_clamp: bool = False,
+        spatial_clamp_dims: Optional[List[int]] = None,
+        spatial_clamp_range: Optional[List[float]] = None,
         *,
         split: Optional[str] = None,
         verbose: bool = True,
@@ -130,6 +133,13 @@ class PocketDatasetV8(Dataset):
         # Label thresholds for d_min (minimum heavy-atom pairwise distance)
         self.label_contact_thresh = label_contact_thresh
         self.label_near_thresh = label_near_thresh
+        self.use_spatial_clamp = bool(use_spatial_clamp)
+        self.spatial_clamp_dims = [int(d) for d in (spatial_clamp_dims or [])]
+        _clamp_range = spatial_clamp_range or [-5.0, 5.0]
+        if len(_clamp_range) != 2:
+            raise ValueError("spatial_clamp_range must be [min, max]")
+        self.spatial_clamp_min = float(_clamp_range[0])
+        self.spatial_clamp_max = float(_clamp_range[1])
 
         # Feature directories
         self.protein_features_dir = self.data_root / protein_features_dir  # fallback
@@ -255,6 +265,11 @@ class PocketDatasetV8(Dataset):
             f"ligand_features={self.ligand_dir.name}",
             f"labels_vdw={self._distances_file_path}",
         ]
+        if self.use_spatial_clamp:
+            parts.append(
+                f"spatial_clamp=dims{self.spatial_clamp_dims}"
+                f"[{self.spatial_clamp_min},{self.spatial_clamp_max}]"
+            )
         self._log(" | ".join(parts))
 
         # V9: Print NMA availability statistics
@@ -474,6 +489,19 @@ class PocketDatasetV8(Dataset):
             ligand_features = ligand_features[:self.max_atoms]
             ligand_coords = ligand_coords[:self.max_atoms]
             n_atoms = self.max_atoms
+
+        if self.use_spatial_clamp and self.spatial_clamp_dims:
+            max_dim = max(self.spatial_clamp_dims)
+            if protein_spatial_scalar.shape[-1] <= max_dim:
+                raise ValueError(
+                    f"spatial_clamp_dims={self.spatial_clamp_dims} exceed "
+                    f"protein_spatial_scalar dim={protein_spatial_scalar.shape[-1]}"
+                )
+            protein_spatial_scalar = protein_spatial_scalar.clone()
+            protein_spatial_scalar[..., self.spatial_clamp_dims] = (
+                protein_spatial_scalar[..., self.spatial_clamp_dims]
+                .clamp(self.spatial_clamp_min, self.spatial_clamp_max)
+            )
 
         if ligand_edge_index is None or ligand_edge_attr is None:
             ligand_edge_index = torch.zeros((2, 0), dtype=torch.long)
