@@ -105,6 +105,17 @@ model:
   d_unimol_ligand_proj: 64
   unimol_ligand_alpha_init: 0.02
 
+  # V12m1-only keys (ignored by train_v12.py / PocketGVPFusionV12):
+  # interaction tokens create a compact protein <-> token <-> ligand bottleneck.
+  # Use this same config with scripts/train/train_v12m1.py to enable them.
+  use_interaction_tokens: true
+  n_interaction_tokens: 4
+  interaction_token_init_std: 0.02
+  interaction_residual_scale: 0.25
+  interaction_gate_init: 0.05
+  interaction_gate_max: 0.2
+  interaction_classifier_concat: true
+
   # Intra-protein and intra-ligand 3D distance bias in SA
   use_prot_dist_bias: true
   use_lig_dist_bias: true
