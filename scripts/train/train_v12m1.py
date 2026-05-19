@@ -1385,7 +1385,7 @@ def train_epoch(
     unimol_cache: Dict[str, torch.Tensor] = None,   # V12: Uni-Mol embed cache
     d_unimol: int = 512,                             # V12
     log_every: int = 10,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    scaler: Optional[torch.amp.GradScaler] = None,
     use_amp: bool = False,
     accumulation_steps: int = 1,
     focal_weight: float = 1.0,           # V10m4
@@ -2087,7 +2087,7 @@ def main():
     use_amp = args.amp or config['training'].get('use_amp', False)
     use_bf16 = config['training'].get('use_bf16', False)
     # bf16 不需要 loss scaling（bf16 exponent 範圍夠大）；只有 fp16 才啟用 GradScaler
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp and not use_bf16)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp and not use_bf16)
     if use_amp:
         dtype_str = "bf16" if use_bf16 else "fp16"
         print_rank0(f"Using AMP ({dtype_str}), GradScaler={'enabled' if not use_bf16 else 'disabled'}")
