@@ -59,18 +59,18 @@ model:
   n_gvp_vectors: 12
   n_gvp_vector_hidden: 20
 
-  n_gvp_layers: 3
-  n_transformer_layers: 4
-  n_ligand_layers: 3
+  n_gvp_layers: 5
+  n_transformer_layers: 5
+  n_ligand_layers: 5
   n_heads: 8
-  n_cross_attention_layers: 4
+  n_cross_attention_layers: 5
 
   dropout: 0.15
   attn_dropout: 0.15
   classifier_dropout: 0.2
   stochastic_depth_prob: 0.15
 
-  use_flash_attn: false
+  use_flash_attn: true
 
   esm_dropout_prob: 0.05         # v10m4.1: 0.15→0.05 (CVPR2024: simultaneous modality dropout causes bias)
   physchem_dropout_prob: 0.05   # v10m4.1: 0.20→0.05 (same reason)
@@ -121,7 +121,7 @@ model:
 
   # V11: Ligand internal self-attention
   # 0 = disabled (backward compat); 2 = recommended
-  n_ligand_self_attn_layers: 2
+  n_ligand_self_attn_layers: 4
 
   # V11m2: Ligand self-attention distance bias
   use_lig_dist_bias: true
@@ -135,7 +135,7 @@ model:
   edge_dim: 6
 
 training:
-  batch_size: 16
+  batch_size: 24
   num_epochs: 100
   num_workers: 8
 
@@ -209,7 +209,7 @@ training:
   early_stopping_patience: 100
 
   use_amp: false
-  use_bf16: false
+  use_bf16: true
   accumulation_steps: 1
   cudnn_benchmark: false
   pin_memory: true
