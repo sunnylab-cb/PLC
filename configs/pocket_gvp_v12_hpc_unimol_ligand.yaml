@@ -144,6 +144,10 @@ model:
   p2l_rezero_gate_max: 0.15
   cross_attn_logit_clip: 30.0
   self_attn_logit_clip: 30.0
+  # Optional HPC-only FlashAttention backend for cross-attention.  Leave false
+  # on local ROCm unless flash-attn is installed and validated.
+  use_flash_attn: false
+  flash_attn_fallback: true
   co_attn_inner_residual_scale: 0.05
   # Keep FiLM/protein-SA/ligand-SA conservative, but let cross-modal branches
   # carry stronger signal.  Effective P→L still keeps outer co_attn scale and
@@ -168,7 +172,7 @@ model:
   sasa_gate_amplitude: 0.5
 
 training:
-  batch_size: 24
+  batch_size: 22
   num_epochs: 100
   num_workers: 8
 
@@ -183,6 +187,10 @@ training:
   # step is sign-like; this prevents opening all identity branches at full LR.
   zero_open_lr_mult: 0.1
   zero_open_adamw_eps: 1.0e-3
+  # Ligand-path optimization experiment: let ligand GNN / direct Uni-Mol atom
+  # path learn faster while keeping protein frontend gradients bounded.
+  ligand_encoder_lr_mult: 5.0
+  ligand_lr_param_tokens: ["ligand_encoder", "unimol_ligand_proj", "unimol_ligand_alpha"]
 
   scheduler: "cosine"
   warmup_epochs: 3
@@ -226,6 +234,10 @@ training:
   # being sanitized into optimizer state.
   grad_value_clip: 1000.0
   grad_value_clip_param_tokens: ["esm_proj.0.weight"]
+  grad_value_clip_groups:
+    - name: "protein_frontend"
+      tokens: ["esm_proj", "gvp_proj", "physchem_encoder", "modality_gate"]
+      value: 0.2
   enable_profiling: false
 
   save_every: 5

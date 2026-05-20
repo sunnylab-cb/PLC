@@ -38,6 +38,11 @@ from .gvp_layers import GVPEncoder, build_protein_graph, rbf_encode
 from .ligand_encoder_3d import Ligand3DEncoder
 from .chain_encoding import get_cumulative_gap_position_ids
 # Re-use from V11 (avoid code duplication)
+try:
+    from flash_attn import flash_attn_varlen_func
+except Exception:  # Optional HPC-only dependency
+    flash_attn_varlen_func = None
+
 from .pocket_gvp_fusion_v11 import (
     RotaryEmbedding,
     apply_rotary_pos_emb,
@@ -254,6 +259,8 @@ class V12GatedCrossAttention(nn.Module):
         dropout: float = 0.1,
         attn_dropout: Optional[float] = None,
         attn_logit_clip: Optional[float] = None,
+        use_flash_attn: bool = False,
+        flash_attn_fallback: bool = True,
     ):
         super().__init__()
         assert d_model % n_heads == 0
@@ -262,6 +269,8 @@ class V12GatedCrossAttention(nn.Module):
         self.d_head = d_model // n_heads
         self.scale = self.d_head ** -0.5
         self.attn_logit_clip = attn_logit_clip
+        self.use_flash_attn = bool(use_flash_attn)
+        self.flash_attn_fallback = bool(flash_attn_fallback)
 
         self.w_q = nn.Linear(d_model, d_model, bias=False)
         self.w_k = nn.Linear(d_model, d_model, bias=False)
@@ -272,10 +281,69 @@ class V12GatedCrossAttention(nn.Module):
         _attn_dropout = attn_dropout if attn_dropout is not None else dropout
         self.attn_dropout = nn.Dropout(_attn_dropout)
 
+
+    def _flash_forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        q_mask: Optional[torch.Tensor],
+        kv_mask: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        if not self.use_flash_attn:
+            return None
+        if flash_attn_varlen_func is None:
+            if self.flash_attn_fallback:
+                return None
+            raise RuntimeError("use_flash_attn=True but flash-attn is not installed")
+        if q.dtype not in (torch.float16, torch.bfloat16):
+            if self.flash_attn_fallback:
+                return None
+            raise RuntimeError(f"flash-attn requires fp16/bf16, got {q.dtype}")
+
+        B, H, L, D = q.shape
+        S = k.size(2)
+        if q_mask is None:
+            q_mask = torch.ones(B, L, dtype=torch.bool, device=q.device)
+        if kv_mask is None:
+            kv_mask = torch.ones(B, S, dtype=torch.bool, device=q.device)
+        if q_mask.dim() != 2 or kv_mask.dim() != 2:
+            if self.flash_attn_fallback:
+                return None
+            raise RuntimeError("flash-attn cross attention supports only 2D q/kv masks")
+
+        q_mask = q_mask.bool()
+        kv_mask = kv_mask.bool()
+        q_lens = q_mask.sum(dim=1, dtype=torch.int32)
+        kv_lens = kv_mask.sum(dim=1, dtype=torch.int32)
+        if (q_lens == 0).any() or (kv_lens == 0).any():
+            if self.flash_attn_fallback:
+                return None
+            raise RuntimeError("flash-attn received an empty q/kv sequence")
+
+        q_b = q.transpose(1, 2).contiguous()  # [B, L, H, D]
+        k_b = k.transpose(1, 2).contiguous()  # [B, S, H, D]
+        v_b = v.transpose(1, 2).contiguous()
+        q_unpad = q_b[q_mask]
+        k_unpad = k_b[kv_mask]
+        v_unpad = v_b[kv_mask]
+        cu_q = F.pad(q_lens.cumsum(0), (1, 0)).to(torch.int32)
+        cu_k = F.pad(kv_lens.cumsum(0), (1, 0)).to(torch.int32)
+        dropout_p = self.attn_dropout.p if self.training else 0.0
+        out_unpad = flash_attn_varlen_func(
+            q_unpad, k_unpad, v_unpad, cu_q, cu_k,
+            int(q_lens.max().item()), int(kv_lens.max().item()),
+            dropout_p=dropout_p, softmax_scale=self.scale, causal=False,
+        )
+        out = q_b.new_zeros(B, L, H, D)
+        out[q_mask] = out_unpad
+        return out.transpose(1, 2).reshape(B, L, self.d_model)
+
     def forward(
         self,
         q_in: torch.Tensor,
         kv: torch.Tensor,
+        q_mask: Optional[torch.Tensor] = None,
         kv_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, L, _ = q_in.shape
@@ -284,6 +352,14 @@ class V12GatedCrossAttention(nn.Module):
         q = self.w_q(q_in).view(B, L, self.n_heads, self.d_head).transpose(1, 2)
         k = self.w_k(kv).view(B, S, self.n_heads, self.d_head).transpose(1, 2)
         v = self.w_v(kv).view(B, S, self.n_heads, self.d_head).transpose(1, 2)
+
+        flash_out = self._flash_forward(q, k, v, q_mask=q_mask, kv_mask=kv_mask)
+        if flash_out is not None:
+            out = self.w_o(flash_out)
+            out = out * torch.sigmoid(self.gate(q_in))
+            if q_mask is not None:
+                out = out.masked_fill(~q_mask.unsqueeze(-1), 0.0)
+            return out
 
         attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
         if self.attn_logit_clip is not None:
@@ -314,6 +390,8 @@ class V12GatedCrossAttention(nn.Module):
         out = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, self.d_model)
         out = self.w_o(out)
         out = out * torch.sigmoid(self.gate(q_in))
+        if q_mask is not None:
+            out = out.masked_fill(~q_mask.unsqueeze(-1), 0.0)
         return out
 
 
@@ -328,6 +406,8 @@ class V12CrossAttentionBlock(nn.Module):
         drop_path_prob: float = 0.0,
         attn_dropout: Optional[float] = None,
         attn_logit_clip: Optional[float] = None,
+        use_flash_attn: bool = False,
+        flash_attn_fallback: bool = True,
     ):
         super().__init__()
         self.norm_q = nn.LayerNorm(d_model)
@@ -338,6 +418,8 @@ class V12CrossAttentionBlock(nn.Module):
             dropout=dropout,
             attn_dropout=attn_dropout,
             attn_logit_clip=attn_logit_clip,
+            use_flash_attn=use_flash_attn,
+            flash_attn_fallback=flash_attn_fallback,
         )
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = SwiGLU(d_model, dropout=dropout)
@@ -358,7 +440,7 @@ class V12CrossAttentionBlock(nn.Module):
             q_normed = q_normed.masked_fill(~q_mask.unsqueeze(-1), 0.0)
         if kv_mask is not None and kv_mask.dim() == 2:
             kv_normed = kv_normed.masked_fill(~kv_mask.unsqueeze(-1), 0.0)
-        out = self.cross_attn(q_normed, kv_normed, kv_mask=kv_mask)
+        out = self.cross_attn(q_normed, kv_normed, q_mask=q_mask, kv_mask=kv_mask)
         out = drop_path(self.dropout(out), self.drop_path_prob, self.training) + residual
         if q_mask is not None:
             out = out.masked_fill(~q_mask.unsqueeze(-1), 0.0)
@@ -584,6 +666,8 @@ class CoAttentionBlock(nn.Module):
         p2l_length_scale: bool = False,
         p2l_length_ref: float = 256.0,
         p2l_rezero_gate_max: Optional[float] = None,
+        use_flash_attn: bool = False,
+        flash_attn_fallback: bool = True,
     ):
         super().__init__()
         self.inner_residual_scale = inner_residual_scale
@@ -624,10 +708,14 @@ class CoAttentionBlock(nn.Module):
         self.prot_to_lig = V12CrossAttentionBlock(
             d_model, n_heads, dropout, drop_path_prob, attn_dropout,
             attn_logit_clip=cross_attn_logit_clip,
+            use_flash_attn=use_flash_attn,
+            flash_attn_fallback=flash_attn_fallback,
         )
         self.lig_to_prot = V12CrossAttentionBlock(
             d_model, n_heads, dropout, drop_path_prob, attn_dropout,
             attn_logit_clip=cross_attn_logit_clip,
+            use_flash_attn=use_flash_attn,
+            flash_attn_fallback=flash_attn_fallback,
         )
 
         if use_rezero_branch_gates:
@@ -888,6 +976,10 @@ class PocketGVPFusionV12(nn.Module):
         'esm_proj_output_grad_clip': 0.0,
         'sasa_gate_amplitude':  0.5,   # tanh gate range: [1-amp, 1+amp] × h_prot
         'debug_asserts':        False,
+        # Optional HPC-only FlashAttention backend for cross-attention.
+        # Self-attention keeps the standard path because it uses distance bias.
+        'use_flash_attn':      False,
+        'flash_attn_fallback': True,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -1015,6 +1107,8 @@ class PocketGVPFusionV12(nn.Module):
                 p2l_length_scale = c.get('p2l_length_scale', True),
                 p2l_length_ref = c.get('p2l_length_ref', 256.0),
                 p2l_rezero_gate_max = c.get('p2l_rezero_gate_max', None),
+                use_flash_attn = c.get('use_flash_attn', False),
+                flash_attn_fallback = c.get('flash_attn_fallback', True),
             )
             for i in range(n_blocks)
         ])
