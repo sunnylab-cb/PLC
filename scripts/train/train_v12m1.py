@@ -995,6 +995,15 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
         co_norm = sum(get_grad_norm(b) ** 2 for b in model.co_attn_blocks) ** 0.5
         stats['grad_norm_co_attn_blocks'] = co_norm
 
+    # V12m1: interaction-token bottleneck path.
+    if hasattr(model, 'interaction_blocks') and model.interaction_blocks is not None:
+        int_norm = sum(get_grad_norm(b) ** 2 for b in model.interaction_blocks) ** 0.5
+        stats['grad_norm_interaction_blocks'] = int_norm
+    if hasattr(model, 'interaction_tokens') and model.interaction_tokens is not None:
+        p = getattr(model, 'interaction_tokens')
+        if hasattr(p, 'grad') and p.grad is not None:
+            stats['grad_norm_interaction_tokens'] = p.grad.detach().float().norm().item()
+
     # V12: RSA / Uni-Mol / SASA modules
     for attr in ('rsa_input_proj', 'unimol_to_global', 'sasa_gate'):
         if hasattr(model, attr) and getattr(model, attr) is not None:
