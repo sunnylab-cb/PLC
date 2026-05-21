@@ -121,8 +121,10 @@ model:
   n_interaction_tokens: 4
   interaction_token_init_std: 0.02
   interaction_residual_scale: 0.25
-  interaction_gate_init: 0.08
-  interaction_gate_max: 0.3
+  # Experiment 2: stronger bottleneck-token gate to test whether V12m2 is
+  # interaction-flow limited rather than architecture-depth limited.
+  interaction_gate_init: 0.12
+  interaction_gate_max: 0.4
   interaction_classifier_concat: true
   fusion_mode: "bottleneck_only"
   classifier_readout: "conditioned_plus_inter"
