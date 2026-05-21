@@ -137,6 +137,10 @@ model:
   pair_context_dropout: 0.05
   pair_int_pool_dim: 128
   classifier_pair_concat: true
+  # Keep the full 512-d interaction-token readout when pair evidence is on.
+  # This isolates the pair-evidence effect from an accidental h_int compression
+  # ablation (512 -> pair_int_pool_dim).
+  pair_keep_full_interaction_readout: true
 
   # Intra-protein and intra-ligand 3D distance bias in SA
   use_prot_dist_bias: true

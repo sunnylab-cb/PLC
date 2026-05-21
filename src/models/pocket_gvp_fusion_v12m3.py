@@ -1269,6 +1269,7 @@ class PocketGVPFusionV12M3(nn.Module):
         'pair_context_dropout': 0.05,
         'pair_int_pool_dim': 128,
         'classifier_pair_concat': True,
+        'pair_keep_full_interaction_readout': False,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -1454,6 +1455,9 @@ class PocketGVPFusionV12M3(nn.Module):
         # ── V12m3: residue-atom pair evidence head ─────────────────────────
         self.use_pair_evidence_head = bool(c.get('use_pair_evidence_head', False))
         self.classifier_pair_concat = bool(c.get('classifier_pair_concat', True))
+        self.pair_keep_full_interaction_readout = bool(
+            c.get('pair_keep_full_interaction_readout', False)
+        )
         if self.use_pair_evidence_head:
             self.pair_evidence = PairEvidenceHead(
                 d_model=c['d_model'],
@@ -1465,12 +1469,15 @@ class PocketGVPFusionV12M3(nn.Module):
                 chunk_size=int(c.get('pair_chunk_size', 256)),
                 dropout=float(c.get('pair_context_dropout', 0.0)),
             )
-            pair_int_dim = int(c.get('pair_int_pool_dim', 128))
-            self.pair_int_pool_proj = nn.Sequential(
-                nn.Linear(c['d_model'], pair_int_dim),
-                nn.GELU(),
-                nn.LayerNorm(pair_int_dim),
-            )
+            if self.pair_keep_full_interaction_readout:
+                self.pair_int_pool_proj = nn.Identity()
+            else:
+                pair_int_dim = int(c.get('pair_int_pool_dim', 128))
+                self.pair_int_pool_proj = nn.Sequential(
+                    nn.Linear(c['d_model'], pair_int_dim),
+                    nn.GELU(),
+                    nn.LayerNorm(pair_int_dim),
+                )
         else:
             self.pair_evidence = None
             self.pair_int_pool_proj = None
@@ -1518,7 +1525,10 @@ class PocketGVPFusionV12M3(nn.Module):
         if self.use_pair_evidence_head and self.classifier_pair_concat:
             d_cls += int(c.get('pair_context_dim', 128))
             d_cls += int(c.get('pair_feature_dim', 32))
-            d_cls += int(c.get('pair_int_pool_dim', 128))
+            if self.pair_keep_full_interaction_readout:
+                d_cls += c['d_model']
+            else:
+                d_cls += int(c.get('pair_int_pool_dim', 128))
         elif self.use_interaction_tokens and self.interaction_classifier_concat:
             d_cls += c['d_model']
         self.classifier_input_norm = nn.LayerNorm(d_cls)
