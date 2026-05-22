@@ -27,6 +27,37 @@
 
 ---
 
+## V12m3 / V12m4 实验 TODO（2026-05-22）
+
+### 当前结论
+
+- `V12m3 pair old128` 仍是当前最强主线：best F1 `0.4781 @ e56`，best Dice `0.4799 @ e56`。
+- `V12m3 pair256` 早期更快：best F1 `0.4698 @ e28`，但截至 e31 仍未超过 old128 best；继续观察到 e50-e60。
+- `V12m4 pair_aux old128` 暂不作为主线：best F1 `0.4569 @ e26`，低于 `pair256` 与 old128。
+- V12m4 的 pair branch 单独输出强于 main logits：例如 e26 `pair_f1_c0=0.4638` vs main `0.4569`，说明 pair evidence 有效，但没有被主 logits 正确吸收。
+
+### V12m4 问题定位
+
+- 结构上 base classifier 已经 concat `pair_context + pair_features + h_int_broadcast`，同时又使用 `logits = base_logits + pair_delta_gate * pair_logits_delta`，存在重复注入 pair evidence 的风险。
+- `pair_aux.weight=0.1` 直接监督 `pair_logits_delta`，可能让 auxiliary branch 单独变强，但与 main logits 校准产生 negative transfer。
+- `pair_delta_gate` 只从约 `0.100` 增到 `0.116`，pair branch 明显更好但主 logits 只吃到很小一部分 delta。
+- TB 表现：V12m4 val focal loss 从 e9 后持续上升，train loss 继续下降，说明校准/过拟合问题比 pair256 更明显。
+
+### 下一步实验优先级
+
+1. 继续当前 `V12m3 pair256` 和 `V12m4 pair_aux old128` 到 e50-e60，确认长期趋势。
+2. 若新增实验，优先做 `V12m4-lite`：
+   - `pair_aux.weight: 0.05`
+   - 保留 `use_pair_logits_delta: true`
+   - 可考虑 `pair_delta_gate_init: 0.2`
+3. 更干净的结构 ablation：
+   - `classifier_pair_concat: false`
+   - pair evidence 只通过 `pair_logits_delta` 影响 logits
+   - 目的：验证 pair delta 是否真正能作为主 logits correction，而不是与 base classifier 重复竞争。
+4. 如果 `pair256` 到 e50 仍低于 old128，回到 old128 bottleneck，下一步只调 calibration / checkpoint policy，不继续扩大 pair bottleneck。
+
+---
+
 ## V11m2 → V12 候选路线（2026-05-13）
 
 这组事项以当前 V11m2 为基线：ESM2 + PhysChem + protein GVP + RoPE/DistanceBias transformer + ligand GVP/self-attn + bidirectional cross-attn + ordinal smoothing/CNC。目标不是继续堆模块，而是优先选择能提高 ligand-aware residue scoring、标签鲁棒性和几何先验的改动。

@@ -153,6 +153,255 @@ conda run -n AIAA python scripts/infer/infer_v11.py \
 
 ---
 
+## V11m3 - 2026-05（补录）
+
+### 主要特性
+- ✅ V11m2 + Uni-Mol ligand atom input：将 Uni-Mol CLS embedding `[B,512]` 投影到 64D 后按 `ligand_batch` 拼接到每个 ligand atom feature
+- ✅ 独立实验分支：只扩展 `PocketGVPFusionV11m3` 的 ligand input dim，不改变 V11 / V11m1 / V11m2 的行为
+- ✅ Uni-Mol cache 严格校验：训练脚本禁止缺失、全零、非有限或 shape 错误的 Uni-Mol embedding 继续训练
+- ✅ 训练监控增强：额外记录 Uni-Mol coverage、raw norm、ligand delta norm、alpha、channel ratio 以及 Uni-Mol projection / alpha 梯度
+
+### 关键改进/变化
+1. **Uni-Mol → atom feature augmentation**：`src/models/pocket_gvp_fusion_v11m3.py` 继承 `PocketGVPFusionV11m2`，在 `Ligand3DEncoder` 前调用 `_augment_ligand_x()`。若 `use_unimol_ligand_input=true`，模型内部把 `d_ligand_atom` 从原始 109 扩展为 `109 + d_unimol_ligand_proj`。
+2. **小幅可学习注入强度**：`unimol_ligand_proj = LayerNorm(512) → Linear(512,64) → GELU → LayerNorm(64)`，再乘以 `unimol_ligand_alpha`；默认 `unimol_ligand_alpha_init=0.02`，避免 Uni-Mol 在 step 0 直接压过原始 ligand descriptors。
+3. **输入兼容但训练严格**：模型 forward 允许 `unimol_embed=None` 并用零向量 fallback，方便 smoke / 兼容调用；但 `scripts/train/train_v11m3.py` 的正式训练会通过 `load_unimol_cache()` 和 `get_batch_unimol()` 要求 cache 完整且有限。
+4. **继承 V11m2 结构**：保留 ligand self-attention distance bias、`b_lig1` AttnRes anchor、ordinal label smoothing、distance auxiliary head、CNC 与 V11 的蛋白/配体主干。
+
+### 影响范围（改了哪些东西）
+- 模型：`src/models/pocket_gvp_fusion_v11m3.py`
+- 训练脚本：`scripts/train/train_v11m3.py`
+- 配置：`configs/pocket_gvp_v11m3_hpc.yaml`
+- 输入准备：继续使用 `src/data/collate.py::pocket_collate_fn_v10` 与 `prepare_model_inputs_v11()`；`unimol_embed` 由训练脚本按 `pdb_ids` 额外传入模型
+
+### 文件结构
+```text
+src/
+  └── models/
+      └── pocket_gvp_fusion_v11m3.py
+scripts/
+  └── train/
+      └── train_v11m3.py
+configs/
+  └── pocket_gvp_v11m3_hpc.yaml
+```
+
+### 配置变化
+```yaml
+data:
+  unimol_embeddings_dir: "unimol_embeddings"
+
+model:
+  use_unimol_ligand_input: true
+  d_unimol: 512
+  d_unimol_ligand_proj: 64
+  unimol_ligand_alpha_init: 0.02
+  use_lig_dist_bias: true
+  use_lig_attnres_b1: true
+  n_ligand_self_attn_layers: 4
+```
+
+### 使用方法（最小可复现）
+```bash
+python scripts/train/train_v11m3.py --config configs/pocket_gvp_v11m3_hpc.yaml
+torchrun --nproc_per_node=2 scripts/train/train_v11m3.py --config configs/pocket_gvp_v11m3_hpc.yaml
+```
+
+### 兼容性/迁移说明
+- 与 V11 / V11m1 / V11m2 checkpoint **不直接兼容**：V11m3 的 ligand encoder input dim 增加了 Uni-Mol projection channels。
+- 数据 collate 仍与 V11 family 共用；不需要把 Uni-Mol 写入 batch tensor。Uni-Mol embedding 由训练脚本从 `data/{unimol_embeddings_dir}` 一次性载入 RAM 后按 `pdb_ids` 取 batch。
+- 当前仓库只看到 `configs/pocket_gvp_v11m3_hpc.yaml`，未看到非 HPC 命名的 `configs/pocket_gvp_v11m3.yaml`。
+
+### 已知问题
+- 如果 `use_unimol_ligand_input=true`，正式训练不允许缺失 Uni-Mol cache；缺失 PDB embedding 会直接报错停止。
+- 模型层面的零向量 fallback 只适合兼容 / smoke test，不应作为正式训练路径。
+
+---
+
+## V11m2 - 2026-05（补录）
+
+### 主要特性
+- ✅ Ligand self-attention 3D distance bias：在 ligand internal self-attention 内加入 atom-atom 距离 RBF additive bias
+- ✅ `b_lig1` AttnRes anchor：将 post-self-attention 的 ligand representation 作为第二个 ligand residual anchor
+- ✅ Ordinal label smoothing：训练时只在相邻类别之间平滑 Contact↔Near、Near↔Far，避免 Contact↔Far 的非相邻平滑
+
+### 关键改进/变化
+1. **LigandDistanceBias**：`src/models/pocket_gvp_fusion_v11.py` 中已有 `LigandDistanceBias` 与 `LigandSelfAttentionEncoder` 的可选 dist-bias 路径；`src/models/pocket_gvp_fusion_v11m2.py` 通过默认配置打开 `use_lig_dist_bias=true`、`lig_dist_bias_n_rbf=8`、`lig_dist_bias_max_dist=8.0`。
+2. **Ligand AttnRes 双锚点**：V11 基础路径只用 `b_lig0`（raw ligand encoder + global token）作为 ligand-side AttnRes anchor；V11m2 打开 `use_lig_attnres_b1=true` 后，cross-attention 前每层可在 `[b_lig0, h_lig_ctx]` 与当前 partial 间做 per-position weighted merge。
+3. **训练侧 ordinal smoothing**：`scripts/train/train_v11m2.py` 中的训练 loss 对三分类 ordinal label 做相邻类别平滑；Tversky、distance auxiliary loss 与 metrics 仍使用 hard labels。
+
+### 影响范围（改了哪些东西）
+- 模型：`src/models/pocket_gvp_fusion_v11m2.py`（薄 subclass，默认打开 V11m2 flags）
+- 共享实现：`src/models/pocket_gvp_fusion_v11.py`（`LigandDistanceBias`、`LigandSelfAttentionEncoder`、`use_lig_attnres_b1` forward 逻辑）
+- 训练脚本：`scripts/train/train_v11m2.py`
+- 配置：`configs/pocket_gvp_v11m2.yaml`
+- 输入准备：`src/data/collate.py::prepare_model_inputs_v11()`
+
+### 文件结构
+```text
+src/
+  └── models/
+      ├── pocket_gvp_fusion_v11.py       # 共享 ligand dist-bias / AttnRes 实现
+      └── pocket_gvp_fusion_v11m2.py     # 默认打开 V11m2 flags
+scripts/
+  └── train/
+      └── train_v11m2.py
+configs/
+  └── pocket_gvp_v11m2.yaml
+```
+
+### 配置变化
+```yaml
+model:
+  n_ligand_self_attn_layers: 2
+  use_lig_dist_bias: true
+  lig_dist_bias_n_rbf: 8
+  lig_dist_bias_max_dist: 8.0
+  use_lig_attnres_b1: true
+
+training:
+  ordinal_label_smoothing: true
+```
+
+### 使用方法（最小可复现）
+```bash
+python scripts/train/train_v11m2.py --config configs/pocket_gvp_v11m2.yaml
+torchrun --nproc_per_node=2 scripts/train/train_v11m2.py --config configs/pocket_gvp_v11m2.yaml
+```
+
+### 兼容性/迁移说明
+- 与 V11 checkpoint **大部分参数可复用但不保证严格兼容**：V11m2 打开 ligand dist-bias 后新增 per-layer bias projection 参数；`b_lig1` AttnRes 不新增参数，但改变 forward 信息流。
+- 不引入 protein-ligand 跨坐标几何距离；ligand distance bias 只使用 ligand 自身坐标系下的 atom-atom 距离。
+
+### 已知问题
+- 依赖 `ligand_batch` 在 PyG batch 中按 sample 非递减排序；`PocketGVPFusionV11.forward()` 内部有 assert 检查。
+- `configs/pocket_gvp_v11m2.yaml` 注释中 `label_contact_thresh: 5.0` 旁仍有旧注释 “Contact: d_min < 4.0Å”，实际值以 YAML key 为准。
+
+---
+
+## V11m1 - 2026-05（补录）
+
+### 主要特性
+- ✅ Ligand Global Gate：用 cross-attended ligand global token 对每个 protein feature channel 做 sigmoid gate
+- ✅ Classifier input dim 不变：仍为 `d_model + d_phys_encoded = 640`
+- ✅ 薄 subclass：除 final re-classification 外，主体完全复用 V11 forward
+
+### 关键改进/变化
+1. **Global ligand-conditioned gating**：`src/models/pocket_gvp_fusion_v11m1.py` 继承 V11，先运行 `super().forward()` 得到 `h_fused`、`h_ligand_fused` 与 `protein_physchem_encoded`，再用 `h_ligand_fused[:,0,:]` 生成 `gate = sigmoid(W lig_global)`。
+2. **重算 logits**：V11m1 用 `h_prot_gated = h_fused * gate[:,None,:]` 替换原始 fused protein representation，然后复用同一个 `classifier_input_norm` 与 `classifier` 覆盖 `result['logits']`。
+3. **半开初始化**：`lig_gate_proj.weight/bias` zero-init，因此 `sigmoid(0)=0.5`，训练起点是稳定的半开门控，而非随机强调某些通道。
+
+### 影响范围（改了哪些东西）
+- 模型：`src/models/pocket_gvp_fusion_v11m1.py`
+- 训练脚本：`scripts/train/train_v11m1.py`
+- 配置：`configs/pocket_gvp_v11m1.yaml`
+- 输入准备：`src/data/collate.py::prepare_model_inputs_v11()`
+
+### 文件结构
+```text
+src/
+  └── models/
+      └── pocket_gvp_fusion_v11m1.py
+scripts/
+  └── train/
+      └── train_v11m1.py
+configs/
+  └── pocket_gvp_v11m1.yaml
+```
+
+### 配置变化
+```yaml
+experiment:
+  name: "pocket_gvp_fusion_v11m1"
+
+model:
+  n_ligand_self_attn_layers: 2
+```
+
+### 使用方法（最小可复现）
+```bash
+python scripts/train/train_v11m1.py --config configs/pocket_gvp_v11m1.yaml
+torchrun --nproc_per_node=2 scripts/train/train_v11m1.py --config configs/pocket_gvp_v11m1.yaml
+```
+
+### 兼容性/迁移说明
+- 与 V11 checkpoint **不严格兼容**：V11m1 增加 `lig_gate_proj` 参数，并覆盖 logits 计算。
+- 不改变 collate / dataset 契约；仍使用 V11 family 的 flat PyG ligand graph 输入。
+
+### 已知问题
+- 当前配置文件未看到专门的 `use_lig_global_gate` 开关；是否使用 V11m1 由训练脚本导入的模型类决定。
+- Gate 初始为 0.5 倍 protein fused representation，严格来说不是 identity；这是实现中的稳定半开策略。
+
+---
+
+## V11 - 2026-05（补录）
+
+### 主要特性
+- ✅ Ligand Internal Self-Attention：在 ligand GNN encoder + dynamic global token 后、cross-attention 前加入 ligand self-attention
+- ✅ Dynamic ligand global token：用 masked mean pool 生成 ligand global token，不再依赖固定 learnable global parameter
+- ✅ AttnRes cross-attention loop：protein side 使用 `[b_gvp, b0, b1]` 三锚点，ligand side 使用 `b_lig0` 锚点
+- ✅ 继承 V10m8：protein per-layer distance bias、distance regression auxiliary head、CNC、GVP output dropout、coordinate noise、RoPE、SwiGLU / gated attention
+
+### 关键改进/变化
+1. **Ligand self-attention 插入位置**：`src/models/pocket_gvp_fusion_v11.py` 在 `Ligand3DEncoder` 输出和 masked mean global token 拼接后运行 `LigandSelfAttentionEncoder`，让 ligand atoms 在进入 protein-ligand cross-attention 前获得分子内上下文。
+2. **Cross-attention 前 AttnRes**：每个 bidirectional cross-attention layer 前，protein representation 先通过 `InterBlockAttnRes([b_gvp,b0,b1], partial)`，ligand representation 通过 `InterBlockAttnRes([b_lig0], partial)`；这提供 weighted merge，而不是简单残差相加。
+3. **V11 输入收口**：`prepare_model_inputs_v11()` 不再传旧的 `ligand_to_protein` placeholder；模型签名仍保留 `ligand_to_protein: Optional` 但注释为 legacy ignored。
+4. **Distance auxiliary head**：若 `use_dist_aux=true`，forward 返回 `pred_dist`；`scripts/train/train_v11.py` 在有 `raw_distances` 时加入 Huber/proximity-style distance auxiliary loss。
+
+### 影响范围（改了哪些东西）
+- 模型：`src/models/pocket_gvp_fusion_v11.py`
+- 训练脚本：`scripts/train/train_v11.py`
+- 配置：`configs/pocket_gvp_v11.yaml`
+- 输入准备：`src/data/collate.py::pocket_collate_fn_v10` 与 `prepare_model_inputs_v11()`
+
+### 文件结构
+```text
+src/
+  ├── models/
+  │   └── pocket_gvp_fusion_v11.py
+  └── data/
+      └── collate.py
+scripts/
+  └── train/
+      └── train_v11.py
+configs/
+  └── pocket_gvp_v11.yaml
+```
+
+### 配置变化
+```yaml
+model:
+  n_ligand_self_attn_layers: 2
+  use_dist_aux: true
+  use_dist_bias: true
+  use_sdpa_protein_self_attn: true
+  use_chain_features: true
+  gvp_dropout_prob: 0.1
+  coord_noise_std: 0.2
+
+data:
+  use_spatial_clamp: true
+  spatial_clamp_dims: [62, 76, 78, 79]
+  spatial_clamp_range: [-5.0, 5.0]
+```
+
+### 使用方法（最小可复现）
+```bash
+python scripts/train/train_v11.py --config configs/pocket_gvp_v11.yaml
+torchrun --nproc_per_node=2 scripts/train/train_v11.py --config configs/pocket_gvp_v11.yaml
+```
+
+### 兼容性/迁移说明
+- V11 与 V10m8 **不严格兼容**：V11 新增 ligand self-attention 模块，并改变 cross-attention 前的 ligand context。
+- `prepare_model_inputs_v11()` 仍兼容 `pocket_collate_fn_v10` 输出的 flat ligand graph；旧 `ligand_to_protein` placeholder 不再需要。
+- 不使用 protein-ligand 跨模态坐标距离；protein distance bias 只基于 Cα-Cα，ligand edge RBF 只基于 ligand atom-atom。
+
+### 已知问题
+- `ligand_batch` 必须按 sample 连续排序，否则 vectorized scatter 会触发 assert。
+- `use_dist_aux=true` 需要 dataset/collate 提供 `raw_distances`；若 batch 中没有该字段，训练脚本会跳过 dist aux。
+- `configs/pocket_gvp_v11.yaml` 注释中 `label_contact_thresh: 5.0` 旁仍有旧注释 “Contact: d_min < 4.0Å”，实际训练阈值以 YAML 数值为准。
+
+---
+
 ## V10m8 - 2026-04-14
 
 ### 主要特性
