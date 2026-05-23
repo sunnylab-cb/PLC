@@ -1,10 +1,15 @@
+import sys
 from pathlib import Path
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 
 def main() -> None:
-    run_dir = Path("outputs/hpc_sync/pocket_gvp_fusion_pair_aux_old128_v12m4_20260522_184834")
+    run_dir = Path(
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else "outputs/hpc_sync/pocket_gvp_fusion_pair_aux_old128_v12m4_20260522_184834"
+    )
     event_file = sorted((run_dir / "runs").glob("events.out.tfevents.*"))[-1]
     ea = EventAccumulator(str(event_file), size_guidance={"scalars": 0})
     ea.Reload()
