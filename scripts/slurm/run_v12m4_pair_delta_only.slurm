@@ -15,6 +15,8 @@
 # ============================================================
 # Submit:
 #   sbatch scripts/slurm/run_v12m4_pair_delta_only.slurm
+#   sbatch --export=ALL,CONFIG_FILE=configs/pocket_gvp_v12m4_hpc_pair_delta_noaux.yaml scripts/slurm/run_v12m4_pair_delta_only.slurm
+#   sbatch --export=ALL,CONFIG_FILE=configs/pocket_gvp_v12m4_hpc_pair_aux_light_old128.yaml scripts/slurm/run_v12m4_pair_delta_only.slurm
 #
 # Matching interactive allocation:
 #   srun -p i64m1tga800ue -n 1 --mem=64G -c 8 --gres=gpu:1 --time=24:00:00 --pty bash
@@ -27,7 +29,8 @@
 # ============================================================
 
 PROJECT_DIR="/hpc2hdd/home/shuang886/jhspoolers/PLC"
-CONFIG_FILE="configs/pocket_gvp_v12m4_hpc_pair_delta_only.yaml"
+CONFIG_FILE="${CONFIG_FILE:-configs/pocket_gvp_v12m4_hpc_pair_delta_only.yaml}"
+EXPERIMENT_NOTE="${EXPERIMENT_NOTE:-pair_delta_only}"
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
 
 echo "============================================"
@@ -36,6 +39,7 @@ echo "Node: ${SLURMD_NODENAME}"
 echo "Start time: $(date)"
 echo "Project: ${PROJECT_DIR}"
 echo "Config: ${CONFIG_FILE}"
+echo "Experiment note: ${EXPERIMENT_NOTE}"
 echo "============================================"
 
 mkdir -p logs
