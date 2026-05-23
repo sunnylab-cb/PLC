@@ -2008,13 +2008,28 @@ class PocketGVPFusionV12M4(nn.Module):
         pair_context = None
         pair_features = None
         pair_stats: Dict[str, torch.Tensor] = {}
-        if self.use_pair_evidence_head and self.classifier_pair_concat:
+
+        # Compute pair evidence whenever it is needed by either classifier
+        # concatenation or the logits-delta branch.  This deliberately decouples
+        # "compute pair evidence" from "feed pair evidence into base logits",
+        # allowing ablations where pair evidence only enters through
+        # pair_logits_delta.
+        use_pair_for_delta = self.use_pair_logits_delta
+        should_compute_pair_evidence = (
+            self.use_pair_evidence_head
+            and (self.classifier_pair_concat or use_pair_for_delta)
+        )
+        if should_compute_pair_evidence:
             pair_context, pair_features, pair_stats = self.pair_evidence(
                 h_prot=h_prot,
                 h_lig_atoms=h_lig[:, 1:, :],
                 prot_mask=protein_mask,
                 lig_mask=lig_mask_g[:, 1:],
             )
+
+        if self.use_pair_evidence_head and self.classifier_pair_concat:
+            if pair_context is None or pair_features is None:
+                raise RuntimeError("pair evidence concat requested but pair_context was not computed")
             h_int_pool = h_int.mean(dim=1)
             h_int_pool = self.pair_int_pool_proj(h_int_pool)
             h_int_broadcast = h_int_pool.unsqueeze(1).expand(-1, L, -1)
