@@ -111,7 +111,7 @@ training:
   freeze_v11m3_base: true
   delta_trainable_prefixes: ["pair_delta_"]
 
-  batch_size: 28
+  batch_size: 22
   num_epochs: 40
   num_workers: 8
 
