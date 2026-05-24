@@ -1,0 +1,92 @@
+flowchart TB
+  classDef input fill:#f7f7f7,stroke:#777,stroke-width:1px,color:#111;
+  classDef protein fill:#e8f2ff,stroke:#2f68a3,stroke-width:1px,color:#111;
+  classDef ligand fill:#eaf7ec,stroke:#2f7d45,stroke-width:1px,color:#111;
+  classDef fusion fill:#fff2cc,stroke:#a67600,stroke-width:1px,color:#111;
+  classDef head fill:#fbe7e7,stroke:#a33,stroke-width:1px,color:#111;
+  classDef note fill:#f5f0ff,stroke:#7656a8,stroke-width:1px,color:#111;
+
+  subgraph S0["Shared Inputs"]
+    ESM["ESM2 residue embeddings<br/>[B,L,1280]"]:::input
+    PHY["PhysChem + spatial features<br/>Phys 62D, spatial 89D"]:::input
+    PCOORD["Protein coordinates<br/>CA/N/C/O derived geometry"]:::input
+    LFEAT["Ligand atom features<br/>109D + optional Uni-Mol 64D"]:::input
+    LGRAPH["Ligand graph<br/>bond edges + radius/RBF edges"]:::input
+    UMI["Uni-Mol CLS embedding<br/>[B,512]"]:::input
+  end
+
+  subgraph V11["V11 latest family: V11m3"]
+    direction TB
+    V11P0["Protein GVP encoder<br/>scalar 256D + vectors"]:::protein
+    V11P1["ESM/GVP fusion<br/>modality gate + 512D protein state"]:::protein
+    V11P2["Protein RoPE Transformer stack<br/>distance bias per layer"]:::protein
+    V11PA["Protein AttnRes anchors<br/>b_gvp, b0, b1"]:::fusion
+
+    V11L0["Uni-Mol atom augmentation<br/>LN(512)->Linear 64, alpha=0.02"]:::ligand
+    V11L1["Ligand 3D GNN/GVP encoder<br/>chemical edges + RBF distances"]:::ligand
+    V11L2["Dynamic ligand global token<br/>masked mean pool"]:::ligand
+    V11L3["Ligand self-attention x4<br/>atom distance bias"]:::ligand
+    V11LA["Ligand AttnRes anchors<br/>b_lig0 + b_lig1"]:::fusion
+
+    V11X["Direct bidirectional cross-attention x5<br/>Protein queries ligand, ligand queries protein"]:::fusion
+    V11H["Classifier input<br/>h_prot_fused + encoded physchem"]:::head
+    V11O["Residue logits<br/>Contact / Near / Far<br/>+ distance auxiliary head"]:::head
+  end
+
+  subgraph V12["V12m3 current main branch: pair evidence old128"]
+    direction TB
+    V12P0["Protein GVP encoder + ESM projection"]:::protein
+    V12P1["Modality gate<br/>concat gated GVP 256 + ESM 256 -> 512D"]:::protein
+    V12PN["Input norm + padding hard zero<br/>RSA/SASA disabled in current HPC configs"]:::protein
+
+    V12L0["Uni-Mol atom augmentation<br/>same 64D injection"]:::ligand
+    V12L1["Ligand GNN/GVP encoder<br/>dense ligand tokens + global token"]:::ligand
+    V12L2["Uni-Mol global-token augmentation<br/>global token + projected Uni-Mol"]:::ligand
+
+    V12I0["K=4 learned interaction tokens"]:::fusion
+    V12I1["InteractionTokenBlock x4<br/>I reads protein, I reads ligand<br/>protein reads I, ligand reads I"]:::fusion
+    V12N["Bottleneck-only fusion<br/>direct P-L CoAttentionBlock skipped<br/>AttnRes disabled in current old128/256 configs"]:::note
+
+    V12PE["PairEvidenceHead<br/>coordinate-free residue-atom compatibility<br/>res_proj dot atom_proj, top-k evidence"]:::fusion
+    V12R["Readout bottleneck<br/>mean interaction tokens -> 128D old128"]:::fusion
+    V12H["Classifier input<br/>h_prot + pair_context + pair_features<br/>+ h_int_128 broadcast + encoded physchem"]:::head
+    V12O["Residue logits<br/>Contact / Near / Far<br/>+ distance auxiliary head"]:::head
+  end
+
+  ESM --> V11P1
+  PHY --> V11P1
+  PHY --> V11H
+  PCOORD --> V11P0
+  V11P0 --> V11P1 --> V11P2
+  V11P0 --> V11PA
+  V11P1 --> V11PA
+  V11P2 --> V11PA
+  UMI --> V11L0
+  LFEAT --> V11L0 --> V11L1
+  LGRAPH --> V11L1 --> V11L2 --> V11L3
+  V11L2 --> V11LA
+  V11L3 --> V11LA
+  V11PA --> V11X
+  V11LA --> V11X
+  V11X --> V11H --> V11O
+
+  ESM --> V12P0
+  PHY --> V12P1
+  PHY --> V12H
+  PCOORD --> V12P0
+  V12P0 --> V12P1 --> V12PN
+  UMI --> V12L0
+  UMI --> V12L2
+  LFEAT --> V12L0 --> V12L1
+  LGRAPH --> V12L1 --> V12L2
+  V12PN --> V12I1
+  V12L2 --> V12I1
+  V12I0 --> V12I1 --> V12N
+  V12N --> V12PE
+  V12PN --> V12PE
+  V12L2 --> V12PE
+  V12I1 --> V12R
+  V12PE --> V12H
+  V12R --> V12H
+  V12PN --> V12H
+  V12H --> V12O

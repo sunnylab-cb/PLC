@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=v12m3_pair
-#SBATCH --partition=i64m1tga800ue
+#SBATCH --partition=i64m1tga800u
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
