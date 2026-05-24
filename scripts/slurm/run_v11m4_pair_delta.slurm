@@ -34,13 +34,15 @@ PROJECT_DIR="/hpc2hdd/home/shuang886/jhspoolers/PLC"
 CONFIG_FILE="${CONFIG_FILE:-configs/pocket_gvp_v11m4_hpc.yaml}"
 EXPERIMENT_NOTE="${EXPERIMENT_NOTE:-v11m4_local_pair_delta}"
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
-DEBUG_TRACE="${DEBUG_TRACE:-1}"
+DEBUG_TRACE="${DEBUG_TRACE:-0}"
 
 mkdir -p "${PROJECT_DIR}/logs"
 DEBUG_LOG="${DEBUG_LOG:-${PROJECT_DIR}/logs/v11m4_delta_${SLURM_JOB_ID:-manual}.debug.log}"
 exec > >(tee -a "${DEBUG_LOG}") 2>&1
 
-set -Eeuo pipefail
+# Do not enable nounset (-u) in Slurm/conda scripts: conda activation hooks
+# can reference unset internal variables and fail before training starts.
+set -Eeo pipefail
 trap 'status=$?; echo "[ERROR] line=${LINENO} status=${status} command=${BASH_COMMAND}"; exit ${status}' ERR
 if [ "${DEBUG_TRACE}" = "1" ]; then
     set -x
