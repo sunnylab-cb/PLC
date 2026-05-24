@@ -1,7 +1,7 @@
 # Pocket-GVP-Fusion V11m4 配置
 #
 # V11m4 = V11m3 stable trunk + coordinate-free local pair-evidence delta head.
-# - Base path is unchanged V11m3 and should be initialized from a trained V11m3 checkpoint.
+# - Trains from scratch by default for fair V11m3/V11m4 architecture comparison.
 # - Delta branch reads local54 ligand atom chemistry + ligand hidden states.
 # - No protein-ligand shared coordinates or holo cross-distance are used.
 
@@ -46,7 +46,7 @@ model:
   n_gvp_vectors: 12
   n_gvp_vector_hidden: 20
 
-  # Match the saved V11m3 checkpoint used for initialization.
+  # Match the V11m3 stable trunk topology, with an added V11m4 delta branch.
   n_gvp_layers: 3
   n_transformer_layers: 4
   n_ligand_layers: 3
@@ -83,7 +83,7 @@ model:
   use_chain_features: true
   chain_gap_size: 1000
 
-  # Kept true for V11m3 checkpoint compatibility; training.dist_aux can disable loss.
+  # Keep the V11 distance auxiliary head in scratch training.
   use_dist_aux: true
 
   n_ligand_self_attn_layers: 2
@@ -106,22 +106,22 @@ model:
   edge_dim: 6
 
 training:
-  # Stage-1 default: start from V11m3 and train only the new delta branch.
-  init_from_checkpoint: "outputs/pocket_gvp_fusion_v11m3_20260516_220602/checkpoint_epoch_100.pt"
-  freeze_v11m3_base: true
+  # Scratch training: do not initialize from V11m3 and do not freeze the base.
+  init_from_checkpoint: null
+  freeze_v11m3_base: false
   delta_trainable_prefixes: ["pair_delta_"]
 
-  batch_size: 22
-  num_epochs: 40
+  batch_size: 24
+  num_epochs: 100
   num_workers: 8
 
   optimizer: "adamw"
-  learning_rate: 1.0e-4
-  weight_decay: 0.01
+  learning_rate: 5.0e-5
+  weight_decay: 0.05
   betas: [0.9, 0.999]
 
   scheduler: "cosine"
-  warmup_epochs: 2
+  warmup_epochs: 3
   min_lr: 1.0e-6
 
   focal_gamma: 2.0
@@ -158,10 +158,8 @@ training:
     warmup_epochs: 5
     max_clip_frac: 0.3
 
-  # Disabled in delta-only stage; base dist head is frozen and would add a
-  # constant loss term without training signal.
   dist_aux:
-    enabled: false
+    enabled: true
     weight: 0.1
     max_dist: 20.0
 

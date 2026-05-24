@@ -5,8 +5,8 @@ Training entrypoint for Pocket-GVP-Fusion V11m4.
 This reuses the mature V11m3 training loop and swaps only:
 - model class: PocketGVPFusionV11m4
 - experiment suffix: v11m4
-- optional initialization from a V11m3 checkpoint via
-  training.init_from_checkpoint
+- optional initialization via training.init_from_checkpoint. The HPC config
+  trains from scratch by default.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def _load_init_checkpoint(model: torch.nn.Module, config: Dict) -> None:
     if not path.exists():
         raise FileNotFoundError(
             f"training.init_from_checkpoint not found: {path}. "
-            "V11m4 should normally start from a trained V11m3 checkpoint."
+            "Unset this field for scratch V11m4 training."
         )
 
     ckpt = torch.load(path, map_location="cpu", weights_only=False)

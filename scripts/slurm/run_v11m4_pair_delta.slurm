@@ -26,7 +26,7 @@
 # Notes:
 #   - Project directory is fixed for the HPC spooler checkout.
 #   - Uses conda environment "af3" as requested.
-#   - Runs V11m4 from a V11m3 checkpoint via configs/pocket_gvp_v11m4_hpc.yaml.
+#   - Runs V11m4 scratch training via configs/pocket_gvp_v11m4_hpc.yaml.
 #   - The script exits with the training process exit code to release resources.
 # ============================================================
 
