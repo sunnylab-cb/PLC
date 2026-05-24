@@ -7,8 +7,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
-#SBATCH --output=logs/v11m4_delta_%j.out
-#SBATCH --error=logs/v11m4_delta_%j.err
+#SBATCH --output=v11m4_delta_%j.slurm.out
+#SBATCH --error=v11m4_delta_%j.slurm.err
 
 # ============================================================
 # Pocket-GVP-Fusion V11m4 local pair-delta training
@@ -34,17 +34,29 @@ PROJECT_DIR="/hpc2hdd/home/shuang886/jhspoolers/PLC"
 CONFIG_FILE="${CONFIG_FILE:-configs/pocket_gvp_v11m4_hpc.yaml}"
 EXPERIMENT_NOTE="${EXPERIMENT_NOTE:-v11m4_local_pair_delta}"
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
+DEBUG_TRACE="${DEBUG_TRACE:-1}"
+
+mkdir -p "${PROJECT_DIR}/logs"
+DEBUG_LOG="${DEBUG_LOG:-${PROJECT_DIR}/logs/v11m4_delta_${SLURM_JOB_ID:-manual}.debug.log}"
+exec > >(tee -a "${DEBUG_LOG}") 2>&1
+
+set -Eeuo pipefail
+trap 'status=$?; echo "[ERROR] line=${LINENO} status=${status} command=${BASH_COMMAND}"; exit ${status}' ERR
+if [ "${DEBUG_TRACE}" = "1" ]; then
+    set -x
+fi
 
 echo "============================================"
-echo "Job ID: ${SLURM_JOB_ID}"
-echo "Node: ${SLURMD_NODENAME}"
+echo "Job ID: ${SLURM_JOB_ID:-manual}"
+echo "Node: ${SLURMD_NODENAME:-unknown}"
 echo "Start time: $(date)"
+echo "Submit dir: ${SLURM_SUBMIT_DIR:-unknown}"
+echo "Initial pwd: $(pwd)"
 echo "Project: ${PROJECT_DIR}"
 echo "Config: ${CONFIG_FILE}"
 echo "Experiment note: ${EXPERIMENT_NOTE}"
+echo "Debug log: ${DEBUG_LOG}"
 echo "============================================"
-
-mkdir -p logs
 
 # Keep module usage minimal; cluster images differ. If your site requires
 # explicit modules, load them before conda activation in the submission shell.
@@ -63,9 +75,22 @@ fi
 conda activate af3
 
 cd "${PROJECT_DIR}" || exit 1
+mkdir -p logs
 
 echo "Python: $(which python)"
 python --version
+echo "Working dir: $(pwd)"
+echo "Git HEAD: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
+if [ ! -f "${CONFIG_FILE}" ]; then
+    echo "ERROR: config file not found: ${CONFIG_FILE}"
+    echo "Available configs near v11m4:"
+    ls -la configs/*v11m4* 2>/dev/null || true
+    exit 2
+fi
+
+echo "Config file exists: ${CONFIG_FILE}"
+grep -n "init_from_checkpoint\\|freeze_v11m3_base\\|batch_size\\|learning_rate" "${CONFIG_FILE}" || true
 
 echo "GPU devices:"
 if command -v rocm-smi &> /dev/null; then
@@ -78,6 +103,7 @@ fi
 
 export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 
 CMD=(python scripts/train/train_v11m4.py --config "${CONFIG_FILE}" --amp)
 if [ -n "${RESUME_CHECKPOINT}" ]; then
