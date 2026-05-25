@@ -31,6 +31,15 @@ def detect_v11_version(ckpt: Dict) -> str:
     cfg = ckpt.get("config", {})
     exp_name = cfg.get("experiment", {}).get("name", "").lower()
 
+    has_global_gate = any(k.startswith("global_delta_gate.") for k in state)
+    has_pair_bias = any(".pair_bias." in k for k in state)
+
+    if "v11m5t" in exp_name or (has_global_gate and has_pair_bias):
+        return "v11m5t"
+    if "v11m5" in exp_name or has_pair_bias:
+        return "v11m5"
+    if "v11m4t" in exp_name or has_global_gate:
+        return "v11m4t"
     if "v11m4" in exp_name or any(k.startswith("pair_delta_") for k in state):
         return "v11m4"
     if "v11m3" in exp_name or any(k.startswith("unimol_ligand_proj.") for k in state):
@@ -49,7 +58,13 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
     model_cfg = dict(config["model"])
     model_cfg["use_gradient_checkpointing"] = False
 
-    if version == "v11m4":
+    if version == "v11m5t":
+        from src.models.pocket_gvp_fusion_v11m5t import PocketGVPFusionV11m5t as ModelClass
+    elif version == "v11m5":
+        from src.models.pocket_gvp_fusion_v11m5 import PocketGVPFusionV11m5 as ModelClass
+    elif version == "v11m4t":
+        from src.models.pocket_gvp_fusion_v11m4t import PocketGVPFusionV11m4t as ModelClass
+    elif version == "v11m4":
         from src.models.pocket_gvp_fusion_v11m4 import PocketGVPFusionV11m4 as ModelClass
     elif version == "v11m3":
         from src.models.pocket_gvp_fusion_v11m3 import PocketGVPFusionV11m3 as ModelClass

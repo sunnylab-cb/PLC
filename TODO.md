@@ -27,6 +27,29 @@
 
 ---
 
+## V11m4/V11m5 后续实验 TODO（2026-05-26）
+
+### 当前结论
+
+- `V11m4` 是当前最强稳定基座：best F1_c0 约 `0.5814 @ e61`。
+- `V11m5` 将 local54 pair evidence 前移到 P→L attention bias，但截至 e61 best F1_c0 约 `0.5737`，未超过 V11m4。
+- `V11m5t` 在 V11m5 上加 global55/UniMol delta gate，best F1_c0 约 `0.5784`，更接近 V11m4 且梯度更稳，但仍未明确超过。
+- Ligand dependency eval 显示主要有效信号来自 local54 / ligand graph；global55 更像 precision calibration / delta amplitude control。
+
+### 下一步实验
+
+1. `V11m4t`: V11m4 late local delta + global55/UniMol delta gate，不使用 pair-bias 前移。
+   - 目的：隔离 `V11m5t` 收益是否来自 global gate。
+   - 文件：`src/models/pocket_gvp_fusion_v11m4t.py`、`scripts/train/train_v11m4t.py`、`configs/pocket_gvp_v11m4t_hpc.yaml`、`scripts/slurm/run_v11m4t_global_gate.slurm`
+2. `V11m5t-light`: V11m5t 但 `pair_bias_beta_init: 0.03`。
+   - 目的：测试 `pair_bias_beta_init=0.1` 是否过强扰动 V11 trunk。
+   - 文件：`configs/pocket_gvp_v11m5t_light_hpc.yaml`、`scripts/slurm/run_v11m5t_light_pair_bias_gate.slurm`
+3. 当前 V11m5/V11m5t 跑完后，用 `best_f1_c0_model.pt` 重新跑 ligand dependency eval，重点比较：
+   - full / shuffle / zero
+   - zero_local54 / zero_global55 / zero_unimol
+
+---
+
 ## V12m3 / V12m4 实验 TODO（2026-05-22）
 
 ### 当前结论

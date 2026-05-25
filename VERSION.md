@@ -75,6 +75,55 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 
 ---
 
+## V11m4t / V11m5t-light - 2026-05-26
+
+### 主要特性
+- ✅ `V11m4t`: 在 V11m4 late local pair-delta 上加入 global55 + UniMol delta calibration gate
+- ✅ `V11m5t-light`: 保留 V11m5t 结构，但将 `pair_bias_beta_init` 从 `0.1` 降到 `0.03`
+- ✅ 推理兼容：`scripts/infer/infer_v11_internal_ligdep.py` 可自动识别 `v11m4t/v11m5/v11m5t`
+
+### 关键改进/变化
+1. **隔离 global gate 贡献**：`V11m4t` 不使用 P→L pair-bias 前移，只验证 `delta_logits = global_gate(global55, UniMol) * local_delta_logits` 是否能改善 V11m4。
+2. **测试 pair-bias 强度**：`V11m5t-light` 用更弱的 pair-bias 初始化，检验 V11m5/V11m5t 中 pair-bias 前移是否扰动 trunk。
+3. **checkpoint 可评估**：ligand dependency inference loader 已支持新版本 checkpoint。
+
+### 影响范围
+- 模型：`src/models/pocket_gvp_fusion_v11m4t.py`
+- 训练：`scripts/train/train_v11m4t.py`
+- 配置：`configs/pocket_gvp_v11m4t_hpc.yaml`、`configs/pocket_gvp_v11m5t_light_hpc.yaml`
+- Slurm：`scripts/slurm/run_v11m4t_global_gate.slurm`、`scripts/slurm/run_v11m5t_light_pair_bias_gate.slurm`
+- 推理：`scripts/infer/infer_v11_internal_ligdep.py`
+
+### 使用方法
+```bash
+sbatch scripts/slurm/run_v11m4t_global_gate.slurm
+sbatch scripts/slurm/run_v11m5t_light_pair_bias_gate.slurm
+```
+
+---
+
+## V11m4 / V11m5 / V11m5t - 2026-05-25
+
+### 主要特性
+- ✅ `V11m4`: V11m3 stable trunk + coordinate-free local54 pair-delta head
+- ✅ `V11m5`: 将 local pair evidence 前移为 P→L cross-attention logit bias
+- ✅ `V11m5t`: 在 V11m5 上用 global55 + UniMol CLS gate 校准 delta logits
+- ✅ 训练选择器修正：V11m4+ train loop 保存 `best_f1_c0_model.pt` 和 `best_dice_c0_model.pt`
+
+### 关键改进/变化
+1. **V11m4 late delta**：保留 V11m3/V11m2 trunk，新增 local54-driven residue-level `delta_logits`，以保护 protein-side floor。
+2. **V11m5 pair-bias 前移**：`PairEvidence(hP_i, hL_j, local54_j)` 加到 P→L attention logits，不引入任何 protein-ligand cross-distance。
+3. **V11m5t calibration**：global55/UniMol 不进入 pair evidence，仅控制 delta amplitude，验证其作为 precision/calibration signal 的价值。
+4. **Ligand dependency 诊断**：V11m4 epoch60 test F1_c0 约 `0.6000`；主要 dependency 来自 ligand graph/local54，UniMol 单独贡献较小。
+
+### 影响范围
+- 模型：`src/models/pocket_gvp_fusion_v11m4.py`、`src/models/pocket_gvp_fusion_v11m5.py`、`src/models/pocket_gvp_fusion_v11m5t.py`
+- 训练：`scripts/train/train_v11m4.py`、`scripts/train/train_v11m5.py`、`scripts/train/train_v11m5t.py`
+- 配置：`configs/pocket_gvp_v11m4_hpc.yaml`、`configs/pocket_gvp_v11m5_hpc.yaml`、`configs/pocket_gvp_v11m5t_hpc.yaml`
+- Slurm：`scripts/slurm/run_v11m4_pair_delta.slurm`、`scripts/slurm/run_v11m5_pair_bias.slurm`、`scripts/slurm/run_v11m5t_pair_bias_gate.slurm`
+
+---
+
 ## V12 - 2026-05-15
 
 ### 主要特性
