@@ -29,6 +29,148 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.models.pocket_gvp_fusion_v11m4 import PocketGVPFusionV11m4  # noqa: E402
 
 
+def _patch_v11m3_source_for_v11m4(source: str) -> str:
+    """Patch the reused V11m3 train loop only inside the V11m4 entrypoint."""
+    source = source.replace(
+        "import time\nimport yaml",
+        "import time\nimport math\nimport yaml",
+    )
+
+    old_grad_block = """            # ✅ Record gradients BEFORE clipping and optimizer step
+            if writer is not None and is_main_process() and (batch_idx + 1) % log_every == 0:
+                global_step = epoch * len(dataloader) + batch_idx
+
+                # 梯度统计（在清零之前记录）
+                total_norm = 0.0
+                for p in model.parameters():
+                    if p.grad is not None:
+                        param_norm = p.grad.data.norm(2)
+                        total_norm += param_norm.item() ** 2
+                total_norm = total_norm ** 0.5
+                writer.add_scalar('Train/grad_norm', total_norm, global_step)
+
+                # 组件级梯度统计
+                grad_stats = compute_gradient_stats(model)
+                for key, value in grad_stats.items():
+                    writer.add_scalar(f'Gradients/{key}', value, global_step)
+
+            # Gradient clipping
+            if gradient_clip > 0:
+                if use_amp and scaler is not None:
+                    scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+"""
+    new_grad_block = """            # AMP gradients are scaled after backward. Unscale BEFORE logging so
+            # V11m4 gradient metrics are true pre-clipping norms, matching V12.
+            if use_amp and scaler is not None:
+                scaler.unscale_(optimizer)
+
+            # ✅ Record gradients AFTER unscale, BEFORE clipping and optimizer step
+            if writer is not None and is_main_process() and (batch_idx + 1) % log_every == 0:
+                global_step = epoch * len(dataloader) + batch_idx
+
+                # 梯度统计（true pre-clipping norm）
+                total_norm = 0.0
+                for p in model.parameters():
+                    if p.grad is not None:
+                        grad = p.grad.detach()
+                        vals = grad.coalesce()._values() if grad.is_sparse else grad
+                        if torch.isfinite(vals).all():
+                            param_norm = torch.linalg.vector_norm(vals.float(), ord=2)
+                            total_norm += param_norm.item() ** 2
+                        else:
+                            total_norm = float("nan")
+                            break
+                total_norm = total_norm ** 0.5 if math.isfinite(total_norm) else total_norm
+                writer.add_scalar('Train/grad_norm', total_norm, global_step)
+
+                # 组件级梯度统计
+                grad_stats = compute_gradient_stats(model)
+                for key, value in grad_stats.items():
+                    writer.add_scalar(f'Gradients/{key}', value, global_step)
+
+            # Gradient clipping
+            if gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+"""
+    if old_grad_block not in source:
+        raise RuntimeError("Could not patch V11m3 grad logging block for V11m4")
+    source = source.replace(old_grad_block, new_grad_block, 1)
+
+    source = source.replace(
+        "    best_val_loss = float('inf')\n    patience_counter = 0",
+        "    best_val_loss = float('inf')\n    best_val_f1_c0 = -float('inf')\n    best_val_dice_c0 = -float('inf')\n    patience_counter = 0",
+        1,
+    )
+    source = source.replace(
+        "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
+        "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            best_val_f1_c0 = checkpoint.get('best_val_f1_c0', -float('inf'))\n            best_val_dice_c0 = checkpoint.get('best_val_dice_c0', -float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
+        1,
+    )
+    source = source.replace(
+        "                'best_val_loss': best_val_loss,\n                'patience_counter': patience_counter,",
+        "                'best_val_loss': best_val_loss,\n                'best_val_f1_c0': best_val_f1_c0,\n                'best_val_dice_c0': best_val_dice_c0,\n                'patience_counter': patience_counter,",
+    )
+
+    old_best_tail = """            else:
+                patience_counter += 1
+
+            # Early stopping
+"""
+    new_best_tail = """            else:
+                patience_counter += 1
+
+            # 4. Save metric-best checkpoints. Val loss can become a poor
+            # selector for contact segmentation, so keep explicit F1/Dice bests.
+            current_f1_c0 = float(val_metrics.get('f1_c0', -float('inf')))
+            if math.isfinite(current_f1_c0) and current_f1_c0 > best_val_f1_c0:
+                best_val_f1_c0 = current_f1_c0
+                best_f1_checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'best_val_f1_c0': best_val_f1_c0,
+                    'best_val_dice_c0': best_val_dice_c0,
+                    'patience_counter': patience_counter,
+                    'train_metrics': train_metrics,
+                    'val_metrics': val_metrics,
+                    'config': config
+                }
+                if scaler is not None:
+                    best_f1_checkpoint['scaler_state_dict'] = scaler.state_dict()
+                torch.save(best_f1_checkpoint, exp_dir / 'best_f1_c0_model.pt')
+                print_rank0(f"✓ Saved best F1_c0 model (f1_c0={best_val_f1_c0:.4f})")
+
+            current_dice_c0 = float(val_metrics.get('dice_c0', -float('inf')))
+            if math.isfinite(current_dice_c0) and current_dice_c0 > best_val_dice_c0:
+                best_val_dice_c0 = current_dice_c0
+                best_dice_checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'best_val_f1_c0': best_val_f1_c0,
+                    'best_val_dice_c0': best_val_dice_c0,
+                    'patience_counter': patience_counter,
+                    'train_metrics': train_metrics,
+                    'val_metrics': val_metrics,
+                    'config': config
+                }
+                if scaler is not None:
+                    best_dice_checkpoint['scaler_state_dict'] = scaler.state_dict()
+                torch.save(best_dice_checkpoint, exp_dir / 'best_dice_c0_model.pt')
+                print_rank0(f"✓ Saved best DICE_c0 model (dice_c0={best_val_dice_c0:.4f})")
+
+            # Early stopping
+"""
+    if old_best_tail not in source:
+        raise RuntimeError("Could not patch V11m3 best-metric checkpoint block for V11m4")
+    return source.replace(old_best_tail, new_best_tail, 1)
+
+
 def _load_v11m3_train_module() -> ModuleType:
     """
     Execute train_v11m3.py and reuse its training loop.
@@ -42,6 +184,7 @@ def _load_v11m3_train_module() -> ModuleType:
         "from torch.utils.tensorboard import SummaryWriter",
         "# SummaryWriter injected by train_v11m4.py",
     )
+    source = _patch_v11m3_source_for_v11m4(source)
     module = ModuleType("train_v11m3_sanitized")
     module.__dict__["__file__"] = str(src_path)
     module.__dict__["SummaryWriter"] = SummaryWriter
