@@ -1,0 +1,191 @@
+# Pocket-GVP-Fusion V11m5 配置
+#
+# V11m5 = V11m4 stable trunk + local pair evidence as P->L attention bias.
+# - Trains from scratch by default for fair V11m4/V11m5 architecture comparison.
+# - Delta branch reads local54 ligand atom chemistry + ligand hidden states.
+# - PairEvidence(hP_i, hL_j, local54_j) is injected into P->L cross-attn logits.
+# - No protein-ligand shared coordinates or holo cross-distance are used.
+
+experiment:
+  name: "pocket_gvp_fusion_v11m5"
+  seed: 42
+  output_dir: "outputs"
+
+data:
+  data_root: "data"
+  ligand_features_dir: "ligand_features_v5"
+  unimol_embeddings_dir: "unimol_embeddings"
+  protein_features_dir: "complete_features_v4"
+  nma_features_dir: "complete_features_v4_nma"
+  nma_n_confs: 1
+  nma_max_conf: 9
+  distances_file: "data/residue_ligand_distances_dcenter.pt"
+  split_file: "configs/splits/splits.txt"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  max_seq_len: 1800
+  max_atoms: 128
+  label_contact_thresh: 5.0
+  label_near_thresh: 8.0
+  use_spatial_clamp: true
+  spatial_clamp_dims: [62, 76, 78, 79]
+  spatial_clamp_range: [-5.0, 5.0]
+
+model:
+  d_esm: 1280
+  d_phys: 62
+  d_spatial_scalar: 89
+  d_phys_encoded: 128
+  d_gvp_internal: 256
+  d_model: 512
+  d_ligand_atom: 109
+  use_unimol_ligand_input: true
+  d_unimol: 512
+  d_unimol_ligand_proj: 64
+  unimol_ligand_alpha_init: 0.02
+  n_gvp_vectors: 12
+  n_gvp_vector_hidden: 20
+
+  # Match the V11m3 stable trunk topology, with V11m5 local-pair attention bias.
+  n_gvp_layers: 3
+  n_transformer_layers: 4
+  n_ligand_layers: 3
+  n_heads: 8
+  n_cross_attention_layers: 4
+
+  dropout: 0.15
+  attn_dropout: 0.15
+  classifier_dropout: 0.2
+  stochastic_depth_prob: 0.15
+
+  use_flash_attn: false
+  esm_dropout_prob: 0.05
+  physchem_dropout_prob: 0.05
+  gvp_dropout_prob: 0.05
+  coord_noise_std: 0.2
+
+  gvp_edge_rbf_bins: 16
+  gvp_edge_rbf_dmax: 20.0
+  ligand_edge_rbf_bins: 8
+
+  use_dist_bias: true
+  dist_bias_n_rbf: 16
+  dist_bias_max_dist: 20.0
+  use_sdpa_protein_self_attn: true
+
+  use_gated_attn: true
+  use_swiglu: true
+  gvp_radius: 15.0
+  gvp_k_neighbors: 30
+  use_gradient_checkpointing: false
+  cache_intermediates: false
+
+  use_chain_features: true
+  chain_gap_size: 1000
+
+  # Keep the V11 distance auxiliary head in scratch training.
+  use_dist_aux: true
+
+  n_ligand_self_attn_layers: 2
+  use_lig_dist_bias: true
+  lig_dist_bias_n_rbf: 8
+  lig_dist_bias_max_dist: 8.0
+  use_lig_attnres_b1: true
+
+  # V11m4/V11m5 local pair-evidence delta branch.
+  use_local_pair_delta: true
+  pair_delta_local_dim: 54
+  pair_delta_dim: 128
+  pair_delta_hidden: 256
+  pair_delta_dropout: 0.1
+  pair_delta_score_clip: 20.0
+  pair_delta_logit_scale_init: 0.5
+  pair_delta_logit_scale_max: 1.0
+
+  # V11m5: move local pair evidence earlier into protein-query-ligand attention.
+  use_local_pair_bias: true
+  pair_bias_dim: 128
+  pair_bias_score_clip: 20.0
+  pair_bias_beta_init: 0.1
+  pair_bias_beta_max: 1.0
+
+  n_classes: 3
+  edge_dim: 6
+
+training:
+  # Scratch training: do not initialize from V11m3/V11m4 and do not freeze the base.
+  init_from_checkpoint: null
+  freeze_v11_base: false
+  delta_trainable_tokens: ["pair_delta_", ".pair_bias."]
+
+  batch_size: 24
+  num_epochs: 100
+  num_workers: 8
+
+  optimizer: "adamw"
+  learning_rate: 5.0e-5
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+
+  scheduler: "cosine"
+  warmup_epochs: 3
+  min_lr: 1.0e-6
+
+  focal_gamma: 2.0
+  class_weights: [9.0, 7.0, 1.0]
+  focal_weight: 0.7
+
+  tversky_weight: 0.3
+  tversky_alpha: 0.3
+  tversky_beta: 0.7
+  tversky_smooth: 1.0
+
+  weighted_dice_weight: 0.0
+  weighted_dice_smooth: 1.0
+  dice_weight: 0.0
+
+  iou_weight: 0.0
+  iou_component_weight: 1.0
+  iou_dist_weight: 0.2
+  iou_power: 1.5
+  iou_d_max: 10.0
+
+  use_boundary_loss: false
+  boundary_weight: 0.2
+  boundary_multiplier: 2.0
+  boundary_distance_threshold: 8.0
+
+  label_smoothing: 0.05
+  ordinal_label_smoothing: true
+
+  cnc:
+    enabled: true
+    clip_thresh: 0.85
+    clip_ratio: 0.1
+    warmup_epochs: 5
+    max_clip_frac: 0.3
+
+  dist_aux:
+    enabled: true
+    weight: 0.1
+    max_dist: 20.0
+
+  gradient_clip: 1.0
+  enable_profiling: false
+
+  save_every: 5
+  early_stopping_patience: 100
+
+  use_amp: false
+  use_bf16: true
+  accumulation_steps: 1
+  cudnn_benchmark: false
+  pin_memory: true
+  prefetch_factor: 2
+
+logging:
+  log_every: 10
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false
