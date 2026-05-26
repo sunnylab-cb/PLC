@@ -75,6 +75,64 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 
 ---
 
+## V11m5t-balanced - 2026-05-26
+
+### 主要特性
+- ✅ 归档旧 V11m5 pair-bias 前移路线：100 epoch 趋势未证明优于 V11m4/V11m4t
+- ✅ 当前 `V11m5t` 改为 `V11m4t + group-wise balanced ligand input adapters`
+- ✅ 新增 `V11m4tp` probe-only 对照：参数/logits 与 V11m4t 相同，只记录旧入口 contribution RMS
+- ✅ local54/global55/UniMol 分组 `LayerNorm -> Linear -> GELU -> LayerNorm`，再 concat 给 Ligand3DEncoder
+- ✅ 新增入口平衡诊断：`scripts/diagnostics/check_v11_input_balance.py`
+- ✅ TB 新增 ligand group RMS / group scale / adapter grad 监控
+
+### 关键改进/变化
+1. **动机**：维度压缩只能避免 foundation embedding 天然维度压制，但不能证明入口贡献平衡；真正需要看 `RMS(W_local x_local)`、`RMS(W_global x_global)`、`RMS(W_unimol x_unimol)`。
+2. **平衡策略**：local54、global55、UniMol CLS 各自先过 adapter，初始化时 projected RMS 在同一数量级；group scale 是可学习参数，不是固定同权约束。
+3. **保留稳定主线**：继承 V11m4t 的 late local pair-delta 与 global55/UniMol delta gate，不再使用 P→L pair-bias attention injection。
+4. **诊断覆盖 protein 端**：probe 同时输出 protein `h_gvp_proj` / `h_esm_proj` RMS，用于判断 ESM/GVP 入口是否被压制。
+
+### 影响范围
+- 模型：`src/models/pocket_gvp_fusion_v11m5t.py`
+- Probe 对照：`src/models/pocket_gvp_fusion_v11m4tp.py`
+- 训练：`scripts/train/train_v11m5t.py`、`scripts/train/train_v11m4tp.py`、`scripts/train/train_v11m3.py`
+- 配置：`configs/pocket_gvp_v11m5t_hpc.yaml`、`configs/pocket_gvp_v11m4tp_hpc.yaml`
+- Slurm：`scripts/slurm/run_v11m5t_balanced_input.slurm`、`scripts/slurm/run_v11m4tp_probe.slurm`
+- 推理/诊断：`scripts/infer/infer_v11_internal_ligdep.py`、`scripts/diagnostics/check_v11_input_balance.py`
+
+### 配置变化
+```yaml
+model:
+  use_ligand_groupwise_input_balance: true
+  ligand_source_atom_dim: 109
+  ligand_local_dim: 54
+  ligand_global_dim: 55
+  ligand_group_local_proj_dim: 96
+  ligand_group_global_proj_dim: 64
+  ligand_group_unimol_proj_dim: 64
+  ligand_group_output_norm: true
+  ligand_group_scale_init: 1.0
+```
+
+### 使用方法
+```bash
+sbatch scripts/slurm/run_v11m4tp_probe.slurm
+sbatch scripts/slurm/run_v11m5t_balanced_input.slurm
+
+python scripts/diagnostics/check_v11_input_balance.py \
+  --checkpoint outputs/.../best_f1_c0_model.pt \
+  --ligand_mode real \
+  --split test \
+  --batch_size 24 \
+  --max_batches 16 \
+  --output outputs/infer/input_balance_v11m5t
+```
+
+### 兼容性/迁移说明
+- 旧 V11m5/V11m5t pair-bias checkpoint 仍可通过 git 历史回溯，但当前主线不再继续该结构。
+- 新 V11m5t 与旧 V11m5t checkpoint 不结构兼容；应从头训练或从 V11m4t/V11m4 checkpoint 以 `strict=False` 初始化新增 adapter。
+
+---
+
 ## V11m4t / V11m5t-light - 2026-05-26
 
 ### 主要特性

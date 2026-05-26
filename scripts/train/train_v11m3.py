@@ -987,6 +987,13 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     # V11m3: Uni-Mol ligand feature injection path
     if hasattr(model, 'unimol_ligand_proj') and model.unimol_ligand_proj is not None:
         stats['grad_norm_unimol_ligand_proj'] = get_grad_norm(model.unimol_ligand_proj)
+    if hasattr(model, 'ligand_local_adapter') and model.ligand_local_adapter is not None:
+        stats['grad_norm_ligand_local_adapter'] = get_grad_norm(model.ligand_local_adapter)
+    if hasattr(model, 'ligand_global_adapter') and model.ligand_global_adapter is not None:
+        stats['grad_norm_ligand_global_adapter'] = get_grad_norm(model.ligand_global_adapter)
+    group_scale = getattr(model, 'ligand_group_log_scales', None)
+    if isinstance(group_scale, torch.nn.Parameter) and group_scale.grad is not None:
+        stats['grad_norm_ligand_group_scales'] = group_scale.grad.detach().float().norm(2).item()
     alpha = getattr(model, 'unimol_ligand_alpha', None)
     if isinstance(alpha, torch.nn.Parameter) and alpha.grad is not None:
         stats['grad_norm_unimol_ligand_alpha'] = alpha.grad.detach().float().norm(2).item()
@@ -1058,6 +1065,14 @@ def compute_unimol_stats(model: nn.Module, unimol_embed: Optional[torch.Tensor])
             if raw_dim is not None:
                 # Approximate dimensional share of injected Uni-Mol channels.
                 stats['unimol_ligand_channel_ratio'] = float(proj_dim) / float(raw_dim + proj_dim)
+
+        group_stats = getattr(model, '_cached_ligand_group_stats', None)
+        if isinstance(group_stats, dict):
+            for key, value in group_stats.items():
+                if isinstance(value, torch.Tensor):
+                    stats[key] = float(value.detach().float().item())
+                else:
+                    stats[key] = float(value)
 
     return stats
 

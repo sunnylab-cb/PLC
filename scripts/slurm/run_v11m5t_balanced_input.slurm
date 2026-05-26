@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=v11m5t_gate
+#SBATCH --job-name=v11m5t_bal
 #SBATCH --partition=i64m1tga800u
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -7,18 +7,18 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
-#SBATCH --output=logs/v11m5t_gate_%j.out
-#SBATCH --error=logs/v11m5t_gate_%j.err
+#SBATCH --output=logs/v11m5t_bal_%j.out
+#SBATCH --error=logs/v11m5t_bal_%j.err
 
 # ============================================================
-# Pocket-GVP-Fusion V11m5t local pair-bias + global gate training
+# Pocket-GVP-Fusion V11m5t balanced ligand input + global gate training
 # ============================================================
 # Submit:
-#   sbatch scripts/slurm/run_v11m5t_pair_bias_gate.slurm
+#   sbatch scripts/slurm/run_v11m5t_balanced_input.slurm
 #
 # Override config/resume if needed:
-#   sbatch --export=ALL,CONFIG_FILE=configs/pocket_gvp_v11m5t_hpc.yaml scripts/slurm/run_v11m5t_pair_bias_gate.slurm
-#   sbatch --export=ALL,RESUME_CHECKPOINT=outputs/.../checkpoint_epoch_010.pt scripts/slurm/run_v11m5t_pair_bias_gate.slurm
+#   sbatch --export=ALL,CONFIG_FILE=configs/pocket_gvp_v11m5t_hpc.yaml scripts/slurm/run_v11m5t_balanced_input.slurm
+#   sbatch --export=ALL,RESUME_CHECKPOINT=outputs/.../checkpoint_epoch_010.pt scripts/slurm/run_v11m5t_balanced_input.slurm
 #
 # Matching interactive allocation:
 #   srun -p i64m1tga800u -n 1 --mem=64G -c 8 --gres=gpu:1 --time=24:00:00 --pty bash
@@ -26,12 +26,14 @@
 # Notes:
 #   - Project directory is fixed for the HPC spooler checkout.
 #   - Uses conda environment "af3" as requested.
-#   - Runs V11m5t scratch training via configs/pocket_gvp_v11m5t_hpc.yaml.
+#   - Runs the current V11m5t scratch training via configs/pocket_gvp_v11m5t_hpc.yaml.
+#   - Current V11m5t is V11m4t + group-wise ligand input balancing; the older
+#     pair-bias V11m5 line is archived and no longer the recommended route.
 # ============================================================
 
 PROJECT_DIR="/hpc2hdd/home/shuang886/jhspoolers/PLC"
 CONFIG_FILE="${CONFIG_FILE:-configs/pocket_gvp_v11m5t_hpc.yaml}"
-EXPERIMENT_NOTE="${EXPERIMENT_NOTE:-v11m5t_pair_bias_global_gate}"
+EXPERIMENT_NOTE="${EXPERIMENT_NOTE:-v11m5t_balanced_ligand_input}"
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
 
 echo "============================================"

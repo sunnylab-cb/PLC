@@ -1,10 +1,12 @@
 # Pocket-GVP-Fusion V11m5t 配置
 #
-# V11m5t = V11m5 + global55/UniMol calibration gate on delta logits.
-# - Trains from scratch by default for fair V11m5/V11m5t architecture comparison.
+# V11m5t = V11m4t + group-wise balanced ligand input adapters.
+# - The older V11m5 pair-bias route underperformed and is archived.
+# - Trains from scratch by default for fair architecture comparison.
 # - Delta branch reads local54 ligand atom chemistry + ligand hidden states.
-# - PairEvidence(hP_i, hL_j, local54_j) is injected into P->L cross-attn logits.
-# - Global55/UniMol do not enter pair evidence; they gate delta amplitude.
+# - Local54/global55/UniMol are separately LN/MLP/LN projected before
+#   Ligand3DEncoder so W_group x_group starts on comparable scale.
+# - Global55/UniMol still gate delta amplitude as in V11m4t.
 # - No protein-ligand shared coordinates or holo cross-distance are used.
 
 experiment:
@@ -48,7 +50,7 @@ model:
   n_gvp_vectors: 12
   n_gvp_vector_hidden: 20
 
-  # Match the V11m3 stable trunk topology, with V11m5 local-pair attention bias.
+  # Match the V11m3/V11m4t stable trunk topology.
   n_gvp_layers: 3
   n_transformer_layers: 4
   n_ligand_layers: 3
@@ -104,12 +106,20 @@ model:
   pair_delta_logit_scale_init: 0.5
   pair_delta_logit_scale_max: 1.0
 
-  # V11m5: move local pair evidence earlier into protein-query-ligand attention.
-  use_local_pair_bias: true
-  pair_bias_dim: 128
-  pair_bias_score_clip: 20.0
-  pair_bias_beta_init: 0.1
-  pair_bias_beta_max: 1.0
+  # V11m5t: group-wise ligand input balancing.
+  # Goal: make RMS(W_local x_local), RMS(W_global x_global), and
+  # RMS(W_unimol x_unimol) comparable at training start.  The scales are
+  # learnable, so this is a balanced initialization rather than a fixed equal
+  # weighting constraint.
+  use_ligand_groupwise_input_balance: true
+  ligand_source_atom_dim: 109
+  ligand_local_dim: 54
+  ligand_global_dim: 55
+  ligand_group_local_proj_dim: 96
+  ligand_group_global_proj_dim: 64
+  ligand_group_unimol_proj_dim: 64
+  ligand_group_output_norm: true
+  ligand_group_scale_init: 1.0
 
   # V11m5t ablation: global55 + UniMol only calibrate delta amplitude.
   use_global_delta_gate: true
@@ -126,7 +136,7 @@ training:
   # Scratch training: do not initialize from V11m3/V11m4 and do not freeze the base.
   init_from_checkpoint: null
   freeze_v11_base: false
-  delta_trainable_tokens: ["pair_delta_", ".pair_bias.", "global_delta_gate."]
+  delta_trainable_tokens: ["pair_delta_", "global_delta_gate.", "ligand_local_adapter.", "ligand_global_adapter.", "ligand_group_output_norm.", "ligand_group_log_scales"]
 
   batch_size: 24
   num_epochs: 100

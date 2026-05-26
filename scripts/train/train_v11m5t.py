@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""Training entrypoint for Pocket-GVP-Fusion V11m5t."""
+"""Training entrypoint for Pocket-GVP-Fusion V11m5t.
+
+Current V11m5t is V11m4t plus group-wise balanced ligand input adapters.
+The earlier pair-bias V11m5 route is archived by git history and should not be
+used as the main line.
+"""
 
 from __future__ import annotations
 
@@ -63,17 +68,41 @@ def _load_init_checkpoint(model: torch.nn.Module, config: Dict) -> None:
 
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     state = ckpt.get("model_state_dict", ckpt)
-    missing, unexpected = model.load_state_dict(state, strict=False)
+    current = model.state_dict()
+    compatible_state = {}
+    skipped_shape = []
+    for key, value in state.items():
+        if key not in current:
+            continue
+        if tuple(current[key].shape) != tuple(value.shape):
+            skipped_shape.append((key, tuple(value.shape), tuple(current[key].shape)))
+            continue
+        compatible_state[key] = value
+
+    missing, unexpected = model.load_state_dict(compatible_state, strict=False)
     bad_missing = [
         k for k in missing
-        if not (k.startswith("pair_delta_") or ".pair_bias." in k or k.startswith("global_delta_gate."))
+        if not (
+            k.startswith("pair_delta_")
+            or k.startswith("global_delta_gate.")
+            or k.startswith("ligand_local_adapter.")
+            or k.startswith("ligand_global_adapter.")
+            or k.startswith("ligand_group_output_norm.")
+            or k.startswith("ligand_encoder.node_proj.")
+            or k == "ligand_group_log_scales"
+        )
     ]
     if unexpected or bad_missing:
         raise RuntimeError(
             "Unexpected checkpoint mismatch when initializing V11m5t: "
             f"missing={bad_missing[:20]}, unexpected={list(unexpected)[:20]}"
         )
-    base.print_rank0(f"Initialized V11m5t from {path}; new params={len(missing)} missing keys")
+    base.print_rank0(
+        f"Initialized V11m5t from {path}; loaded={len(compatible_state)} tensors, "
+        f"new/missing={len(missing)}, shape_skipped={len(skipped_shape)}"
+    )
+    if skipped_shape:
+        base.print_rank0(f"Shape-skipped tensors: {skipped_shape[:8]}")
 
 
 def _apply_freeze_policy(model: torch.nn.Module, config: Dict) -> None:
@@ -83,7 +112,14 @@ def _apply_freeze_policy(model: torch.nn.Module, config: Dict) -> None:
 
     trainable_tokens = tuple(train_cfg.get(
         "delta_trainable_tokens",
-        ["pair_delta_", ".pair_bias.", "global_delta_gate."],
+        [
+            "pair_delta_",
+            "global_delta_gate.",
+            "ligand_local_adapter.",
+            "ligand_global_adapter.",
+            "ligand_group_output_norm.",
+            "ligand_group_log_scales",
+        ],
     ))
     n_frozen = 0
     n_trainable = 0
@@ -125,7 +161,7 @@ def create_model(
 
     base.print_rank0(
         "Creating V11m5t model "
-        f"(pair_bias={model_cfg.get('use_local_pair_bias', True)}, "
+        f"(groupwise_ligand_input={model_cfg.get('use_ligand_groupwise_input_balance', True)}, "
         f"global_delta_gate={model_cfg.get('use_global_delta_gate', True)})..."
     )
     model = PocketGVPFusionV11m5t(model_cfg)

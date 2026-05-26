@@ -1,166 +1,196 @@
 """
-Pocket-GVP-Fusion V11m5t: V11m5 + global55/UniMol delta calibration gate.
+Pocket-GVP-Fusion V11m5t: V11m4t + balanced ligand input adapters.
 
-V11m5 injects local54 pair evidence into P->L attention.  V11m5t keeps that
-path unchanged and adds an ablation gate:
+The V11m5 local pair-bias path did not improve the trend, so V11m5t is now
+repurposed as the cleaner follow-up to V11m4t:
 
-    logits = base_logits + scale * global_gate(global55, UniMol_CLS) * delta_logits
+1. Keep V11m4t's stable late local-pair delta and global55/UniMol calibration
+   gate.
+2. Replace the raw ligand input concatenation
+      [local54 | global55 | UniMol64] -> Ligand3DEncoder.node_proj
+   with group-wise adapters:
+      local54  -> LN/MLP/LN -> local_proj
+      global55 -> LN/MLP/LN -> global_proj
+      UniMol   -> LN/MLP/LN -> unimol_proj
+   followed by learnable positive group scales and a final LayerNorm.
 
-The gate is initialized to 1.0 exactly, so epoch-0 behavior matches V11m5.
-Global55 is therefore used as calibration/amplitude control, not as pair
-compatibility evidence.
+This is not a permanent equal-weight constraint.  It only makes the training
+start numerically comparable across ligand sources so the model can learn the
+relative source weights instead of inheriting them from raw feature scale.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 
-from .pocket_gvp_fusion_v11m5 import PocketGVPFusionV11m5
+from .pocket_gvp_fusion_v11m4t import PocketGVPFusionV11m4t
 
 
-class PocketGVPFusionV11m5t(PocketGVPFusionV11m5):
+def _rms_per_channel(x: torch.Tensor) -> torch.Tensor:
+    if x.numel() == 0:
+        return x.new_tensor(0.0)
+    return x.detach().float().norm(dim=-1).mean() / math.sqrt(max(int(x.size(-1)), 1))
+
+
+class PocketGVPFusionV11m5t(PocketGVPFusionV11m4t):
     DEFAULT_CONFIG = {
-        **PocketGVPFusionV11m5.DEFAULT_CONFIG,
-        "use_global_delta_gate": True,
-        "delta_gate_global_start": 54,
-        "delta_gate_global_dim": 55,
-        "delta_gate_hidden": 128,
-        "delta_gate_per_class": True,
-        "delta_gate_max": 2.0,
+        **PocketGVPFusionV11m4t.DEFAULT_CONFIG,
+        "use_ligand_groupwise_input_balance": True,
+        "ligand_source_atom_dim": 109,
+        "ligand_local_dim": 54,
+        "ligand_global_dim": 55,
+        "ligand_group_local_proj_dim": 96,
+        "ligand_group_global_proj_dim": 64,
+        "ligand_group_unimol_proj_dim": 64,
+        "ligand_group_output_norm": True,
+        "ligand_group_scale_init": 1.0,
     }
 
     def __init__(self, config: Optional[Dict] = None):
         cfg = {**self.DEFAULT_CONFIG, **(config or {})}
-        super().__init__(cfg)
+        self.use_ligand_groupwise_input_balance = bool(
+            cfg.get("use_ligand_groupwise_input_balance", True)
+        )
 
-        self.use_global_delta_gate = bool(cfg.get("use_global_delta_gate", True))
-        self.delta_gate_global_start = int(cfg.get("delta_gate_global_start", 54))
-        self.delta_gate_global_dim = int(cfg.get("delta_gate_global_dim", 55))
-        self.delta_gate_per_class = bool(cfg.get("delta_gate_per_class", True))
-        self.delta_gate_max = float(cfg.get("delta_gate_max", 2.0))
+        if self.use_ligand_groupwise_input_balance:
+            source_dim = int(cfg.get("ligand_source_atom_dim", cfg.get("d_ligand_atom", 109)))
+            local_dim = int(cfg.get("ligand_local_dim", 54))
+            global_dim = int(cfg.get("ligand_global_dim", source_dim - local_dim))
+            local_proj = int(cfg.get("ligand_group_local_proj_dim", 96))
+            global_proj = int(cfg.get("ligand_group_global_proj_dim", 64))
+            unimol_proj = int(cfg.get("ligand_group_unimol_proj_dim", 64))
 
-        if self.use_global_delta_gate:
-            d_unimol = int(cfg.get("d_unimol", 512))
-            hidden = int(cfg.get("delta_gate_hidden", 128))
-            gate_out = int(self.config["n_classes"]) if self.delta_gate_per_class else 1
-            gate_in = self.delta_gate_global_dim + d_unimol
-            self.global_delta_gate = nn.Sequential(
-                nn.LayerNorm(gate_in),
-                nn.Linear(gate_in, hidden),
+            # Parent V11m3 builds Ligand3DEncoder with
+            # d_ligand_atom + d_unimol_ligand_proj.  Here d_ligand_atom means
+            # the balanced local+global adapter output, not the raw V5 input.
+            parent_cfg = dict(cfg)
+            parent_cfg["d_ligand_atom"] = local_proj + global_proj
+            parent_cfg["d_unimol_ligand_proj"] = unimol_proj
+            super().__init__(parent_cfg)
+
+            self.ligand_source_atom_dim = source_dim
+            self.ligand_local_dim = local_dim
+            self.ligand_global_dim = global_dim
+            self.ligand_group_local_proj_dim = local_proj
+            self.ligand_group_global_proj_dim = global_proj
+            self.ligand_group_unimol_proj_dim = unimol_proj
+            self.ligand_group_total_dim = local_proj + global_proj + unimol_proj
+
+            self.ligand_local_adapter = nn.Sequential(
+                nn.LayerNorm(local_dim),
+                nn.Linear(local_dim, local_proj),
                 nn.GELU(),
-                nn.Linear(hidden, gate_out),
+                nn.LayerNorm(local_proj),
             )
-            # gate = max * sigmoid(raw); raw=0 and max=2 -> exact gate=1.
-            final = self.global_delta_gate[-1]
-            nn.init.zeros_(final.weight)
-            nn.init.zeros_(final.bias)
+            self.ligand_global_adapter = nn.Sequential(
+                nn.LayerNorm(global_dim),
+                nn.Linear(global_dim, global_proj),
+                nn.GELU(),
+                nn.LayerNorm(global_proj),
+            )
+
+            init_scale = float(cfg.get("ligand_group_scale_init", 1.0))
+            self.ligand_group_log_scales = nn.Parameter(
+                torch.full((3,), math.log(max(init_scale, 1e-6)))
+            )
+            self.ligand_group_output_norm = (
+                nn.LayerNorm(self.ligand_group_total_dim)
+                if bool(cfg.get("ligand_group_output_norm", True))
+                else nn.Identity()
+            )
+
+            # Metadata for diagnostics/checkpoint config.
+            self.raw_ligand_atom_dim = source_dim
+            self.config["use_ligand_groupwise_input_balance"] = True
+            self.config["ligand_source_atom_dim"] = source_dim
+            self.config["ligand_local_dim"] = local_dim
+            self.config["ligand_global_dim"] = global_dim
+            self.config["ligand_group_local_proj_dim"] = local_proj
+            self.config["ligand_group_global_proj_dim"] = global_proj
+            self.config["ligand_group_unimol_proj_dim"] = unimol_proj
+            self.config["ligand_group_total_dim"] = self.ligand_group_total_dim
         else:
-            self.global_delta_gate = None
+            super().__init__(cfg)
+            self.ligand_group_output_norm = nn.Identity()
 
-        self.config["use_global_delta_gate"] = self.use_global_delta_gate
+    def _group_scales(self) -> torch.Tensor:
+        return self.ligand_group_log_scales.clamp(-3.0, 3.0).exp()
 
-    def _mean_ligand_global55(
+    def _augment_ligand_x(
         self,
         ligand_x: torch.Tensor,
         ligand_batch: torch.Tensor,
-        ligand_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        batch_size, max_atoms = ligand_mask.shape
-        start = self.delta_gate_global_start
-        end = start + self.delta_gate_global_dim
-        global55 = ligand_x[:, start:end]
-        out = ligand_x.new_zeros((batch_size, self.delta_gate_global_dim))
-
-        n_atoms = int(global55.size(0))
-        if n_atoms == 0:
-            return out
-        if not bool((ligand_batch[1:] >= ligand_batch[:-1]).all()):
-            raise ValueError("ligand_batch must be non-decreasing for V11m5t global scatter")
-
-        counts = torch.bincount(ligand_batch, minlength=batch_size)
-        cumsum = torch.zeros(batch_size + 1, dtype=torch.long, device=ligand_x.device)
-        cumsum[1:] = counts.cumsum(0)
-        local_idx = torch.arange(n_atoms, device=ligand_x.device) - cumsum[ligand_batch]
-        valid = local_idx < max_atoms
-
-        out.index_add_(0, ligand_batch[valid], global55[valid])
-        denom = ligand_mask.to(dtype=out.dtype).sum(dim=1, keepdim=True).clamp(min=1.0)
-        return out / denom
-
-    def _compute_delta_gate(
-        self,
-        ligand_x: torch.Tensor,
-        ligand_batch: torch.Tensor,
-        ligand_mask: torch.Tensor,
         unimol_embed: Optional[torch.Tensor],
         batch_size: int,
     ) -> torch.Tensor:
-        if not self.use_global_delta_gate:
-            return ligand_x.new_ones((batch_size, 1))
+        if not self.use_ligand_groupwise_input_balance:
+            return super()._augment_ligand_x(ligand_x, ligand_batch, unimol_embed, batch_size)
 
-        global55 = self._mean_ligand_global55(ligand_x, ligand_batch, ligand_mask)
+        # Already adapted, useful for smoke tests that call the base forward
+        # with cached/generated augmented features.
+        if ligand_x.size(-1) == self.ligand_group_total_dim:
+            return ligand_x
+
+        if ligand_x.size(-1) != self.ligand_source_atom_dim:
+            raise ValueError(
+                f"Unexpected ligand_x dim={ligand_x.size(-1)}; expected raw "
+                f"{self.ligand_source_atom_dim} or adapted {self.ligand_group_total_dim}"
+            )
+
+        local = ligand_x[:, : self.ligand_local_dim]
+        global55 = ligand_x[
+            :, self.ligand_local_dim : self.ligand_local_dim + self.ligand_global_dim
+        ]
+
+        local_z = self.ligand_local_adapter(local)
+        global_z = self.ligand_global_adapter(global55)
+
         if unimol_embed is None:
-            unimol = ligand_x.new_zeros((batch_size, int(self.config.get("d_unimol", 512))))
+            unimol_embed = torch.zeros(
+                batch_size,
+                self.d_unimol,
+                device=ligand_x.device,
+                dtype=ligand_x.dtype,
+            )
         else:
-            unimol = unimol_embed.to(device=ligand_x.device, dtype=ligand_x.dtype)
+            unimol_embed = unimol_embed.to(device=ligand_x.device, dtype=ligand_x.dtype)
+            if unimol_embed.shape != (batch_size, self.d_unimol):
+                raise ValueError(
+                    f"unimol_embed shape={tuple(unimol_embed.shape)}, "
+                    f"expected ({batch_size}, {self.d_unimol})"
+                )
 
-        gate_in = torch.cat([global55, unimol], dim=-1)
-        raw = self.global_delta_gate(gate_in)
-        return self.delta_gate_max * torch.sigmoid(raw)
+        if ligand_x.size(0) == 0:
+            unimol_z = ligand_x.new_zeros((0, self.ligand_group_unimol_proj_dim))
+        else:
+            if ligand_batch.min().item() < 0 or ligand_batch.max().item() >= batch_size:
+                raise ValueError(
+                    f"ligand_batch out of range for batch_size={batch_size}: "
+                    f"min={ligand_batch.min().item()} max={ligand_batch.max().item()}"
+                )
+            unimol_z = self.unimol_ligand_proj(unimol_embed)[ligand_batch]
 
-    def forward(
-        self,
-        esm_embeddings: torch.Tensor,
-        protein_physchem: torch.Tensor,
-        protein_spatial_scalar: torch.Tensor,
-        protein_spatial_vector: torch.Tensor,
-        protein_gvp_vectors: torch.Tensor,
-        protein_coords: torch.Tensor,
-        protein_mask: torch.Tensor,
-        ligand_x: torch.Tensor,
-        ligand_pos: torch.Tensor,
-        ligand_edge_index: torch.Tensor,
-        ligand_edge_attr: torch.Tensor,
-        ligand_batch: torch.Tensor,
-        ligand_mask: torch.Tensor,
-        chain_ids: Optional[torch.Tensor] = None,
-        ligand_to_protein: Optional[torch.Tensor] = None,
-        unimol_embed: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        outputs = super().forward(
-            esm_embeddings=esm_embeddings,
-            protein_physchem=protein_physchem,
-            protein_spatial_scalar=protein_spatial_scalar,
-            protein_spatial_vector=protein_spatial_vector,
-            protein_gvp_vectors=protein_gvp_vectors,
-            protein_coords=protein_coords,
-            protein_mask=protein_mask,
-            ligand_x=ligand_x,
-            ligand_pos=ligand_pos,
-            ligand_edge_index=ligand_edge_index,
-            ligand_edge_attr=ligand_edge_attr,
-            ligand_batch=ligand_batch,
-            ligand_mask=ligand_mask,
-            chain_ids=chain_ids,
-            ligand_to_protein=ligand_to_protein,
-            unimol_embed=unimol_embed,
-        )
+        scales = self._group_scales().to(device=ligand_x.device, dtype=ligand_x.dtype)
+        local_z = scales[0] * local_z
+        global_z = scales[1] * global_z
+        unimol_z = scales[2] * unimol_z
 
-        gate = self._compute_delta_gate(
-            ligand_x=ligand_x,
-            ligand_batch=ligand_batch,
-            ligand_mask=ligand_mask,
-            unimol_embed=unimol_embed,
-            batch_size=esm_embeddings.size(0),
-        ).to(dtype=outputs["delta_logits"].dtype)
+        with torch.no_grad():
+            self._cached_ligand_group_stats = {
+                "ligand_raw_local54_rms": _rms_per_channel(local),
+                "ligand_raw_global55_rms": _rms_per_channel(global55),
+                "ligand_group_local_proj_rms": _rms_per_channel(local_z),
+                "ligand_group_global_proj_rms": _rms_per_channel(global_z),
+                "ligand_group_unimol_proj_rms": _rms_per_channel(unimol_z),
+                "ligand_group_local_scale": scales[0].detach().float(),
+                "ligand_group_global_scale": scales[1].detach().float(),
+                "ligand_group_unimol_scale": scales[2].detach().float(),
+            }
+            self._cached_unimol_ligand_delta = unimol_z.detach()
 
-        gated_delta = outputs["delta_logits"] * gate.unsqueeze(1)
-        scale = outputs["pair_delta_scale"].to(dtype=outputs["base_logits"].dtype)
-        outputs["logits"] = outputs["base_logits"] + scale * gated_delta
-        outputs["delta_gate"] = gate.detach()
-        outputs["delta_gate_mean"] = gate.detach().mean()
-        outputs["delta_gate_abs_dev"] = (gate.detach() - 1.0).abs().mean()
-        return outputs
+        out = torch.cat([local_z, global_z, unimol_z], dim=-1)
+        return self.ligand_group_output_norm(out)

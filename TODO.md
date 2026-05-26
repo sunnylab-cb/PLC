@@ -32,19 +32,26 @@
 ### 当前结论
 
 - `V11m4` 是当前最强稳定基座：best F1_c0 约 `0.5814 @ e61`。
-- `V11m5` 将 local54 pair evidence 前移到 P→L attention bias，但截至 e61 best F1_c0 约 `0.5737`，未超过 V11m4。
-- `V11m5t` 在 V11m5 上加 global55/UniMol delta gate，best F1_c0 约 `0.5784`，更接近 V11m4 且梯度更稳，但仍未明确超过。
+- `V11m5` 将 local54 pair evidence 前移到 P→L attention bias，100 epoch best F1_c0 约 `0.5780`，确认不优于 V11m4；该路线归档，不再作为主线继续堆复杂度。
+- 旧 `V11m5t`（pair-bias + global gate）100 epoch best F1_c0 约 `0.5830`，与 `V11m4t` 持平；收益主要来自 global gate，而不是 pair-bias。
+- 当前 `V11m5t` 已改为 `V11m4t + group-wise balanced ligand input adapters`：local54/global55/UniMol 分组 LN/MLP/LN 后再进入 Ligand3DEncoder，用于验证入口 `RMS(W_group x_group)` 是否平衡。
 - Ligand dependency eval 显示主要有效信号来自 local54 / ligand graph；global55 更像 precision calibration / delta amplitude control。
 
 ### 下一步实验
 
-1. `V11m4t`: V11m4 late local delta + global55/UniMol delta gate，不使用 pair-bias 前移。
-   - 目的：隔离 `V11m5t` 收益是否来自 global gate。
-   - 文件：`src/models/pocket_gvp_fusion_v11m4t.py`、`scripts/train/train_v11m4t.py`、`configs/pocket_gvp_v11m4t_hpc.yaml`、`scripts/slurm/run_v11m4t_global_gate.slurm`
-2. `V11m5t-light`: V11m5t 但 `pair_bias_beta_init: 0.03`。
-   - 目的：测试 `pair_bias_beta_init=0.1` 是否过强扰动 V11 trunk。
-   - 文件：`configs/pocket_gvp_v11m5t_light_hpc.yaml`、`scripts/slurm/run_v11m5t_light_pair_bias_gate.slurm`
-3. 当前 V11m5/V11m5t 跑完后，用 `best_f1_c0_model.pt` 重新跑 ligand dependency eval，重点比较：
+1. `V11m4t`: 用 `best_f1_c0_model.pt` 重新跑 ligand dependency eval，确认 global gate 是 calibration 还是增强 ligand causality。
+2. `V11m4tp`: probe-only V11m4t control，不改变 logits/参数，只记录旧入口 `RMS(W_group x_group)`，作为 V11m5t-balanced 的直接对照。
+3. `V11m5t-balanced`: 跑新配置 `configs/pocket_gvp_v11m5t_hpc.yaml`，重点看：
+   - `Health/ligand_group_*_proj_rms`
+   - `Health/ligand_*_nodeproj_contrib_rms`
+   - `Gradients/grad_norm_ligand_*_adapter`
+   - full F1 是否至少不低于 V11m4t
+4. 用 `scripts/diagnostics/check_v11_input_balance.py` 对 V11m4tp 与 V11m5t-balanced 做 no-train entry-balance probe，比较：
+   - `ligand_local_nodeproj_contrib_rms`
+   - `ligand_global_nodeproj_contrib_rms`
+   - `ligand_unimol_nodeproj_contrib_rms`
+   - `protein_gvp_proj_rms` / `protein_esm_proj_rms`
+5. Ligand dependency eval 重点比较：
    - full / shuffle / zero
    - zero_local54 / zero_global55 / zero_unimol
 

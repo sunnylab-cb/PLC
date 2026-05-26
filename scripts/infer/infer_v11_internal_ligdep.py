@@ -26,18 +26,25 @@ from scripts.infer.internal_ligand_dependency import (
 from src.data.collate import prepare_model_inputs_v11
 
 
-def detect_v11_version(ckpt: Dict) -> str:
+def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
     state = ckpt["model_state_dict"]
-    cfg = ckpt.get("config", {})
+    cfg = config or ckpt.get("config", {})
     exp_name = cfg.get("experiment", {}).get("name", "").lower()
 
     has_global_gate = any(k.startswith("global_delta_gate.") for k in state)
     has_pair_bias = any(".pair_bias." in k for k in state)
+    has_group_balance = (
+        "ligand_group_log_scales" in state
+        or any(k.startswith("ligand_local_adapter.") for k in state)
+        or any(k.startswith("ligand_global_adapter.") for k in state)
+    )
 
-    if "v11m5t" in exp_name or (has_global_gate and has_pair_bias):
+    if "v11m5t" in exp_name or (has_global_gate and (has_pair_bias or has_group_balance)):
         return "v11m5t"
     if "v11m5" in exp_name or has_pair_bias:
         return "v11m5"
+    if "v11m4tp" in exp_name or any(k.startswith("use_ligand_input_probe") for k in state):
+        return "v11m4tp"
     if "v11m4t" in exp_name or has_global_gate:
         return "v11m4t"
     if "v11m4" in exp_name or any(k.startswith("pair_delta_") for k in state):
@@ -54,7 +61,7 @@ def detect_v11_version(ckpt: Dict) -> str:
 
 
 def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
-    version = detect_v11_version(ckpt)
+    version = detect_v11_version(ckpt, config)
     model_cfg = dict(config["model"])
     model_cfg["use_gradient_checkpointing"] = False
 
@@ -62,6 +69,8 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
         from src.models.pocket_gvp_fusion_v11m5t import PocketGVPFusionV11m5t as ModelClass
     elif version == "v11m5":
         from src.models.pocket_gvp_fusion_v11m5 import PocketGVPFusionV11m5 as ModelClass
+    elif version == "v11m4tp":
+        from src.models.pocket_gvp_fusion_v11m4tp import PocketGVPFusionV11m4tp as ModelClass
     elif version == "v11m4t":
         from src.models.pocket_gvp_fusion_v11m4t import PocketGVPFusionV11m4t as ModelClass
     elif version == "v11m4":
