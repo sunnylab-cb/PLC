@@ -54,6 +54,54 @@
 5. Ligand dependency eval 重点比较：
    - full / shuffle / zero
    - zero_local54 / zero_global55 / zero_unimol
+6. `V11m6`: 作为 `V11m4t` 的受控后继运行，不继续 pair-bias 前移：
+   - local54 + ligand graph hidden states 只产生 late residue-level delta。
+   - global55 + UniMol CLS 只做 delta amplitude calibration。
+   - 默认 detach protein feature in delta branch，保护 V11 protein-side floor。
+   - 训练后必须跑同一套 dependency eval，重点比较 `Δshuffle`、`Δzero_local54`、`Δzero_unimol` 是否优于 V11m4t/V11m5t-balanced。
+
+---
+
+## Ligand Encoding 方案记录与后续 TODO（2026-05-26）
+
+详细设计记录见 `DOCs/Co-attention/ligand_encoding_review.md`。
+
+### 当前判断
+
+- 同行主流仍以 atom-level graph/token 为 ligand 表示底座；one-hot / categorical embedding 对 atom type、hybridization、chirality、ring/aromatic 等非序数特征仍合理。
+- `temperature/thermometer` 或 ordinal encoding 只适合 degree、valence、H count、formal charge bin、ring size 等有序离散特征，不适合 atom type。
+- `target encoding` 不应作为训练特征：当前 residue-level target 强依赖 protein-ligand pair，target mean encoding 容易引入 ligand identity / protein family shortcut。
+- 不应把 ligand 合并成单一全局向量；单一 ligand vector 可做 calibration/global prior，但无法提供 residue-specific evidence。
+- 现有 ablation 已证明 local54 / ligand graph 是主要 ligand dependency 来源；global55 更像 precision calibration / delta amplitude control。
+- 最有价值的下一步 ligand 表示升级是 functional group / pharmacophore tokens，用中间语义层缩小 ligand atom feature 与 protein ESM/GVP/physchem 表征之间的语义密度差。
+
+### 分步任务
+
+1. **P0: 等 V11m4tp / V11m5t-balanced 完成后做入口平衡判断**
+   - 比较旧入口 `RMS(W_local x_local)`、`RMS(W_global x_global)`、`RMS(W_unimol x_unimol)`。
+   - 同时比较 protein 端 `RMS(h_gvp_proj)` / `RMS(h_esm_proj)` 和 modality gate 后贡献。
+   - 若入口明显不平衡且 balanced adapter 改善或至少不伤 F1，则保留 group-wise ligand adapters 为 V11m5t 主线。
+2. **P1: 若 balanced adapter 有收益，固定 group-wise ligand adapter 设计**
+   - local54 / global55 / UniMol 分别 `LN/MLP/LN` 后再 concat。
+   - 目标是训练起点 projected RMS 同数量级，不是长期强制同权。
+   - 后续 dependency eval 必须包含 `zero_local54`、`zero_global55`、`zero_unimol`。
+3. **P2: 设计 V11m7 functional group / pharmacophore tokens**
+   - 保留 atom-level local54，不替换为全局 ligand embedding。
+   - 用 RDKit SMARTS / pharmacophore detection 生成 ligand-only FG tokens。
+   - 不引入 protein-ligand cross-distance，不使用 holo leakage，不使用 target encoding。
+   - 最小 ablation: `atom-only`、`atom+FG`、`atom+FG+global gate`。
+4. **P3: 如果 V11m7 显示 FG token 有效，再考虑更强 ligand prior**
+   - UniMol atom-level memory adapter。
+   - ChemBERTa / MoLFormer CLS token。
+   - KPGT/GROVER-style graph prior token。
+   - conformer ensemble / microstate features。
+
+### 暂停方向
+
+- 不继续把旧 V11m5 pair-bias 前移路线作为主线堆复杂度。
+- 不做 target encoding 进入训练特征。
+- 不用 single ligand embedding 替代 atom-level tokens。
+- 不优先增加 co-attention 深度或重复加入 pair-bias，除非 dependency eval 证明其带来稳定 ligand causality 增益。
 
 ---
 

@@ -75,6 +75,43 @@ python scripts/evaluate.py --config configs/?.yaml --ckpt outputs/.../best.pt
 
 ---
 
+## V11m6 - 2026-05-27
+
+### 主要特性
+- ✅ `V11m6`: V11m4t stable trunk + local54/graph evidence delta-only branch
+- ✅ 不再创建旧 `pair_delta_*` 模块，也不把 pair evidence 注入 cross-attention logits
+- ✅ local54 同时进入 delta branch 的 key/value，直接形成 residue-level `delta_logits`
+- ✅ global55 + UniMol CLS 继续只做 delta amplitude calibration gate
+- ✅ 默认 `local_delta_detach_protein: true`，保护 V11 protein-side decision floor
+
+### 关键改进/变化
+1. **动机**：依赖评估显示 `V11m5t-balanced` 入口更干净、UniMol 有小贡献，但 `Δshuffle` 没提升；主线仍应围绕 local54/ligand graph → residue decision，而不是强 pair-bias 接管 trunk。
+2. **结构约束**：`logits = base_logits + scale * global_gate(global55, UniMol) * local_delta_logits`；delta branch 不修改 protein/ligand trunk，只做 late correction。
+3. **信息路径**：local54 atom chemistry 直接参与 local delta attention 的 key/value；ligand hidden state 仍提供 graph/self-attn 后的 atom memory。
+4. **稳定性**：delta head final projection zero-init，初始 logits 与 base path 等价；GPU0 dummy FWD/BWD smoke 通过，finite logits/grad。
+
+### 影响范围
+- 模型：`src/models/pocket_gvp_fusion_v11m6.py`
+- 训练：`scripts/train/train_v11m6.py`
+- 配置：`configs/pocket_gvp_v11m6_hpc.yaml`
+- Slurm：`scripts/slurm/run_v11m6_local_delta.slurm`
+- 推理：`scripts/infer/infer_v11_internal_ligdep.py`
+
+### 使用方法
+```bash
+sbatch scripts/slurm/run_v11m6_local_delta.slurm
+
+# 或指定配置
+sbatch --export=ALL,CONFIG_FILE=configs/pocket_gvp_v11m6_hpc.yaml \
+  scripts/slurm/run_v11m6_local_delta.slurm
+```
+
+### 兼容性/迁移说明
+- 默认从头训练，便于和 V11m4t/V11m5t-balanced 公平比较。
+- 可选 `training.init_from_checkpoint` 做 `strict=False` 初始化；新增 `local_delta_*` / `global_delta_gate.*` 允许 missing。
+
+---
+
 ## V11m5t-balanced - 2026-05-26
 
 ### 主要特性
