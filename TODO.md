@@ -59,6 +59,11 @@
    - global55 + UniMol CLS 只做 delta amplitude calibration。
    - 默认 detach protein feature in delta branch，保护 V11 protein-side floor。
    - 训练后必须跑同一套 dependency eval，重点比较 `Δshuffle`、`Δzero_local54`、`Δzero_unimol` 是否优于 V11m4t/V11m5t-balanced。
+7. `V11m6` 对照矩阵（多卡并行）：
+   - `no_gate`: 关闭 global55/UniMol delta gate，验证 calibration gate 是否必要。
+   - `local54_only`: delta branch 只读 raw local54，验证直接 atom chemistry 是否足够。
+   - `lig_hidden_only`: delta branch 只读 ligand hidden memory，验证 graph/self-attn 表示是否足够。
+   - `no_detach_protein`: 允许 delta loss 反向进入 protein trunk，验证是否提升或损伤 protein floor。
 
 ---
 

@@ -104,6 +104,9 @@ sbatch scripts/slurm/run_v11m6_local_delta.slurm
 # 或指定配置
 sbatch --export=ALL,CONFIG_FILE=configs/pocket_gvp_v11m6_hpc.yaml \
   scripts/slurm/run_v11m6_local_delta.slurm
+
+# 对照矩阵：no_gate / local54_only / lig_hidden_only / no_detach_protein
+sbatch scripts/slurm/run_v11m6_ablation_matrix.slurm
 ```
 
 ### 兼容性/迁移说明
