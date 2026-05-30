@@ -43,12 +43,13 @@ def setup_experiment(config: Dict, rank: int, resume_path: str = None) -> Path:
         "v6", "v7", "v7m1", "v7m2", "v7m3", "v8", "v9", "v9m2",
         "v10", "v10t", "v10m3", "v10m4", "v10m5", "v10m6", "v10m7", "v10m8",
         "v11", "v11m1", "v11m2", "v11m3", "v11m4", "v11m4t",
-        "v11m5", "v11m5t", "v11m6",
+        "v11m5", "v11m5t", "v11m6", "v11m6n",
     }
     raw_exp_name = config["experiment"]["name"]
+    version_suffix = config.get("experiment", {}).get("version_suffix", "v11m6")
     exp_tokens = [token for token in raw_exp_name.split("_") if token]
     normalized_tokens = [token for token in exp_tokens if token not in version_tokens]
-    exp_name = "_".join(normalized_tokens + ["v11m6"])
+    exp_name = "_".join(normalized_tokens + [version_suffix])
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     exp_dir = Path(config["experiment"]["output_dir"]) / f"{exp_name}_{timestamp}"
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +152,7 @@ def create_model(
         "Creating V11m6 model "
         f"(local_delta_only={model_cfg.get('use_local_delta_only', True)}, "
         f"detach_protein={model_cfg.get('local_delta_detach_protein', True)}, "
+        f"protein_grad_scale={model_cfg.get('local_delta_protein_grad_scale', 1.0)}, "
         f"global_delta_gate={model_cfg.get('use_global_delta_gate', True)})..."
     )
     model = PocketGVPFusionV11m6(model_cfg)

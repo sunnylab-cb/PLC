@@ -7,6 +7,8 @@ V11m6 keeps the V11m4t conclusion but tightens the information path:
 - local54 atom chemistry and ligand graph hidden states produce only a
   residue-level delta_logits correction;
 - global55 + Uni-Mol CLS only calibrate the delta amplitude via V11m4t's gate.
+- optional fractional protein-gradient flow lets the local delta tune the
+  protein decision surface without taking the full no-detach gradient.
 
 The branch is coordinate-free: it never uses protein-ligand cross distances,
 angles, or shared-frame geometry.
@@ -48,6 +50,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         "local_delta_logit_scale_init": 0.5,
         "local_delta_logit_scale_max": 1.0,
         "local_delta_detach_protein": True,
+        "local_delta_protein_grad_scale": 1.0,
         "local_delta_detach_ligand": False,
         "local_delta_use_ligand_hidden": True,
         "local_delta_use_local_features": True,
@@ -67,6 +70,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.local_delta_score_clip = float(cfg.get("local_delta_score_clip", 20.0))
         self.local_delta_logit_scale_max = float(cfg.get("local_delta_logit_scale_max", 1.0))
         self.local_delta_detach_protein = bool(cfg.get("local_delta_detach_protein", True))
+        self.local_delta_protein_grad_scale = float(cfg.get("local_delta_protein_grad_scale", 1.0))
         self.local_delta_detach_ligand = bool(cfg.get("local_delta_detach_ligand", False))
         self.local_delta_use_ligand_hidden = bool(cfg.get("local_delta_use_ligand_hidden", True))
         self.local_delta_use_local_features = bool(cfg.get("local_delta_use_local_features", True))
@@ -112,6 +116,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.config["use_local_delta_only"] = self.use_local_delta_only
         self.config["local_delta_local_dim"] = self.local_delta_local_dim
         self.config["local_delta_dim"] = self.local_delta_dim
+        self.config["local_delta_protein_grad_scale"] = self.local_delta_protein_grad_scale
 
     def _pad_ligand_local_features(
         self,
@@ -160,7 +165,13 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         h_lig_atoms = h_ligand_fused[:, 1 : 1 + max_atoms, :]
         local54 = self._pad_ligand_local_features(ligand_x, ligand_batch, ligand_mask)
 
-        hp_src = h_prot.detach() if self.local_delta_detach_protein else h_prot
+        if self.local_delta_detach_protein:
+            hp_src = h_prot.detach()
+        elif self.local_delta_protein_grad_scale < 1.0:
+            scale = max(0.0, self.local_delta_protein_grad_scale)
+            hp_src = h_prot.detach() + (h_prot - h_prot.detach()) * scale
+        else:
+            hp_src = h_prot
         hl_src = h_lig_atoms.detach() if self.local_delta_detach_ligand else h_lig_atoms
 
         hp = self.local_delta_prot_norm(hp_src)
