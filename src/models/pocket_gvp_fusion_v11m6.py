@@ -21,6 +21,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .pocket_gvp_fusion_v11m4t import PocketGVPFusionV11m4t
 
@@ -55,6 +56,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         "local_delta_use_ligand_hidden": True,
         "local_delta_use_local_features": True,
         "local_delta_zero_init_final": True,
+        "local_delta_final_init_std": 0.0,
+        "local_delta_use_qk_norm": False,
+        "local_delta_qk_norm_scale_init": 11.313708498984761,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -74,6 +78,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.local_delta_detach_ligand = bool(cfg.get("local_delta_detach_ligand", False))
         self.local_delta_use_ligand_hidden = bool(cfg.get("local_delta_use_ligand_hidden", True))
         self.local_delta_use_local_features = bool(cfg.get("local_delta_use_local_features", True))
+        self.local_delta_use_qk_norm = bool(cfg.get("local_delta_use_qk_norm", False))
 
         d_model = int(self.config["d_model"])
         n_classes = int(self.config["n_classes"])
@@ -101,22 +106,30 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
                 nn.Dropout(dropout),
                 nn.Linear(hidden, n_classes),
             )
-            if bool(cfg.get("local_delta_zero_init_final", True)):
-                final = self.local_delta_head[-1]
+            final = self.local_delta_head[-1]
+            final_init_std = float(cfg.get("local_delta_final_init_std", 0.0) or 0.0)
+            if final_init_std > 0.0:
+                nn.init.normal_(final.weight, mean=0.0, std=final_init_std)
+                nn.init.zeros_(final.bias)
+            elif bool(cfg.get("local_delta_zero_init_final", True)):
                 nn.init.zeros_(final.weight)
                 nn.init.zeros_(final.bias)
 
             init_scale = float(cfg.get("local_delta_logit_scale_init", 0.5))
             self.local_delta_logit_scale = nn.Parameter(torch.tensor(init_scale))
+            qk_scale_init = float(cfg.get("local_delta_qk_norm_scale_init", math.sqrt(self.local_delta_dim)))
+            self.local_delta_qk_log_scale = nn.Parameter(torch.tensor(math.log(max(qk_scale_init, 1e-6))))
         else:
             self.local_delta_head = None
             self.register_buffer("local_delta_logit_scale", torch.tensor(0.0), persistent=False)
+            self.register_buffer("local_delta_qk_log_scale", torch.tensor(0.0), persistent=False)
 
         self.config["use_local_pair_delta"] = False
         self.config["use_local_delta_only"] = self.use_local_delta_only
         self.config["local_delta_local_dim"] = self.local_delta_local_dim
         self.config["local_delta_dim"] = self.local_delta_dim
         self.config["local_delta_protein_grad_scale"] = self.local_delta_protein_grad_scale
+        self.config["local_delta_use_qk_norm"] = self.local_delta_use_qk_norm
 
     def _pad_ligand_local_features(
         self,
@@ -188,7 +201,13 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
             k = k + self.local_delta_k_local(lf)
             v = v + self.local_delta_v_local(lf).to(dtype=hl.dtype)
 
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.local_delta_dim)
+        if self.local_delta_use_qk_norm:
+            q_score = F.normalize(q.float(), dim=-1)
+            k_score = F.normalize(k.float(), dim=-1)
+            qk_scale = self.local_delta_qk_log_scale.exp().clamp(max=self.local_delta_score_clip)
+            scores = torch.matmul(q_score, k_score.transpose(-2, -1)) * qk_scale
+        else:
+            scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.local_delta_dim)
         scores = scores.float().clamp(-self.local_delta_score_clip, self.local_delta_score_clip)
 
         atom_mask = ligand_mask.bool()
@@ -226,6 +245,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
             "local_delta_score_abs_mean": scores.detach().abs().mean(),
             "local_delta_attn_entropy_mean": entropy.detach().mean(),
             "local_delta_logits_abs_mean": delta_logits.detach().abs().mean(),
+            "local_delta_qk_scale": self.local_delta_qk_log_scale.detach().exp(),
         }
         return delta_logits
 
