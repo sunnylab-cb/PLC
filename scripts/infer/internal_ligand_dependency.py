@@ -17,6 +17,16 @@ Use --ligand_mode source_split to decouple ligand graph features from Uni-Mol:
 Use --ligand_mode feature_split to split the ligand V5 atom feature source:
   zero_ligand_global55_only : zero feature dims 54:109 (global45 + shape10)
   zero_ligand_local54_only  : zero feature dims 0:54   (local atom chemistry)
+
+Use --ligand_mode local54_subgroups for mechanism ablations inside local54:
+  zero_ligand_local54_base33       : atom type/hybrid/ring/degree/formal charge
+  zero_ligand_local54_electronic3  : Gasteiger charge, Crippen LogP, TPSA
+  zero_ligand_local54_sasa_hbond4  : atom/lipophilic SASA, HBD, HBA
+  zero_ligand_local54_flex_rot5    : RMSF, flexibility, rotatable context
+  zero_ligand_local54_metal4       : metal-binding flags
+  zero_ligand_local54_stereo5      : chirality + stereochemistry
+  zero_ligand_edge_attr_only       : keep topology/coords, zero bond features
+  shuffle_ligand_topology_only     : keep atom features, relabel graph topology
 """
 
 from __future__ import annotations
@@ -51,6 +61,14 @@ LIGAND_MODES = (
     "zero_unimol_only",
     "zero_ligand_global55_only",
     "zero_ligand_local54_only",
+    "zero_ligand_local54_base33",
+    "zero_ligand_local54_electronic3",
+    "zero_ligand_local54_sasa_hbond4",
+    "zero_ligand_local54_flex_rot5",
+    "zero_ligand_local54_metal4",
+    "zero_ligand_local54_stereo5",
+    "zero_ligand_edge_attr_only",
+    "shuffle_ligand_topology_only",
 )
 
 SOURCE_SPLIT_MODES = (
@@ -69,6 +87,28 @@ FEATURE_SPLIT_MODES = (
     "zero_ligand_local54_only",
 )
 
+LOCAL54_SUBGROUP_MODES = (
+    "real",
+    "zero_ligand_local54_only",
+    "zero_ligand_local54_base33",
+    "zero_ligand_local54_electronic3",
+    "zero_ligand_local54_sasa_hbond4",
+    "zero_ligand_local54_flex_rot5",
+    "zero_ligand_local54_metal4",
+    "zero_ligand_local54_stereo5",
+    "zero_ligand_edge_attr_only",
+    "shuffle_ligand_topology_only",
+)
+
+LOCAL54_SUBGROUP_RANGES = {
+    "zero_ligand_local54_base33": ((0, 33),),
+    "zero_ligand_local54_electronic3": ((33, 36),),
+    "zero_ligand_local54_sasa_hbond4": ((38, 42),),
+    "zero_ligand_local54_flex_rot5": ((36, 38), (44, 47)),
+    "zero_ligand_local54_metal4": ((47, 51),),
+    "zero_ligand_local54_stereo5": ((42, 44), (51, 54)),
+}
+
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--checkpoint", required=True, help="model checkpoint path")
@@ -80,10 +120,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--ligand_mode",
         default="all",
-        choices=["all", "source_split", "feature_split", *LIGAND_MODES],
+        choices=["all", "source_split", "feature_split", "local54_subgroups", *LIGAND_MODES],
         help=(
             "ablation mode; all runs real/shuffle/zero; source_split decouples "
-            "ligand graph vs Uni-Mol; feature_split zeros local54 vs global55 ligand features"
+            "ligand graph vs Uni-Mol; feature_split zeros local54 vs global55 ligand features; "
+            "local54_subgroups zeros local54 chemistry subgroups and edge controls"
         ),
     )
     parser.add_argument("--shuffle_seed", type=int, default=42)
@@ -167,6 +208,34 @@ class LigandAblationDataset(Dataset):
         e = max(s, min(int(end), n_feat))
         x[..., s:e] = 0
         sample["ligand_features"] = x
+
+    def _zero_ligand_feature_ranges(self, sample: Dict, ranges: Iterable[tuple[int, int]]) -> None:
+        x = sample["ligand_features"].clone()
+        n_feat = int(x.shape[-1])
+        for start, end in ranges:
+            s = max(0, min(int(start), n_feat))
+            e = max(s, min(int(end), n_feat))
+            x[..., s:e] = 0
+        sample["ligand_features"] = x
+
+    def _zero_ligand_edge_attr(self, sample: Dict) -> None:
+        sample["ligand_edge_attr"] = torch.zeros_like(sample["ligand_edge_attr"])
+
+    def _shuffle_ligand_topology(self, sample: Dict, idx: int) -> None:
+        edge_index = sample["ligand_edge_index"]
+        if edge_index.numel() == 0:
+            return
+        n_atoms_raw = sample.get("n_atoms", sample["ligand_features"].shape[0])
+        n_atoms = int(n_atoms_raw.item()) if isinstance(n_atoms_raw, torch.Tensor) else int(n_atoms_raw)
+        if n_atoms <= 1:
+            return
+
+        g = torch.Generator().manual_seed(_stable_seed(f"{sample.get('pdb_id', idx)}:{idx}", self.seed))
+        perm = torch.randperm(n_atoms, generator=g, dtype=edge_index.dtype)
+        shuffled = edge_index.clone()
+        valid = (shuffled >= 0) & (shuffled < n_atoms)
+        shuffled[valid] = perm[shuffled[valid].long()]
+        sample["ligand_edge_index"] = shuffled
 
     def _random_ligand(self, sample: Dict, idx: int) -> None:
         g = torch.Generator().manual_seed(self.seed * 1000003 + int(idx))
@@ -266,6 +335,24 @@ class LigandAblationDataset(Dataset):
         if self.mode == "zero_ligand_local54_only":
             self._zero_ligand_feature_slice(sample, 0, 54)
             sample["ligand_source_pdb_id"] = "__ZERO_LOCAL54__"
+            sample["unimol_source_pdb_id"] = sample["pdb_id"]
+            return sample
+
+        if self.mode in LOCAL54_SUBGROUP_RANGES:
+            self._zero_ligand_feature_ranges(sample, LOCAL54_SUBGROUP_RANGES[self.mode])
+            sample["ligand_source_pdb_id"] = f"__{self.mode.upper()}__"
+            sample["unimol_source_pdb_id"] = sample["pdb_id"]
+            return sample
+
+        if self.mode == "zero_ligand_edge_attr_only":
+            self._zero_ligand_edge_attr(sample)
+            sample["ligand_source_pdb_id"] = "__ZERO_EDGE_ATTR__"
+            sample["unimol_source_pdb_id"] = sample["pdb_id"]
+            return sample
+
+        if self.mode == "shuffle_ligand_topology_only":
+            self._shuffle_ligand_topology(sample, idx)
+            sample["ligand_source_pdb_id"] = "__SHUFFLE_TOPOLOGY__"
             sample["unimol_source_pdb_id"] = sample["pdb_id"]
             return sample
 
@@ -548,6 +635,8 @@ def expand_modes(mode: str) -> List[str]:
         return list(SOURCE_SPLIT_MODES)
     if mode == "feature_split":
         return list(FEATURE_SPLIT_MODES)
+    if mode == "local54_subgroups":
+        return list(LOCAL54_SUBGROUP_MODES)
     return [mode]
 
 
