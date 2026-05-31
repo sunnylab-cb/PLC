@@ -211,6 +211,8 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         scores = scores.float().clamp(-self.local_delta_score_clip, self.local_delta_score_clip)
 
         atom_mask = ligand_mask.bool()
+        valid_pair_mask = protein_mask.bool().unsqueeze(-1) & atom_mask.unsqueeze(1)
+        valid_scores = scores[valid_pair_mask]
         score_mask = atom_mask.unsqueeze(1)
         scores = scores.masked_fill(~score_mask, -1.0e4)
         has_atom = atom_mask.any(dim=1).view(-1, 1, 1)
@@ -241,10 +243,20 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         delta_logits = self.local_delta_head(delta_in)
         delta_logits = delta_logits * protein_mask.unsqueeze(-1).to(dtype=delta_logits.dtype)
 
+        valid_residue_mask = protein_mask.bool() & atom_mask.any(dim=1).view(-1, 1)
+        valid_entropy = entropy[valid_residue_mask]
+        valid_delta_logits = delta_logits[protein_mask.bool()]
+        zero = h_prot.new_tensor(0.0, dtype=torch.float32)
         self._cached_local_delta_stats = {
-            "local_delta_score_abs_mean": scores.detach().abs().mean(),
-            "local_delta_attn_entropy_mean": entropy.detach().mean(),
-            "local_delta_logits_abs_mean": delta_logits.detach().abs().mean(),
+            "local_delta_score_abs_mean": (
+                valid_scores.detach().abs().mean() if valid_scores.numel() else zero
+            ),
+            "local_delta_attn_entropy_mean": (
+                valid_entropy.detach().mean() if valid_entropy.numel() else zero
+            ),
+            "local_delta_logits_abs_mean": (
+                valid_delta_logits.detach().abs().mean() if valid_delta_logits.numel() else zero
+            ),
             "local_delta_qk_scale": self.local_delta_qk_log_scale.detach().exp(),
         }
         return delta_logits

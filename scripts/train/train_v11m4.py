@@ -168,6 +168,28 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
 """
     if old_best_tail not in source:
         raise RuntimeError("Could not patch V11m3 best-metric checkpoint block for V11m4")
+    local_delta_anchor = """                # V11m3: Uni-Mol ligand feature contribution diagnostics.
+                unimol_stats = compute_unimol_stats(_model, _unimol)
+                for key, value in unimol_stats.items():
+                    writer.add_scalar(f'Health/{key}', value, global_step)
+"""
+    local_delta_block = """                # V11m6: local-delta numeric-scale diagnostics for scale-prior probes.
+                for key in (
+                    'local_delta_score_abs_mean',
+                    'local_delta_attn_entropy_mean',
+                    'local_delta_logits_abs_mean',
+                    'local_delta_scale',
+                    'local_delta_qk_scale',
+                ):
+                    if key in outputs:
+                        value = outputs[key]
+                        if torch.is_tensor(value):
+                            value = value.detach().float().mean().item()
+                        writer.add_scalar(f'Health/{key}', float(value), global_step)
+"""
+    if local_delta_anchor not in source:
+        raise RuntimeError("Could not patch V11m3 local-delta diagnostics block for V11m4")
+    source = source.replace(local_delta_anchor, local_delta_anchor + local_delta_block, 1)
     return source.replace(old_best_tail, new_best_tail, 1)
 
 
