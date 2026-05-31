@@ -90,7 +90,7 @@ CMD=(
   python scripts/infer/sweep_v11_class0_bias.py
   --checkpoint "${CKPT}"
   --output "${OUT_DIR}"
-  --biases "${BIAS_GRID}"
+  "--biases=${BIAS_GRID}"
   --select_metric global_f1_c0
   --batch_size "${BATCH_SIZE}"
   --num_workers "${NUM_WORKERS}"
