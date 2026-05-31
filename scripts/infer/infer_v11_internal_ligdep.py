@@ -39,7 +39,10 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
         or any(k.startswith("ligand_global_adapter.") for k in state)
     )
     has_local_delta = any(k.startswith("local_delta_") for k in state)
+    has_local54_group_adapter = any(k.startswith("local54_group_adapter.") for k in state)
 
+    if "v11m7" in exp_name or has_local54_group_adapter:
+        return "v11m7"
     if "v11m6" in exp_name or has_local_delta:
         return "v11m6"
     if "v11m5t" in exp_name or (has_global_gate and (has_pair_bias or has_group_balance)):
@@ -68,7 +71,9 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
     model_cfg = dict(config["model"])
     model_cfg["use_gradient_checkpointing"] = False
 
-    if version == "v11m6":
+    if version == "v11m7":
+        from src.models.pocket_gvp_fusion_v11m7 import PocketGVPFusionV11m7 as ModelClass
+    elif version == "v11m6":
         from src.models.pocket_gvp_fusion_v11m6 import PocketGVPFusionV11m6 as ModelClass
     elif version == "v11m5t":
         from src.models.pocket_gvp_fusion_v11m5t import PocketGVPFusionV11m5t as ModelClass

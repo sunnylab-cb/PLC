@@ -136,6 +136,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--unimol_embeddings_dir", default=None)
     parser.add_argument("--no_unimol", action="store_true", help="force zero Uni-Mol")
     parser.add_argument("--num_save_rows", type=int, default=0, help="0 = save all rows")
+    parser.add_argument(
+        "--class0_logit_bias",
+        type=float,
+        default=0.0,
+        help="additive inference-only bias to class-0/contact logits",
+    )
 
 
 def load_checkpoint(path: str, device: torch.device) -> Dict:
@@ -590,6 +596,10 @@ def evaluate_mode(
             )
             with torch.autocast(device_type=device.type, enabled=autocast_enabled):
                 logits = predict_logits(model, batch, device, ue)
+            class0_bias = float(getattr(args, "class0_logit_bias", 0.0) or 0.0)
+            if class0_bias:
+                logits = logits.clone()
+                logits[..., 0] = logits[..., 0] + class0_bias
             pred = logits.argmax(dim=-1).detach().cpu()
             labels = batch["labels"].detach().cpu()
             mask = batch["protein_mask"].bool().detach().cpu()

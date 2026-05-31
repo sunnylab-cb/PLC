@@ -161,6 +161,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
             return self.local_delta_logit_scale
         return self.local_delta_logit_scale.tanh() * self.local_delta_logit_scale_max
 
+    def _encode_local_delta_features(self, local54: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        return self.local_delta_local_norm(local54.to(dtype=dtype))
+
     def _compute_pair_delta(
         self,
         h_prot: torch.Tensor,
@@ -189,7 +192,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
 
         hp = self.local_delta_prot_norm(hp_src)
         hl = self.local_delta_lig_norm(hl_src)
-        lf = self.local_delta_local_norm(local54.to(dtype=hl.dtype))
+        lf = self._encode_local_delta_features(local54, hl.dtype)
 
         q = self.local_delta_q(hp)
         k = torch.zeros((*hl.shape[:2], self.local_delta_dim), device=hl.device, dtype=hl.dtype)
