@@ -90,7 +90,22 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
         from src.models.pocket_gvp_fusion_v11 import PocketGVPFusionV11 as ModelClass
 
     model = ModelClass(model_cfg)
-    model.load_state_dict(ckpt["model_state_dict"], strict=True)
+    state = ckpt["model_state_dict"]
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    # Backward compatibility: qk-scale was added after earlier V11m6n checkpoints.
+    # Old checkpoints have local_delta_use_qk_norm=false, so the default initialized
+    # scale is inert for their forward pass. Keep all other mismatches strict.
+    allowed_missing = set()
+    if version == "v11m6" and "local_delta_qk_log_scale" not in state:
+        allowed_missing.add("local_delta_qk_log_scale")
+    bad_missing = [k for k in missing if k not in allowed_missing]
+    if bad_missing or unexpected:
+        raise RuntimeError(
+            "Unexpected checkpoint mismatch when loading V11 eval model: "
+            f"missing={bad_missing[:20]}, unexpected={list(unexpected)[:20]}"
+        )
+    if missing:
+        print(f"Loaded with allowed missing keys: {list(missing)}")
     model.to(device)
     model.eval()
     n_params = sum(p.numel() for p in model.parameters())
