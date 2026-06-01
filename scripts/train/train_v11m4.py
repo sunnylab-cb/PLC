@@ -180,6 +180,11 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'local_delta_logits_abs_mean',
                     'local_delta_scale',
                     'local_delta_qk_scale',
+                    'local_ligand_film_alpha',
+                    'pocket_virtual_alpha',
+                    'pocket_virtual_attn_entropy',
+                    'center_aux_scale',
+                    'center_aux_abs_mean',
                 ):
                     if key in outputs:
                         value = outputs[key]
