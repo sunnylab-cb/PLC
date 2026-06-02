@@ -59,6 +59,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         "local_delta_final_init_std": 0.0,
         "local_delta_use_qk_norm": False,
         "local_delta_qk_norm_scale_init": 11.313708498984761,
+        "ligand_source_dropout_p": 0.0,
+        "ligand_dropout_local54_p": 0.0,
+        "ligand_dropout_hidden_p": 0.0,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -79,6 +82,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.local_delta_use_ligand_hidden = bool(cfg.get("local_delta_use_ligand_hidden", True))
         self.local_delta_use_local_features = bool(cfg.get("local_delta_use_local_features", True))
         self.local_delta_use_qk_norm = bool(cfg.get("local_delta_use_qk_norm", False))
+        self.ligand_source_dropout_p = float(cfg.get("ligand_source_dropout_p", 0.0))
+        self.ligand_dropout_local54_p = float(cfg.get("ligand_dropout_local54_p", 0.0))
+        self.ligand_dropout_hidden_p = float(cfg.get("ligand_dropout_hidden_p", 0.0))
 
         d_model = int(self.config["d_model"])
         n_classes = int(self.config["n_classes"])
@@ -130,6 +136,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.config["local_delta_dim"] = self.local_delta_dim
         self.config["local_delta_protein_grad_scale"] = self.local_delta_protein_grad_scale
         self.config["local_delta_use_qk_norm"] = self.local_delta_use_qk_norm
+        self.config["ligand_source_dropout_p"] = self.ligand_source_dropout_p
+        self.config["ligand_dropout_local54_p"] = self.ligand_dropout_local54_p
+        self.config["ligand_dropout_hidden_p"] = self.ligand_dropout_hidden_p
 
     def _pad_ligand_local_features(
         self,
@@ -164,6 +173,33 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
     def _encode_local_delta_features(self, local54: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
         return self.local_delta_local_norm(local54.to(dtype=dtype))
 
+    def _apply_ligand_source_dropout(
+        self,
+        hl_src: torch.Tensor,
+        local54: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Training-only sample-level dropout for local-delta ligand sources."""
+        if not self.training:
+            return hl_src, local54
+
+        batch_size = hl_src.size(0)
+        device = hl_src.device
+        drop_all = max(0.0, self.ligand_source_dropout_p)
+        drop_hidden = max(0.0, self.ligand_dropout_hidden_p)
+        drop_local = max(0.0, self.ligand_dropout_local54_p)
+
+        if drop_all > 0.0:
+            keep = (torch.rand(batch_size, 1, 1, device=device) >= drop_all).to(dtype=hl_src.dtype)
+            hl_src = hl_src * keep
+            local54 = local54 * keep.to(dtype=local54.dtype)
+        if drop_hidden > 0.0:
+            keep = (torch.rand(batch_size, 1, 1, device=device) >= drop_hidden).to(dtype=hl_src.dtype)
+            hl_src = hl_src * keep
+        if drop_local > 0.0:
+            keep = (torch.rand(batch_size, 1, 1, device=device) >= drop_local).to(dtype=local54.dtype)
+            local54 = local54 * keep
+        return hl_src, local54
+
     def _compute_pair_delta(
         self,
         h_prot: torch.Tensor,
@@ -189,6 +225,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         else:
             hp_src = h_prot
         hl_src = h_lig_atoms.detach() if self.local_delta_detach_ligand else h_lig_atoms
+        hl_src, local54 = self._apply_ligand_source_dropout(hl_src, local54)
 
         hp = self.local_delta_prot_norm(hp_src)
         hl = self.local_delta_lig_norm(hl_src)
