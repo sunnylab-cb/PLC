@@ -42,6 +42,7 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
     has_local54_group_adapter = any(k.startswith("local54_group_adapter.") for k in state)
     has_v11m8_probe = (
         any(k.startswith("local_ligand_film") for k in state)
+        or any(k.startswith("local54_chem_") for k in state)
         or any(k.startswith("pocket_") for k in state)
         or any(k.startswith("center_aux_") for k in state)
     )

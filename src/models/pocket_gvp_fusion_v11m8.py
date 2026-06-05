@@ -30,6 +30,16 @@ import torch.nn.functional as F
 from .pocket_gvp_fusion_v11m6 import PocketGVPFusionV11m6
 
 
+_LOCAL54_GROUP_RANGES = {
+    "base33": ((0, 33),),
+    "electronic3": ((33, 36),),
+    "sasa_hbond4": ((38, 42),),
+    "flex_rot5": ((36, 38), (44, 47)),
+    "metal4": ((47, 51),),
+    "stereo5": ((42, 44), (51, 54)),
+}
+
+
 def _atanh_ratio(value: float, max_value: float) -> float:
     if max_value <= 0.0:
         return 0.0
@@ -55,6 +65,17 @@ class PocketGVPFusionV11m8(PocketGVPFusionV11m6):
         "ligand_source_dropout_p": 0.0,
         "ligand_dropout_local54_p": 0.0,
         "ligand_dropout_hidden_p": 0.0,
+        "use_local54_chem_reweight": False,
+        "local54_chem_base_scale": 1.0,
+        "local54_chem_electronic_scale": 1.0,
+        "local54_chem_sasa_hbond_scale": 1.0,
+        "local54_chem_flex_rot_scale": 1.0,
+        "local54_chem_metal_scale": 1.0,
+        "local54_chem_stereo_scale": 1.0,
+        "use_local54_chem_adapter": False,
+        "local54_chem_adapter_hidden": 16,
+        "local54_chem_adapter_scale_init": 0.03,
+        "local54_chem_adapter_scale_max": 0.20,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -136,12 +157,90 @@ class PocketGVPFusionV11m8(PocketGVPFusionV11m6):
         self.ligand_dropout_local54_p = float(cfg.get("ligand_dropout_local54_p", 0.0))
         self.ligand_dropout_hidden_p = float(cfg.get("ligand_dropout_hidden_p", 0.0))
 
+        self.use_local54_chem_reweight = bool(cfg.get("use_local54_chem_reweight", False))
+        scale = torch.ones(local_dim, dtype=torch.float32)
+        if self.use_local54_chem_reweight:
+            group_scales = {
+                "base33": float(cfg.get("local54_chem_base_scale", 1.0)),
+                "electronic3": float(cfg.get("local54_chem_electronic_scale", 1.0)),
+                "sasa_hbond4": float(cfg.get("local54_chem_sasa_hbond_scale", 1.0)),
+                "flex_rot5": float(cfg.get("local54_chem_flex_rot_scale", 1.0)),
+                "metal4": float(cfg.get("local54_chem_metal_scale", 1.0)),
+                "stereo5": float(cfg.get("local54_chem_stereo_scale", 1.0)),
+            }
+            for group, ranges in _LOCAL54_GROUP_RANGES.items():
+                for start, end in ranges:
+                    if start < local_dim:
+                        scale[start:min(end, local_dim)] = group_scales[group]
+        self.register_buffer("local54_chem_reweight_scale", scale, persistent=False)
+
+        self.use_local54_chem_adapter = bool(cfg.get("use_local54_chem_adapter", False))
+        self.local54_chem_adapter_scale_max = float(cfg.get("local54_chem_adapter_scale_max", 0.20))
+        if self.use_local54_chem_adapter:
+            hidden = int(cfg.get("local54_chem_adapter_hidden", 16))
+            self.local54_chem_adapters = nn.ModuleDict()
+            for group in ("electronic3", "sasa_hbond4", "flex_rot5"):
+                group_dim = sum(end - start for start, end in _LOCAL54_GROUP_RANGES[group])
+                adapter = nn.Sequential(
+                    nn.LayerNorm(group_dim, elementwise_affine=False),
+                    nn.Linear(group_dim, hidden, bias=False),
+                    nn.GELU(),
+                    nn.Linear(hidden, group_dim, bias=False),
+                )
+                nn.init.zeros_(adapter[-1].weight)
+                self.local54_chem_adapters[group] = adapter
+            init = float(cfg.get("local54_chem_adapter_scale_init", 0.03))
+            self.local54_chem_adapter_raw_scale = nn.Parameter(
+                torch.tensor(_atanh_ratio(init, self.local54_chem_adapter_scale_max))
+            )
+        else:
+            self.local54_chem_adapters = None
+            self.register_buffer("local54_chem_adapter_raw_scale", torch.tensor(0.0), persistent=False)
+
         self.config["use_local_ligand_film"] = self.use_local_ligand_film
         self.config["use_pocket_virtual_tokens"] = self.use_pocket_virtual_tokens
         self.config["use_center_aux_head"] = self.use_center_aux_head
         self.config["ligand_source_dropout_p"] = self.ligand_source_dropout_p
         self.config["ligand_dropout_local54_p"] = self.ligand_dropout_local54_p
         self.config["ligand_dropout_hidden_p"] = self.ligand_dropout_hidden_p
+        self.config["use_local54_chem_reweight"] = self.use_local54_chem_reweight
+        self.config["use_local54_chem_adapter"] = self.use_local54_chem_adapter
+
+    def _extract_local54_group(self, local54: torch.Tensor, group: str) -> torch.Tensor:
+        return torch.cat(
+            [local54[..., start:end] for start, end in _LOCAL54_GROUP_RANGES[group]],
+            dim=-1,
+        )
+
+    def _scatter_local54_group(
+        self,
+        out: torch.Tensor,
+        group: str,
+        values: torch.Tensor,
+    ) -> None:
+        offset = 0
+        for start, end in _LOCAL54_GROUP_RANGES[group]:
+            width = end - start
+            out[..., start:end] = values[..., offset:offset + width]
+            offset += width
+
+    def _apply_local54_chemistry(self, local54: torch.Tensor) -> torch.Tensor:
+        """Apply optional local54 chemistry reweighting/adapter before delta use."""
+        out = local54
+        if self.use_local54_chem_reweight:
+            out = out * self.local54_chem_reweight_scale.to(device=out.device, dtype=out.dtype)
+        if self.local54_chem_adapters is not None:
+            residual = torch.zeros_like(out)
+            for group, adapter in self.local54_chem_adapters.items():
+                group_x = self._extract_local54_group(out, group)
+                group_delta = adapter(group_x.to(dtype=out.dtype))
+                self._scatter_local54_group(residual, group, group_delta)
+            scale = self._bounded_scale(
+                self.local54_chem_adapter_raw_scale.to(dtype=out.dtype),
+                self.local54_chem_adapter_scale_max,
+            )
+            out = out + scale * residual
+        return out
 
     def _bounded_scale(self, raw: torch.Tensor, max_value: float) -> torch.Tensor:
         if max_value <= 0.0:
@@ -279,6 +378,7 @@ class PocketGVPFusionV11m8(PocketGVPFusionV11m6):
             hp_src = h_prot
         hl_src = h_lig_atoms.detach() if self.local_delta_detach_ligand else h_lig_atoms
         hl_src, local54 = self._apply_source_dropout(hl_src, local54)
+        local54 = self._apply_local54_chemistry(local54)
 
         ligand_context = self._masked_ligand_context(hl_src, local54, ligand_mask)
         hp_src = self._apply_local_ligand_film(hp_src, ligand_context, protein_mask)
@@ -390,6 +490,11 @@ class PocketGVPFusionV11m8(PocketGVPFusionV11m6):
         outputs["center_aux_scale"] = self._bounded_scale(
             self.center_aux_raw_scale.detach(),
             self.center_aux_logit_scale_max,
+        )
+        outputs["local54_chem_reweight_mean"] = self.local54_chem_reweight_scale.detach().mean()
+        outputs["local54_chem_adapter_scale"] = self._bounded_scale(
+            self.local54_chem_adapter_raw_scale.detach(),
+            self.local54_chem_adapter_scale_max,
         )
         for key, value in getattr(self, "_cached_v11m8_stats", {}).items():
             outputs[key] = value

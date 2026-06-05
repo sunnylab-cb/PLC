@@ -81,6 +81,7 @@ def _load_init_checkpoint(model: torch.nn.Module, config: Dict) -> None:
         "local_delta_",
         "global_delta_gate.",
         "local_ligand_film",
+        "local54_chem_",
         "pocket_",
         "center_aux_",
     )
@@ -105,7 +106,7 @@ def _apply_freeze_policy(model: torch.nn.Module, config: Dict) -> None:
 
     trainable_tokens = tuple(train_cfg.get(
         "delta_trainable_tokens",
-        ["local_delta_", "global_delta_gate.", "local_ligand_film", "pocket_", "center_aux_"],
+        ["local_delta_", "global_delta_gate.", "local_ligand_film", "local54_chem_", "pocket_", "center_aux_"],
     ))
     n_frozen = 0
     n_trainable = 0
@@ -150,6 +151,8 @@ def create_model(
         f"(film={model_cfg.get('use_local_ligand_film', False)}, "
         f"virtual_tokens={model_cfg.get('use_pocket_virtual_tokens', False)}, "
         f"center_head={model_cfg.get('use_center_aux_head', False)}, "
+        f"chem_reweight={model_cfg.get('use_local54_chem_reweight', False)}, "
+        f"chem_adapter={model_cfg.get('use_local54_chem_adapter', False)}, "
         f"source_dropout={model_cfg.get('ligand_source_dropout_p', 0.0)}, "
         f"protein_grad_scale={model_cfg.get('local_delta_protein_grad_scale', 1.0)}, "
         f"global_delta_gate={model_cfg.get('use_global_delta_gate', False)})..."

@@ -185,6 +185,8 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'pocket_virtual_attn_entropy',
                     'center_aux_scale',
                     'center_aux_abs_mean',
+                    'local54_chem_reweight_mean',
+                    'local54_chem_adapter_scale',
                 ):
                     if key in outputs:
                         value = outputs[key]
