@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Training entrypoint for V11m8x: V11m8 all_light with V12-style cross attention."""
+"""Training entrypoint for V11m8x: V11m8 all_light with V12-style fusion probes."""
 
 from __future__ import annotations
 
@@ -158,6 +158,7 @@ def create_model(
     base.print_rank0(
         "Creating V11m8x model "
         f"(v12_cross={model_cfg.get('use_v12_cross_attention', True)}, "
+        f"v12_coattn={model_cfg.get('use_v12_coattention_block', False)}, "
         f"v12_alpha_init={model_cfg.get('v12_cross_alpha_init', 0.25)}, "
         f"v12_alpha_max={model_cfg.get('v12_cross_alpha_max', 0.60)}, "
         f"film={model_cfg.get('use_local_ligand_film', False)}, "

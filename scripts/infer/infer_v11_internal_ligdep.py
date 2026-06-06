@@ -48,7 +48,12 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
     )
     has_v11m8x_probe = any(
         k.startswith("cross_attention_layers.")
-        and (".block.cross_attn." in k or k.endswith(".raw_alpha"))
+        and (
+            ".block.cross_attn." in k
+            or ".block.prot_to_lig.cross_attn." in k
+            or ".block.prot_self_attn." in k
+            or k.endswith(".raw_alpha")
+        )
         for k in state
     )
     has_v11m9_probe = any(k.startswith("local_evidence_") for k in state)

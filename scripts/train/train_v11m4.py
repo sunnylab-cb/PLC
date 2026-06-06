@@ -193,6 +193,10 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'local_evidence_compat_read_abs_mean',
                     'v12_cross_alpha_mean',
                     'v12_cross_delta_norm_mean',
+                    'v12_coattn_p2l_gate_mean',
+                    'v12_coattn_l2p_gate_mean',
+                    'v12_coattn_p2l_delta_norm_mean',
+                    'v12_coattn_l2p_delta_norm_mean',
                 ):
                     if key in outputs:
                         value = outputs[key]
