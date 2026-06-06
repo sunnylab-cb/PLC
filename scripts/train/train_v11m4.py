@@ -187,6 +187,10 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'center_aux_abs_mean',
                     'local54_chem_reweight_mean',
                     'local54_chem_adapter_scale',
+                    'local_evidence_group_kv_alpha',
+                    'local_evidence_compat_alpha',
+                    'local_evidence_compat_gate_abs_mean',
+                    'local_evidence_compat_read_abs_mean',
                 ):
                     if key in outputs:
                         value = outputs[key]

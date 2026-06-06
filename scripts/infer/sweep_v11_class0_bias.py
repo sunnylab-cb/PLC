@@ -177,6 +177,21 @@ def main() -> None:
     real = test_summaries["real"].get("global_f1_c0", 0.0)
     shuffle = test_summaries["shuffle"].get("global_f1_c0", 0.0)
     zero = test_summaries["zero"].get("global_f1_c0", 0.0)
+    final_metrics = {
+        "selected_bias": best_bias,
+        "val_select_metric": args.select_metric,
+        "val_select_value": best.get("select_value"),
+        "val_global_f1_c0": best.get("global_f1_c0"),
+        "val_global_precision_c0": best.get("global_precision_c0"),
+        "val_global_recall_c0": best.get("global_recall_c0"),
+        "test_real_global_f1_c0": test_summaries["real"].get("global_f1_c0"),
+        "test_real_global_precision_c0": test_summaries["real"].get("global_precision_c0"),
+        "test_real_global_recall_c0": test_summaries["real"].get("global_recall_c0"),
+        "test_shuffle_global_f1_c0": test_summaries["shuffle"].get("global_f1_c0"),
+        "test_zero_global_f1_c0": test_summaries["zero"].get("global_f1_c0"),
+        "test_real_shuffle_gap": float(real - shuffle),
+        "test_real_zero_gap": float(real - zero),
+    }
     combined = {
         "model_tag": version,
         "checkpoint": str(args.checkpoint),
@@ -190,6 +205,7 @@ def main() -> None:
             "real_shuffle": float(real - shuffle),
             "real_zero": float(real - zero),
         },
+        "final_metrics": final_metrics,
         "args": vars(args),
     }
     with open(out_dir / "class0_bias_sweep_summary.json", "w") as f:
