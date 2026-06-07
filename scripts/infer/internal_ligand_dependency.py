@@ -194,6 +194,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max_samples", type=int, default=0, help="0 = full split")
     parser.add_argument("--amp", action="store_true", help="use autocast on CUDA/ROCm")
     parser.add_argument("--cpu", action="store_true", help="force CPU")
+    parser.add_argument(
+        "--no_pin_memory",
+        action="store_true",
+        help="disable DataLoader pin_memory; useful for retrying CUDA pin-memory failures",
+    )
     parser.add_argument("--unimol_embeddings_dir", default=None)
     parser.add_argument("--no_unimol", action="store_true", help="force zero Uni-Mol")
     parser.add_argument("--num_save_rows", type=int, default=0, help="0 = save all rows")
@@ -773,7 +778,7 @@ def evaluate_mode(
         shuffle=False,
         num_workers=args.num_workers,
         collate_fn=collate_with_ligand_source,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=(device.type == "cuda" and not getattr(args, "no_pin_memory", False)),
     )
 
     rows: List[Dict] = []

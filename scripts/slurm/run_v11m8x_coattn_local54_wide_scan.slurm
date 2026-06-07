@@ -155,6 +155,11 @@ run_eval() {
   local out_dir="${OUT_ROOT}/${VARIANT}_${SPLIT}_${mode_label}"
   mkdir -p "${out_dir}"
 
+  if [ -f "${out_dir}/ligand_dependency_summary.json" ]; then
+    echo "SKIP existing result: ${out_dir}/ligand_dependency_summary.json"
+    return 0
+  fi
+
   local cmd=(
     python scripts/infer/infer_v11_internal_ligdep.py
     --checkpoint "${CKPT}"
@@ -167,6 +172,10 @@ run_eval() {
     --num_save_rows 1
     --amp
   )
+
+  if [ "${NO_PIN_MEMORY:-0}" = "1" ]; then
+    cmd+=(--no_pin_memory)
+  fi
 
   if [ "${ligand_mode}" = "custom_local54" ]; then
     cmd+=(
