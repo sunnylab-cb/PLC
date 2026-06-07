@@ -27,6 +27,9 @@ Use --ligand_mode local54_subgroups for mechanism ablations inside local54:
   zero_ligand_local54_stereo5      : chirality + stereochemistry
   zero_ligand_edge_attr_only       : keep topology/coords, zero bond features
   shuffle_ligand_topology_only     : keep atom features, relabel graph topology
+
+Use --ligand_mode custom_local54 for broad local54 mechanism scans:
+  --custom_local54_ranges 33:36,38:42 --custom_local54_op zero|shuffle|mean|noise
 """
 
 from __future__ import annotations
@@ -69,6 +72,7 @@ LIGAND_MODES = (
     "zero_ligand_local54_stereo5",
     "zero_ligand_edge_attr_only",
     "shuffle_ligand_topology_only",
+    "custom_local54",
 )
 
 SOURCE_SPLIT_MODES = (
@@ -109,6 +113,63 @@ LOCAL54_SUBGROUP_RANGES = {
     "zero_ligand_local54_stereo5": ((42, 44), (51, 54)),
 }
 
+LOCAL54_DIM_LABELS = (
+    "atom_C",
+    "atom_N",
+    "atom_O",
+    "atom_S",
+    "atom_F",
+    "atom_P",
+    "atom_Cl",
+    "atom_Br",
+    "atom_I",
+    "atom_H",
+    "atom_Other",
+    "hybrid_SP",
+    "hybrid_SP2",
+    "hybrid_SP3",
+    "hybrid_SP3D",
+    "hybrid_SP3D2",
+    "hybrid_UNSPECIFIED",
+    "aromatic",
+    "in_ring",
+    "ring_size3",
+    "ring_size4",
+    "ring_size5",
+    "ring_size6",
+    "ring_size7",
+    "ring_size8",
+    "degree_norm",
+    "explicit_valence_norm",
+    "total_valence_norm",
+    "formal_charge_scaled",
+    "radicals_norm",
+    "formal_charge_negative",
+    "formal_charge_zero",
+    "formal_charge_positive",
+    "gasteiger_charge",
+    "crippen_logp_contrib",
+    "tpsa_contrib",
+    "rmsf",
+    "flexibility_flag",
+    "atom_sasa",
+    "lipophilic_sasa",
+    "hbond_donor",
+    "hbond_acceptor",
+    "chirality_cw",
+    "chirality_ccw",
+    "on_rotatable_bond",
+    "adjacent_rotatable_bond",
+    "rotatable_density",
+    "metal_binding_any",
+    "metal_binding_N",
+    "metal_binding_O",
+    "metal_binding_S",
+    "has_CIP",
+    "CIP_R",
+    "CIP_S",
+)
+
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--checkpoint", required=True, help="model checkpoint path")
@@ -136,6 +197,29 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--unimol_embeddings_dir", default=None)
     parser.add_argument("--no_unimol", action="store_true", help="force zero Uni-Mol")
     parser.add_argument("--num_save_rows", type=int, default=0, help="0 = save all rows")
+    parser.add_argument(
+        "--custom_local54_name",
+        default="custom",
+        help="short label used when --ligand_mode custom_local54",
+    )
+    parser.add_argument(
+        "--custom_local54_ranges",
+        default="",
+        help=(
+            "comma-separated local54 dim/range spec for custom_local54, e.g. "
+            "'33:36,38:42' or '5,7,9'. Ranges are [start,end)."
+        ),
+    )
+    parser.add_argument(
+        "--custom_local54_op",
+        default="zero",
+        choices=["zero", "shuffle", "mean", "noise"],
+        help=(
+            "custom_local54 perturbation: zero selected dims; shuffle selected "
+            "dims across atoms in the same ligand; replace by per-ligand mean; "
+            "or replace by per-ligand Gaussian noise with matched mean/std."
+        ),
+    )
     parser.add_argument(
         "--class0_logit_bias",
         type=float,
@@ -170,15 +254,73 @@ def clone_sample(sample: Dict) -> Dict:
     return {k: _clone_value(v) for k, v in sample.items()}
 
 
+def _parse_feature_ranges(spec: str, max_dim: int = 54) -> tuple[tuple[int, int], ...]:
+    ranges = []
+    for raw_part in str(spec or "").replace(";", ",").split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            start_s, end_s = part.split(":", 1)
+            start = int(start_s)
+            end = int(end_s)
+        else:
+            start = int(part)
+            end = start + 1
+        if start < 0 or end > max_dim or end <= start:
+            raise ValueError(
+                f"invalid local54 range {part!r}; expected 0 <= start < end <= {max_dim}"
+            )
+        ranges.append((start, end))
+    if not ranges:
+        raise ValueError("custom_local54 requires non-empty --custom_local54_ranges")
+    return tuple(ranges)
+
+
+def _safe_label(text: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(text))
+
+
+def _local54_dim_labels(ranges: Iterable[tuple[int, int]]) -> list[str]:
+    labels = []
+    for start, end in ranges:
+        for dim in range(start, end):
+            labels.append(f"{dim}:{LOCAL54_DIM_LABELS[dim]}")
+    return labels
+
+
+def format_ligand_mode_label(args, mode: str) -> str:
+    if mode != "custom_local54":
+        return mode
+    name = _safe_label(getattr(args, "custom_local54_name", "custom") or "custom")
+    op = _safe_label(getattr(args, "custom_local54_op", "zero") or "zero")
+    return f"custom_local54_{name}_{op}"
+
+
 class LigandAblationDataset(Dataset):
     """Wrap PocketDatasetV8 and replace only ligand-side fields."""
 
-    def __init__(self, base: PocketDatasetV8, mode: str, seed: int = 42):
+    def __init__(
+        self,
+        base: PocketDatasetV8,
+        mode: str,
+        seed: int = 42,
+        custom_local54_ranges: str = "",
+        custom_local54_op: str = "zero",
+        custom_local54_name: str = "custom",
+    ):
         if mode not in LIGAND_MODES:
             raise ValueError(f"unknown ligand mode: {mode}")
         self.base = base
         self.mode = mode
         self.seed = int(seed)
+        self.custom_local54_name = str(custom_local54_name or "custom")
+        self.custom_local54_op = str(custom_local54_op or "zero")
+        self.custom_local54_ranges = (
+            _parse_feature_ranges(custom_local54_ranges, max_dim=54)
+            if mode == "custom_local54"
+            else tuple()
+        )
 
         n = len(base)
         g = torch.Generator().manual_seed(self.seed)
@@ -222,6 +364,46 @@ class LigandAblationDataset(Dataset):
             s = max(0, min(int(start), n_feat))
             e = max(s, min(int(end), n_feat))
             x[..., s:e] = 0
+        sample["ligand_features"] = x
+
+    def _apply_custom_local54(self, sample: Dict, idx: int) -> None:
+        x = sample["ligand_features"].clone()
+        n_atoms = int(x.shape[0])
+        if n_atoms == 0:
+            sample["ligand_features"] = x
+            return
+
+        op = self.custom_local54_op
+        ranges = self.custom_local54_ranges
+        seed_text = (
+            f"{sample.get('pdb_id', idx)}:{idx}:custom_local54:"
+            f"{self.custom_local54_name}:{op}"
+        )
+        g = torch.Generator().manual_seed(
+            _stable_seed(seed_text, self.seed)
+        )
+        perm = torch.randperm(n_atoms, generator=g) if n_atoms > 1 else torch.arange(n_atoms)
+
+        for start, end in ranges:
+            vals = x[:, start:end]
+            if op == "zero":
+                x[:, start:end] = 0
+            elif op == "shuffle":
+                x[:, start:end] = vals[perm]
+            elif op == "mean":
+                x[:, start:end] = vals.mean(dim=0, keepdim=True).expand_as(vals)
+            elif op == "noise":
+                mean = vals.mean(dim=0, keepdim=True)
+                std = vals.std(dim=0, unbiased=False, keepdim=True).clamp(min=1.0e-6)
+                noise = torch.randn(
+                    vals.shape,
+                    generator=g,
+                    dtype=vals.dtype,
+                    device=vals.device,
+                )
+                x[:, start:end] = mean + noise * std
+            else:
+                raise ValueError(f"unknown custom_local54_op: {op}")
         sample["ligand_features"] = x
 
     def _zero_ligand_edge_attr(self, sample: Dict) -> None:
@@ -359,6 +541,14 @@ class LigandAblationDataset(Dataset):
         if self.mode == "shuffle_ligand_topology_only":
             self._shuffle_ligand_topology(sample, idx)
             sample["ligand_source_pdb_id"] = "__SHUFFLE_TOPOLOGY__"
+            sample["unimol_source_pdb_id"] = sample["pdb_id"]
+            return sample
+
+        if self.mode == "custom_local54":
+            self._apply_custom_local54(sample, idx)
+            sample["ligand_source_pdb_id"] = (
+                f"__CUSTOM_LOCAL54_{self.custom_local54_name}_{self.custom_local54_op}__"
+            )
             sample["unimol_source_pdb_id"] = sample["pdb_id"]
             return sample
 
@@ -568,7 +758,15 @@ def evaluate_mode(
     d_unimol: int,
     out_dir: Path,
 ) -> Dict:
-    ablated = LigandAblationDataset(dataset, mode=mode, seed=args.shuffle_seed)
+    mode_label = format_ligand_mode_label(args, mode)
+    ablated = LigandAblationDataset(
+        dataset,
+        mode=mode,
+        seed=args.shuffle_seed,
+        custom_local54_ranges=getattr(args, "custom_local54_ranges", ""),
+        custom_local54_op=getattr(args, "custom_local54_op", "zero"),
+        custom_local54_name=getattr(args, "custom_local54_name", "custom"),
+    )
     loader = DataLoader(
         ablated,
         batch_size=args.batch_size,
@@ -584,7 +782,7 @@ def evaluate_mode(
 
     autocast_enabled = bool(args.amp and device.type == "cuda")
     with torch.inference_mode():
-        for batch in tqdm(loader, desc=f"{mode}", unit="batch"):
+        for batch in tqdm(loader, desc=f"{mode_label}", unit="batch"):
             ligand_source_ids = batch["ligand_source_pdb_ids"]
             unimol_source_ids = batch["unimol_source_pdb_ids"]
             ue = batch_unimol(
@@ -614,7 +812,7 @@ def evaluate_mode(
                     "pdb_id": pdb_id,
                     "ligand_source_pdb_id": ligand_source_ids[b],
                     "unimol_source_pdb_id": unimol_source_ids[b],
-                    "mode": mode,
+                    "mode": mode_label,
                     "n_residues": int(valid.sum().item()),
                     "n_true_contact": int((y == 0).sum().item()),
                     "n_pred_contact": int((p == 0).sum().item()),
@@ -623,17 +821,34 @@ def evaluate_mode(
                 rows.append(row)
 
     summary = _aggregate(rows, counts)
-    summary.update({"mode": mode, "n_residues_global": counts["total"]})
+    summary.update(
+        {
+            "mode": mode_label,
+            "base_mode": mode,
+            "n_residues_global": counts["total"],
+        }
+    )
+    if mode == "custom_local54":
+        summary.update(
+            {
+                "custom_local54_name": getattr(args, "custom_local54_name", "custom"),
+                "custom_local54_ranges": getattr(args, "custom_local54_ranges", ""),
+                "custom_local54_op": getattr(args, "custom_local54_op", "zero"),
+                "custom_local54_dim_labels": _local54_dim_labels(
+                    _parse_feature_ranges(getattr(args, "custom_local54_ranges", ""), max_dim=54)
+                ),
+            }
+        )
 
     row_limit = None if args.num_save_rows == 0 else args.num_save_rows
     save_rows = rows if row_limit is None else rows[:row_limit]
     if save_rows:
-        csv_path = out_dir / f"per_sample_{mode}.csv"
+        csv_path = out_dir / f"per_sample_{mode_label}.csv"
         with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(save_rows[0].keys()))
             writer.writeheader()
             writer.writerows(save_rows)
-    with open(out_dir / f"summary_{mode}.json", "w") as f:
+    with open(out_dir / f"summary_{mode_label}.json", "w") as f:
         json.dump(summary, f, indent=2)
     return summary
 
@@ -689,6 +904,16 @@ def run_ligand_dependency_eval(
     dataset = build_internal_dataset(config, args)
     modes = expand_modes(args.ligand_mode)
 
+    if args.ligand_mode == "custom_local54":
+        custom_ranges = _parse_feature_ranges(args.custom_local54_ranges, max_dim=54)
+        print(
+            "[custom_local54] "
+            f"name={args.custom_local54_name} "
+            f"ranges={args.custom_local54_ranges} "
+            f"op={args.custom_local54_op} "
+            f"dim_labels={_local54_dim_labels(custom_ranges)}"
+        )
+
     unimol_cache: Dict[str, torch.Tensor] = {}
     if needs_unimol and not args.no_unimol:
         unimol_cache = load_unimol_cache(config, args, d_unimol=d_unimol)
@@ -699,7 +924,8 @@ def run_ligand_dependency_eval(
 
     summaries: Dict[str, Dict] = {}
     for mode in modes:
-        summaries[mode] = evaluate_mode(
+        mode_label = format_ligand_mode_label(args, mode)
+        summaries[mode_label] = evaluate_mode(
             model=model,
             dataset=dataset,
             args=args,
@@ -710,9 +936,9 @@ def run_ligand_dependency_eval(
             d_unimol=d_unimol,
             out_dir=out_dir,
         )
-        s = summaries[mode]
+        s = summaries[mode_label]
         print(
-            f"[{mode}] global_f1_c0={s.get('global_f1_c0', 0):.4f} "
+            f"[{mode_label}] global_f1_c0={s.get('global_f1_c0', 0):.4f} "
             f"recall_c0={s.get('global_recall_c0', 0):.4f} "
             f"precision_c0={s.get('global_precision_c0', 0):.4f} "
             f"mean_sample_f1_c0={s.get('mean_sample_f1_c0', 0):.4f}"
