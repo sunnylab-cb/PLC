@@ -73,6 +73,9 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         "local54_compat_gate_bias_init": 0.05,
         "local54_compat_alpha_init": 0.05,
         "local54_compat_alpha_max": 0.30,
+        "local54_compat_normalize_read": False,
+        "local54_compat_read_scale": 1.0,
+        "local54_compat_read_clip": 0.0,
         "use_ligand_context_prior": False,
         "ligand_context_prior_sources": [],
         "ligand_context_prior_hidden": 192,
@@ -96,6 +99,11 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
             cfg.get("local54_interaction_kv_alpha_max", 0.30)
         )
         self.local54_compat_alpha_max = float(cfg.get("local54_compat_alpha_max", 0.30))
+        self.local54_compat_normalize_read = bool(
+            cfg.get("local54_compat_normalize_read", False)
+        )
+        self.local54_compat_read_scale = float(cfg.get("local54_compat_read_scale", 1.0))
+        self.local54_compat_read_clip = float(cfg.get("local54_compat_read_clip", 0.0))
 
         if self.use_local54_interaction_kv or self.use_local54_residue_chem_compat:
             self.local54_anchor_proj = nn.Sequential(
@@ -166,9 +174,17 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
             self.local54_compat_raw_alpha = nn.Parameter(
                 torch.tensor(_atanh_ratio(init, self.local54_compat_alpha_max))
             )
+            if self.local54_compat_normalize_read:
+                self.local54_compat_read_norm = nn.LayerNorm(
+                    d_model,
+                    elementwise_affine=False,
+                )
+            else:
+                self.local54_compat_read_norm = None
         else:
             self.local54_compat_value = None
             self.local54_compat_gate = None
+            self.local54_compat_read_norm = None
             self.register_buffer("local54_compat_raw_alpha", torch.tensor(0.0), persistent=False)
 
         self.use_ligand_context_prior = bool(cfg.get("use_ligand_context_prior", False))
@@ -206,6 +222,9 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
             self.use_local54_residue_chem_compat
         )
         self.config["local54_interaction_groups"] = list(self.local54_interaction_groups)
+        self.config["local54_compat_normalize_read"] = self.local54_compat_normalize_read
+        self.config["local54_compat_read_scale"] = self.local54_compat_read_scale
+        self.config["local54_compat_read_clip"] = self.local54_compat_read_clip
         self.config["use_ligand_context_prior"] = self.use_ligand_context_prior
         self.config["ligand_context_prior_sources"] = list(self.ligand_context_prior_sources)
         self._cached_v11m10_stats = {}
@@ -306,6 +325,18 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         gate_in = torch.cat([hp, context], dim=-1)
         gates = torch.tanh(self.local54_compat_gate(gate_in)).to(dtype=reads.dtype)
         compat_read = (reads * gates.unsqueeze(-1)).sum(dim=-2)
+        raw_compat_read = compat_read
+        if self.local54_compat_read_norm is not None:
+            compat_read = self.local54_compat_read_norm(compat_read.to(dtype=hp.dtype)).to(
+                dtype=lig_read.dtype
+            )
+        if self.local54_compat_read_scale != 1.0:
+            compat_read = compat_read * compat_read.new_tensor(self.local54_compat_read_scale)
+        if self.local54_compat_read_clip > 0.0:
+            compat_read = compat_read.clamp(
+                min=-self.local54_compat_read_clip,
+                max=self.local54_compat_read_clip,
+            )
         alpha = self._bounded_scale(
             self.local54_compat_raw_alpha.to(dtype=lig_read.dtype),
             self.local54_compat_alpha_max,
@@ -316,6 +347,9 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         zero = hp.new_tensor(0.0, dtype=torch.float32)
         self._cached_v11m10_stats["local54_compat_gate_abs_mean"] = (
             gates.detach()[valid].abs().mean() if valid.any() else zero
+        )
+        self._cached_v11m10_stats["local54_compat_read_raw_abs_mean"] = (
+            raw_compat_read.detach()[valid].abs().mean() if valid.any() else zero
         )
         self._cached_v11m10_stats["local54_compat_read_abs_mean"] = (
             compat_read.detach()[valid].abs().mean() if valid.any() else zero

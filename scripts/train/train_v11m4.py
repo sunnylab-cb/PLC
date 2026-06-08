@@ -195,6 +195,7 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'local54_compat_alpha',
                     'ligand_context_prior_alpha',
                     'local54_compat_gate_abs_mean',
+                    'local54_compat_read_raw_abs_mean',
                     'local54_compat_read_abs_mean',
                     'ligand_context_prior_abs_mean',
                     'v12_cross_alpha_mean',
