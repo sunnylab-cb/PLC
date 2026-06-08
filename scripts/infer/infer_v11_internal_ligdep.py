@@ -62,7 +62,13 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
         or any(k.startswith("local54_compat_") for k in state)
         or any(k.startswith("ligand_context_prior") for k in state)
     )
+    has_v11m11_probe = (
+        any(k.startswith("bimamba_") for k in state)
+        or any(k.startswith("mamba_lig_") for k in state)
+    )
 
+    if "v11m11" in exp_name or has_v11m11_probe:
+        return "v11m11"
     if "v11m10" in exp_name or has_v11m10_probe:
         return "v11m10"
     if "v11m9" in exp_name or has_v11m9_probe:
@@ -101,7 +107,9 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
     model_cfg = dict(config["model"])
     model_cfg["use_gradient_checkpointing"] = False
 
-    if version == "v11m10":
+    if version == "v11m11":
+        from src.models.pocket_gvp_fusion_v11m11 import PocketGVPFusionV11m11 as ModelClass
+    elif version == "v11m10":
         from src.models.pocket_gvp_fusion_v11m10 import PocketGVPFusionV11m10 as ModelClass
     elif version == "v11m9":
         from src.models.pocket_gvp_fusion_v11m9 import PocketGVPFusionV11m9 as ModelClass
