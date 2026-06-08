@@ -179,6 +179,7 @@ model["local54_interaction_hidden"] = 96
 model["local54_interaction_kv_alpha_init"] = 0.05
 model["local54_interaction_kv_alpha_max"] = 0.30
 model["local54_compat_hidden"] = 128
+model["local54_compat_gate_bias_init"] = 0.05
 model["local54_compat_alpha_init"] = 0.05
 model["local54_compat_alpha_max"] = 0.30
 

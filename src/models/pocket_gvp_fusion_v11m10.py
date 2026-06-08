@@ -70,6 +70,7 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         "local54_interaction_kv_alpha_init": 0.05,
         "local54_interaction_kv_alpha_max": 0.30,
         "local54_compat_hidden": 128,
+        "local54_compat_gate_bias_init": 0.05,
         "local54_compat_alpha_init": 0.05,
         "local54_compat_alpha_max": 0.30,
         "use_ligand_context_prior": False,
@@ -159,7 +160,8 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
                 nn.Linear(compat_hidden, len(self.local54_interaction_groups)),
             )
             nn.init.zeros_(self.local54_compat_gate[-1].weight)
-            nn.init.zeros_(self.local54_compat_gate[-1].bias)
+            gate_bias_init = float(cfg.get("local54_compat_gate_bias_init", 0.05))
+            nn.init.constant_(self.local54_compat_gate[-1].bias, gate_bias_init)
             init = float(cfg.get("local54_compat_alpha_init", 0.05))
             self.local54_compat_raw_alpha = nn.Parameter(
                 torch.tensor(_atanh_ratio(init, self.local54_compat_alpha_max))
