@@ -270,14 +270,18 @@ class PocketGVPFusionV11m11(PocketGVPFusionV11m10):
             return k, v
         h = self._ligand_mamba_input(hl, lf, self.bimamba_ligand_input)
         delta = self.bimamba_ligand_stack(h, ligand_mask.bool()).to(dtype=hl.dtype)
-        k_res = self.bimamba_ligand_k(delta).to(dtype=k.dtype)
-        v_res = self.bimamba_ligand_v(delta).to(dtype=v.dtype)
+        h_ctx = h + delta
+        k_res = self.bimamba_ligand_k(h_ctx).to(dtype=k.dtype)
+        v_res = self.bimamba_ligand_v(h_ctx).to(dtype=v.dtype)
         alpha = self._bounded_scale(
             self.bimamba_ligand_raw_alpha.to(dtype=k.dtype),
             self.bimamba_ligand_alpha_max,
         )
         valid = ligand_mask.bool()
         zero = hl.new_tensor(0.0, dtype=torch.float32)
+        self._cached_v11m11_stats["bimamba_ligand_delta_abs_mean"] = (
+            delta.detach()[valid].float().abs().mean() if valid.any() else zero
+        )
         self._cached_v11m11_stats["bimamba_ligand_k_abs_mean"] = (
             k_res.detach()[valid].float().abs().mean() if valid.any() else zero
         )

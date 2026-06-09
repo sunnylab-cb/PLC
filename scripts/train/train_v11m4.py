@@ -201,6 +201,7 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'bimamba_residue_alpha',
                     'bimamba_residue_delta_abs_mean',
                     'bimamba_ligand_kv_alpha',
+                    'bimamba_ligand_delta_abs_mean',
                     'bimamba_ligand_k_abs_mean',
                     'bimamba_ligand_v_abs_mean',
                     'mamba_lig_memory_alpha',
