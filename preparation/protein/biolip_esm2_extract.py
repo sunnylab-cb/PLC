@@ -53,7 +53,6 @@ python biolip_esm2_extract.py ... --max 10 --smoke_test
 from __future__ import annotations
 
 import argparse
-import json
 import multiprocessing as mp
 import os
 import sys
@@ -354,20 +353,14 @@ def extract_bundle(
     if out_path.exists() and not overwrite:
         return True, f'{bundle_name}: SKIP'
 
-    # ── read protein_meta ──────────────────────────────────────────────────
-    meta_path = biolip_root / 'data' / bundle_name / 'protein_meta.json'
-    if not meta_path.exists():
-        return False, f'{bundle_name}: protein_meta.json missing'
-
-    try:
-        meta = json.loads(meta_path.read_text())
-    except Exception as e:
-        return False, f'{bundle_name}: protein_meta.json parse error: {e}'
-
-    pdb_id        = meta.get('pdb_id', '')
-    protein_chain = meta.get('protein_chain', '')
+    # ── derive pdb_id / protein_chain from bundle name ({pdb_id}_{chain}) ──
+    # protein_meta.json may be absent for some bundles; the bundle name itself
+    # encodes both fields unambiguously, so we parse it directly.
+    sep = bundle_name.index('_')
+    pdb_id        = bundle_name[:sep]
+    protein_chain = bundle_name[sep + 1:]
     if not pdb_id or not protein_chain:
-        return False, f'{bundle_name}: missing pdb_id or protein_chain in meta'
+        return False, f'{bundle_name}: cannot parse pdb_id/chain from bundle name'
 
     # ── validate pdb_id from metadata stays within allowed roots ──────────
     # A malformed protein_meta.json could point at an arbitrary path and cause
