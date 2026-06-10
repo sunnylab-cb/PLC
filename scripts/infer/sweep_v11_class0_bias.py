@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.infer.infer_v11_internal_ligdep import (  # noqa: E402
     create_v11_model,
+    model_needs_unimol,
     predict_v11_logits,
 )
 from scripts.infer.internal_ligand_dependency import (  # noqa: E402
@@ -92,7 +93,7 @@ def main() -> None:
     ckpt = load_checkpoint(args.checkpoint, device)
     config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
     model, version = create_v11_model(ckpt, config, device)
-    needs_unimol = bool(getattr(model, "use_unimol_ligand_input", False))
+    needs_unimol = model_needs_unimol(model)
     d_unimol = int(getattr(model, "d_unimol", config.get("model", {}).get("d_unimol", 512)))
     unimol_cache = load_unimol_cache(config, args, d_unimol=d_unimol) if needs_unimol and not args.no_unimol else {}
 

@@ -204,6 +204,46 @@ def get_batch_unimol(
     return t.to(device, non_blocking=True) if device is not None else t
 
 
+def _as_unimol_source_set(value) -> set:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {part.strip().lower() for part in value.split(",") if part.strip()}
+    return {str(part).strip().lower() for part in value if str(part).strip()}
+
+
+def config_needs_unimol(model_cfg: Dict) -> bool:
+    """Config-side equivalent of eval model_needs_unimol().
+
+    Keep the old V11m3 default of loading Uni-Mol when the key is omitted, but
+    also load it for pure late-branch UniMol variants that explicitly disable
+    direct atom-level UniMol input.
+    """
+    if bool(model_cfg.get("use_unimol_ligand_input", True)):
+        return True
+
+    if bool(model_cfg.get("use_ligand_context_prior", False)):
+        if "unimol" in _as_unimol_source_set(model_cfg.get("ligand_context_prior_sources", [])):
+            return True
+
+    for flag in (
+        "use_unimol_memory_kv",
+        "use_unimol_group_gate",
+        "use_unimol_atom_gate",
+        "use_unimol_residue_compat",
+    ):
+        if bool(model_cfg.get(flag, False)):
+            return True
+
+    # Conservative V12-style flags for shared V11 training entrypoints.
+    if bool(model_cfg.get("use_film", False)) or bool(model_cfg.get("use_unimol_global", False)):
+        return True
+    if int(model_cfg.get("n_co_attn_blocks", 0) or 0) > 0:
+        return True
+
+    return False
+
+
 # ============================================================================
 # 配置和工具函数
 # ============================================================================
@@ -1827,9 +1867,9 @@ def main():
 
     # V11m3: Uni-Mol cache. Config can omit this key; the old pocket YAML still works
     # if data/unimol_embeddings follows the standard extractor layout.
-    use_unimol_ligand_input = config['model'].get('use_unimol_ligand_input', True)
+    needs_unimol = config_needs_unimol(config['model'])
     d_unimol = int(config['model'].get('d_unimol', 512))
-    if use_unimol_ligand_input:
+    if needs_unimol:
         unimol_dir = data_cfg.get('unimol_embeddings_dir', 'unimol_embeddings')
         if is_main_process():
             print_rank0(f"  unimol_embeddings_dir: data/{unimol_dir}")

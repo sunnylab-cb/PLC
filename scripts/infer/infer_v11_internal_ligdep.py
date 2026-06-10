@@ -26,6 +26,47 @@ from scripts.infer.internal_ligand_dependency import (
 from src.data.collate import prepare_model_inputs_v11
 
 
+def _as_source_set(value) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {part.strip().lower() for part in value.split(",") if part.strip()}
+    return {str(part).strip().lower() for part in value if str(part).strip()}
+
+
+def model_needs_unimol(model) -> bool:
+    """Return True when any active model path consumes batch Uni-Mol embeddings."""
+    cfg = getattr(model, "config", {}) or {}
+
+    if bool(getattr(model, "use_unimol_ligand_input", cfg.get("use_unimol_ligand_input", False))):
+        return True
+
+    if bool(getattr(model, "use_ligand_context_prior", cfg.get("use_ligand_context_prior", False))):
+        sources = _as_source_set(
+            getattr(model, "ligand_context_prior_sources", cfg.get("ligand_context_prior_sources", []))
+        )
+        if "unimol" in sources:
+            return True
+
+    for flag in (
+        "use_unimol_memory_kv",
+        "use_unimol_group_gate",
+        "use_unimol_atom_gate",
+        "use_unimol_residue_compat",
+    ):
+        if bool(getattr(model, flag, cfg.get(flag, False))):
+            return True
+
+    # Conservative future-proofing for V12-style paths if reused through this runner.
+    if getattr(model, "unimol_to_global", None) is not None:
+        return True
+    co_blocks = getattr(model, "co_attn_blocks", None)
+    if co_blocks is not None and any(getattr(block, "film", None) is not None for block in co_blocks):
+        return True
+
+    return False
+
+
 def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
     state = ckpt["model_state_dict"]
     cfg = config or ckpt.get("config", {})
@@ -176,7 +217,7 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
 
 def predict_v11_logits(model, batch: Dict, device: torch.device, unimol_embed: torch.Tensor):
     inputs = prepare_model_inputs_v11(batch, device)
-    if getattr(model, "use_unimol_ligand_input", False):
+    if model_needs_unimol(model):
         inputs["unimol_embed"] = unimol_embed
     outputs = model(**inputs)
     return outputs["logits"] if isinstance(outputs, dict) else outputs
@@ -195,7 +236,7 @@ def main() -> None:
     config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
     model, version = create_v11_model(ckpt, config, device)
 
-    needs_unimol = bool(getattr(model, "use_unimol_ligand_input", False))
+    needs_unimol = model_needs_unimol(model)
     d_unimol = int(getattr(model, "d_unimol", config.get("model", {}).get("d_unimol", 512)))
     run_ligand_dependency_eval(
         args=args,

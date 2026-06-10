@@ -148,6 +148,26 @@ def _apply_freeze_policy(model: torch.nn.Module, config: Dict) -> None:
     base.print_rank0(f"Freeze policy: frozen={n_frozen:,}, trainable={n_trainable:,}")
 
 
+def _apply_direct_unimol_policy(model: torch.nn.Module, config: Dict) -> None:
+    train_cfg = config.get("training", {})
+    if not bool(train_cfg.get("zero_direct_unimol_ligand_input", False)):
+        return
+    alpha = getattr(model, "unimol_ligand_alpha", None)
+    if alpha is None:
+        base.print_rank0("zero_direct_unimol_ligand_input requested, but model has no direct UniMol alpha")
+        return
+    with torch.no_grad():
+        alpha.zero_()
+    alpha.requires_grad = False
+    proj = getattr(model, "unimol_ligand_proj", None)
+    if proj is not None:
+        for param in proj.parameters():
+            param.requires_grad = False
+    base.print_rank0(
+        "Direct UniMol ligand input zeroed/frozen; UniMol can still be used by late V11m12 branches"
+    )
+
+
 def create_model(
     config: Dict,
     device: torch.device,
@@ -176,7 +196,8 @@ def create_model(
 
     base.print_rank0(
         "Creating V11m12 model "
-        f"(l54_kv={model_cfg.get('use_local54_interaction_kv', False)}, "
+        f"(direct_unimol={model_cfg.get('use_unimol_ligand_input', False)}, "
+        f"l54_kv={model_cfg.get('use_local54_interaction_kv', False)}, "
         f"l54_compat={model_cfg.get('use_local54_residue_chem_compat', False)}, "
         f"u_mem={model_cfg.get('use_unimol_memory_kv', False)}, "
         f"u_mem_tokens={model_cfg.get('unimol_memory_tokens', 0)}, "
@@ -188,6 +209,7 @@ def create_model(
     )
     model = PocketGVPFusionV11m12(model_cfg)
     _load_init_checkpoint(model, config)
+    _apply_direct_unimol_policy(model, config)
     _apply_freeze_policy(model, config)
 
     model = model.to(device)
