@@ -109,11 +109,14 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
         or any(k.startswith("unimol_atom_") for k in state)
         or any(k.startswith("unimol_residue_") for k in state)
     )
+    has_v11m13_probe = any(k.startswith("local54_edge_context_") for k in state)
     has_v11m11_probe = (
         any(k.startswith("bimamba_") for k in state)
         or any(k.startswith("mamba_lig_") for k in state)
     )
 
+    if "v11m13" in exp_name or has_v11m13_probe:
+        return "v11m13"
     if "v11m12" in exp_name or has_v11m12_probe:
         return "v11m12"
     if "v11m11" in exp_name or has_v11m11_probe:
@@ -158,6 +161,8 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
 
     if version == "v11m12":
         from src.models.pocket_gvp_fusion_v11m12 import PocketGVPFusionV11m12 as ModelClass
+    elif version == "v11m13":
+        from src.models.pocket_gvp_fusion_v11m13 import PocketGVPFusionV11m13 as ModelClass
     elif version == "v11m11":
         from src.models.pocket_gvp_fusion_v11m11 import PocketGVPFusionV11m11 as ModelClass
     elif version == "v11m10":
