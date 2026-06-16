@@ -35,9 +35,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=96G
 #SBATCH --time=48:00:00
-#SBATCH --array=0-4
-#SBATCH --output=logs/top5_atoms_%A_%a.out
-#SBATCH --error=logs/top5_atoms_%A_%a.err
+#SBATCH --output=logs/top5_atoms_%j.out
+#SBATCH --error=logs/top5_atoms_%j.err
 
 set -uo pipefail
 
@@ -67,7 +66,7 @@ TRAIN_SCRIPTS=(
   "scripts/train/train_v11m13.py"
 )
 
-TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
+TASK_ID="${TOP5_TASK_ID:-${SLURM_ARRAY_TASK_ID:-0}}"
 RUN_NAME="${RUN_NAMES[$TASK_ID]}"
 BASE_CONFIG="${BASE_CONFIGS[$TASK_ID]}"
 TRAIN_SCRIPT="${TRAIN_SCRIPTS[$TASK_ID]}"
