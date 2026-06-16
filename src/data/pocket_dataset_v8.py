@@ -30,6 +30,24 @@ def set_seed(seed: int = 42):
         torch.cuda.manual_seed_all(seed)
 
 
+def _atom_crop_bounds(n_atoms: int, max_atoms: int, policy: str) -> tuple[int, int]:
+    """Return [start, end) atom bounds for deterministic ligand truncation."""
+    n_atoms = int(n_atoms)
+    max_atoms = int(max_atoms)
+    if n_atoms <= max_atoms:
+        return 0, n_atoms
+    policy = str(policy or "head").lower()
+    if policy in {"head", "first"}:
+        return 0, max_atoms
+    if policy in {"alternating_ends", "trim_ends", "center"}:
+        # Remove atoms front/back/front/back until max_atoms remains.  Keeping a
+        # contiguous middle segment preserves atom order and makes edge remap safe.
+        excess = n_atoms - max_atoms
+        drop_front = (excess + 1) // 2
+        return drop_front, drop_front + max_atoms
+    raise ValueError(f"unknown atom_truncation_policy={policy!r}")
+
+
 """
 Dataset for Pocket-GVP-Fusion V9 with NMA augmentation support.
 
@@ -110,6 +128,7 @@ class PocketDatasetV8(Dataset):
         use_spatial_clamp: bool = False,
         spatial_clamp_dims: Optional[List[int]] = None,
         spatial_clamp_range: Optional[List[float]] = None,
+        atom_truncation_policy: str = "head",
         *,
         split: Optional[str] = None,
         verbose: bool = True,
@@ -124,6 +143,7 @@ class PocketDatasetV8(Dataset):
         self.data_root = Path(data_root)
         self.max_seq_len = max_seq_len
         self.max_atoms = max_atoms
+        self.atom_truncation_policy = str(atom_truncation_policy or "head").lower()
 
         # V8: NMA parameters
         self.use_nma = use_nma
@@ -270,6 +290,8 @@ class PocketDatasetV8(Dataset):
                 f"spatial_clamp=dims{self.spatial_clamp_dims}"
                 f"[{self.spatial_clamp_min},{self.spatial_clamp_max}]"
             )
+        if self.atom_truncation_policy != "head":
+            parts.append(f"atom_policy={self.atom_truncation_policy}")
         self._log(" | ".join(parts))
 
         # V9: Print NMA availability statistics
@@ -485,10 +507,12 @@ class PocketDatasetV8(Dataset):
                 raw_distances = raw_distances[:self.max_seq_len]
             n_residues = self.max_seq_len
 
+        atom_start = 0
         if n_atoms > self.max_atoms:
-            ligand_features = ligand_features[:self.max_atoms]
-            ligand_coords = ligand_coords[:self.max_atoms]
-            n_atoms = self.max_atoms
+            atom_start, atom_end = _atom_crop_bounds(n_atoms, self.max_atoms, self.atom_truncation_policy)
+            ligand_features = ligand_features[atom_start:atom_end]
+            ligand_coords = ligand_coords[atom_start:atom_end]
+            n_atoms = atom_end - atom_start
 
         if self.use_spatial_clamp and self.spatial_clamp_dims:
             max_dim = max(self.spatial_clamp_dims)
@@ -510,10 +534,12 @@ class PocketDatasetV8(Dataset):
             ligand_edge_index = ligand_edge_index.long()
             ligand_edge_attr = ligand_edge_attr.float()
             edge_mask = (
-                (ligand_edge_index[0] < n_atoms) &
-                (ligand_edge_index[1] < n_atoms)
+                (ligand_edge_index[0] >= atom_start) &
+                (ligand_edge_index[0] < atom_start + n_atoms) &
+                (ligand_edge_index[1] >= atom_start) &
+                (ligand_edge_index[1] < atom_start + n_atoms)
             )
-            ligand_edge_index = ligand_edge_index[:, edge_mask]
+            ligand_edge_index = ligand_edge_index[:, edge_mask] - atom_start
             ligand_edge_attr = ligand_edge_attr[edge_mask]
 
         result = {

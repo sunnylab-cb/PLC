@@ -1852,6 +1852,7 @@ def main():
     use_spatial_clamp = data_cfg.get('use_spatial_clamp', False)
     spatial_clamp_dims = data_cfg.get('spatial_clamp_dims', [62, 76, 78, 79])
     spatial_clamp_range = data_cfg.get('spatial_clamp_range', [-5.0, 5.0])
+    atom_truncation_policy = data_cfg.get('atom_truncation_policy', 'head')
 
     if is_main_process():
         print_rank0("Data sources:")
@@ -1862,6 +1863,7 @@ def main():
         print_rank0(f"  distances_file (d_center): {distances_file or 'DEFAULT'}")
         print_rank0(f"  label_thresholds: Contact<{label_contact_thresh}Å, Near<{label_near_thresh}Å")
         print_rank0(f"  spatial_clamp: enabled={use_spatial_clamp}, dims={spatial_clamp_dims}, range={spatial_clamp_range}")
+        print_rank0(f"  atom_truncation_policy: {atom_truncation_policy}")
         if distances_file_original:
             print_rank0(f"  distances_file_original: {distances_file_original}")
 
@@ -1895,6 +1897,7 @@ def main():
         use_spatial_clamp=use_spatial_clamp,
         spatial_clamp_dims=spatial_clamp_dims,
         spatial_clamp_range=spatial_clamp_range,
+        atom_truncation_policy=atom_truncation_policy,
         split="train",
         verbose=is_main_process(),
         print_fn=print_rank0
@@ -1915,6 +1918,7 @@ def main():
         use_spatial_clamp=use_spatial_clamp,
         spatial_clamp_dims=spatial_clamp_dims,
         spatial_clamp_range=spatial_clamp_range,
+        atom_truncation_policy=atom_truncation_policy,
         use_nma=False,                      # V9: val always uses conf0 only
         split="val",
         verbose=False,
