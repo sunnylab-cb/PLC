@@ -125,6 +125,10 @@ def _normalize_ligand_features(atom_features: torch.Tensor, norm: Optional[Dict]
 def _atom_crop_bounds(n_atoms: int, max_atoms: int, policy: str) -> tuple[int, int]:
     n_atoms = int(n_atoms)
     max_atoms = int(max_atoms)
+    if max_atoms < 0:
+        return 0, n_atoms
+    if max_atoms == 0:
+        raise ValueError("max_atoms=0 is ambiguous; use a positive cap or -1 to disable atom truncation")
     if n_atoms <= max_atoms:
         return 0, n_atoms
     policy = str(policy or "head").lower()
@@ -705,7 +709,7 @@ def main() -> None:
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--max-seq-len", type=int, default=1800)
-    parser.add_argument("--max-atoms", type=int, default=128)
+    parser.add_argument("--max-atoms", type=int, default=128, help="Maximum ligand atoms; use -1 to disable atom truncation")
     parser.add_argument("--atom-truncation-policy", default="head", choices=["head", "first", "alternating_ends", "trim_ends", "center"])
     parser.add_argument("--contact-thresh", type=float, default=5.0)
     parser.add_argument("--near-thresh", type=float, default=8.0)
