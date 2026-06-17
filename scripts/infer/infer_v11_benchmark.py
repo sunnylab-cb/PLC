@@ -26,7 +26,7 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
 import torch
@@ -485,6 +485,9 @@ def compute_sample_metrics(
         pred_center = ca_coords[pred_contact].mean(axis=0)
     else:
         pred_center = ca_coords[int(np.argmax(probs[:, 0]))]
+    row["pred_contact_center_x"] = float(pred_center[0])
+    row["pred_contact_center_y"] = float(pred_center[1])
+    row["pred_contact_center_z"] = float(pred_center[2])
     dcc_lig = float(np.linalg.norm(pred_center - ligand_center))
     row["dcc_ligand"] = dcc_lig
     row["dcc_ligand_success"] = float(dcc_lig < dcc_thresh)
@@ -492,10 +495,16 @@ def compute_sample_metrics(
     true_contact = labels == 0
     if true_contact.sum() > 0:
         true_center = ca_coords[true_contact].mean(axis=0)
+        row["true_contact_center_x"] = float(true_center[0])
+        row["true_contact_center_y"] = float(true_center[1])
+        row["true_contact_center_z"] = float(true_center[2])
         dcc_contact = float(np.linalg.norm(pred_center - true_center))
         row["dcc_contact_center"] = dcc_contact
         row["dcc_contact_success"] = float(dcc_contact < dcc_thresh)
     else:
+        row["true_contact_center_x"] = float("nan")
+        row["true_contact_center_y"] = float("nan")
+        row["true_contact_center_z"] = float("nan")
         row["dcc_contact_center"] = float("nan")
         row["dcc_contact_success"] = float("nan")
 
@@ -505,16 +514,224 @@ def compute_sample_metrics(
     return row
 
 
-def aggregate_metrics(rows: List[Dict]) -> Dict:
-    def mean(key: str) -> float:
-        vals = [
-            row[key]
-            for row in rows
-            if key in row and not (isinstance(row[key], float) and math.isnan(row[key]))
-        ]
-        return float(np.mean(vals)) if vals else float("nan")
+def _is_finite_number(value) -> bool:
+    return isinstance(value, (int, float, np.integer, np.floating)) and not math.isnan(float(value))
 
+
+def _mean_numeric(rows: Sequence[Dict], key: str) -> float:
+    vals = [float(row[key]) for row in rows if key in row and _is_finite_number(row[key])]
+    return float(np.mean(vals)) if vals else float("nan")
+
+
+def _quantiles(values: Sequence[float]) -> Dict[str, float]:
+    vals = np.asarray([float(v) for v in values if _is_finite_number(v)], dtype=np.float64)
+    if vals.size == 0:
+        return {"min": float("nan"), "p10": float("nan"), "p25": float("nan"), "p50": float("nan"), "p75": float("nan"), "p90": float("nan"), "max": float("nan"), "mean": float("nan")}
     return {
+        "min": float(np.min(vals)),
+        "p10": float(np.percentile(vals, 10)),
+        "p25": float(np.percentile(vals, 25)),
+        "p50": float(np.percentile(vals, 50)),
+        "p75": float(np.percentile(vals, 75)),
+        "p90": float(np.percentile(vals, 90)),
+        "max": float(np.max(vals)),
+        "mean": float(np.mean(vals)),
+    }
+
+
+METRIC_KEYS = [
+    "f1_c0",
+    "precision_c0",
+    "recall_c0",
+    "iou_c0",
+    "ap_c0",
+    "mcc_c0",
+    "f1_binary",
+    "dcc_ligand",
+    "dcc_ligand_success",
+    "dcc_contact_center",
+    "dcc_contact_success",
+    "top1_ligand_dist",
+    "top1_ligand_success",
+    "n_pred_contact",
+    "n_true_contact",
+    "pdr_union_success",
+    "pdr_union_dcc",
+    "laa_success",
+    "laa_rank",
+    "laa_margin",
+    "bp_f1_c0",
+    "bp_precision_c0",
+    "bp_iou_c0",
+]
+
+LOWER_IS_BETTER_METRICS = {
+    "dcc_ligand",
+    "dcc_contact_center",
+    "top1_ligand_dist",
+    "pdr_union_dcc",
+    "laa_rank",
+}
+
+
+def _canonical_metric_name(key: str) -> str:
+    names = {
+        "f1_c0": "Mean_F1_c0",
+        "precision_c0": "Mean_Prec_c0",
+        "recall_c0": "Mean_Rec_c0",
+        "iou_c0": "Mean_IoU_c0",
+        "ap_c0": "Mean_AP_c0",
+        "mcc_c0": "Mean_MCC_c0",
+        "f1_binary": "Mean_F1_binary",
+        "dcc_ligand": "DCC_Ligand",
+        "dcc_ligand_success": "DCC_Ligand_Success",
+        "dcc_contact_center": "DCC_ContactCenter",
+        "dcc_contact_success": "DCC_ContactCenter_Success",
+        "top1_ligand_dist": "Top1_Ligand_Dist",
+        "top1_ligand_success": "Top1_Ligand_Success",
+        "n_pred_contact": "Mean_pred_contact_count",
+        "n_true_contact": "Mean_true_contact_count",
+        "pdr_union_success": "PDR",
+        "pdr_union_dcc": "PDR_Union_DCC",
+        "laa_success": "LAA",
+        "laa_rank": "LAA_Rank",
+        "laa_margin": "LAA_Margin",
+        "bp_f1_c0": "BP_F1_c0",
+        "bp_precision_c0": "BP_Prec_c0",
+        "bp_iou_c0": "BP_IoU_c0",
+    }
+    return names.get(key, key)
+
+
+def _group_rows_by_key(rows: Sequence[Dict], key: str) -> Dict[str, List[Dict]]:
+    groups: Dict[str, List[Dict]] = {}
+    for row in rows:
+        groups.setdefault(str(row.get(key, "")), []).append(row)
+    return groups
+
+
+def _mean_over_proteins(rows: Sequence[Dict], metric_key: str, reducer: str) -> float:
+    protein_groups = _group_rows_by_key(rows, "protein_key")
+    vals = []
+    for protein_rows in protein_groups.values():
+        local_vals = [float(row[metric_key]) for row in protein_rows if metric_key in row and _is_finite_number(row[metric_key])]
+        if not local_vals:
+            continue
+        if reducer == "mean":
+            vals.append(float(np.mean(local_vals)))
+        elif reducer == "max":
+            # Keep the user-facing name protein_mean_of_ligand_max for
+            # compatibility, but use best-of-ligands semantics for distances.
+            if metric_key in LOWER_IS_BETTER_METRICS:
+                vals.append(float(np.min(local_vals)))
+            else:
+                vals.append(float(np.max(local_vals)))
+        else:
+            raise ValueError(reducer)
+    return float(np.mean(vals)) if vals else float("nan")
+
+
+def _metric_block(rows: Sequence[Dict], reducer: str = "sample") -> Dict[str, float]:
+    out = {}
+    for key in METRIC_KEYS:
+        if reducer == "sample":
+            value = _mean_numeric(rows, key)
+        else:
+            value = _mean_over_proteins(rows, key, reducer)
+        out[_canonical_metric_name(key)] = value
+    return out
+
+
+def _key_alignment_summary(rows: Sequence[Dict], tag_mode: str) -> Dict:
+    by_protein = _group_rows_by_key(rows, "protein_key")
+    ligand_keys = [str(row.get("ligand_key", "")) for row in rows]
+    pdb_ids = [str(row.get("pdb_id", "")) for row in rows]
+    shuffled = sum(1 for row in rows if row.get("pdb_id") != row.get("ligand_key"))
+    ligand_counts = [len({str(row.get("ligand_key", "")) for row in protein_rows}) for protein_rows in by_protein.values()]
+    return {
+        "tag_mode": tag_mode,
+        "n_samples": len(rows),
+        "n_unique_pdb_ids": len(set(pdb_ids)),
+        "n_unique_protein_keys": len(by_protein),
+        "n_unique_ligand_keys": len(set(ligand_keys)),
+        "n_rows_with_ligand_key_mismatch": int(shuffled),
+        "ligands_per_protein": _quantiles(ligand_counts),
+    }
+
+
+def _contact_count_summary(rows: Sequence[Dict]) -> Dict:
+    return {
+        "true_contact_count": _quantiles([row.get("n_true_contact", float("nan")) for row in rows]),
+        "pred_contact_count": _quantiles([row.get("n_pred_contact", float("nan")) for row in rows]),
+        "n_zero_true_contact": int(sum(1 for row in rows if int(row.get("n_true_contact", -1)) == 0)),
+        "n_zero_pred_contact": int(sum(1 for row in rows if int(row.get("n_pred_contact", -1)) == 0)),
+        "residue_count": _quantiles([row.get("n_residues", float("nan")) for row in rows]),
+        "ligand_atom_count_after_crop": _quantiles([row.get("n_atoms", float("nan")) for row in rows]),
+        "ligand_atom_count_raw": _quantiles([row.get("ligand_atoms_raw", float("nan")) for row in rows]),
+    }
+
+
+def _center_from_row(row: Dict, prefix: str) -> Optional[np.ndarray]:
+    keys = [f"{prefix}_x", f"{prefix}_y", f"{prefix}_z"]
+    if not all(key in row and _is_finite_number(row[key]) for key in keys):
+        return None
+    return np.asarray([float(row[key]) for key in keys], dtype=np.float64)
+
+
+def enrich_rows_with_interpretability_metrics(rows: List[Dict], dcc_thresh: float) -> None:
+    """Add PDR/LAA/BP diagnostics in-place.
+
+    PDR uses the protein-level union of per-ligand true pocket centers: it asks
+    whether the predicted contact center hits any real pocket for the protein.
+    LAA is defined only for proteins with at least two ligand pockets and asks
+    whether the current ligand's pocket is the nearest true pocket to the
+    prediction. BP is the contact-boundary quality conditioned on correct
+    current-ligand pocket localization.
+    """
+    by_protein = _group_rows_by_key(rows, "protein_key")
+    for protein_rows in by_protein.values():
+        true_centers = []
+        for row in protein_rows:
+            center = _center_from_row(row, "true_contact_center")
+            if center is not None:
+                true_centers.append(center)
+        true_centers_arr = np.stack(true_centers, axis=0) if true_centers else None
+
+        for row in protein_rows:
+            pred_center = _center_from_row(row, "pred_contact_center")
+            true_center = _center_from_row(row, "true_contact_center")
+            if pred_center is not None and true_centers_arr is not None:
+                dists = np.linalg.norm(true_centers_arr - pred_center[None, :], axis=1)
+                row["pdr_union_dcc"] = float(np.min(dists))
+                row["pdr_union_success"] = float(row["pdr_union_dcc"] < dcc_thresh)
+            else:
+                row["pdr_union_dcc"] = float("nan")
+                row["pdr_union_success"] = float("nan")
+
+            row["laa_success"] = float("nan")
+            row["laa_rank"] = float("nan")
+            row["laa_margin"] = float("nan")
+            if pred_center is not None and true_center is not None and true_centers_arr is not None and len(true_centers_arr) >= 2:
+                dists = np.linalg.norm(true_centers_arr - pred_center[None, :], axis=1)
+                current_dist = float(np.linalg.norm(true_center - pred_center))
+                rank = int((dists < current_dist - 1e-8).sum() + 1)
+                row["laa_rank"] = float(rank)
+                row["laa_success"] = float(rank == 1 and current_dist < dcc_thresh)
+                if len(dists) >= 2:
+                    sorted_dists = np.sort(dists)
+                    row["laa_margin"] = float(sorted_dists[1] - sorted_dists[0])
+
+            detected_current = bool(_is_finite_number(row.get("dcc_contact_success", float("nan"))) and float(row["dcc_contact_success"]) >= 0.5)
+            row["bp_f1_c0"] = float(row["f1_c0"]) if detected_current else float("nan")
+            row["bp_precision_c0"] = float(row["precision_c0"]) if detected_current else float("nan")
+            row["bp_iou_c0"] = float(row["iou_c0"]) if detected_current else float("nan")
+
+
+def aggregate_metrics(rows: List[Dict], tag_mode: str = "aggregate") -> Dict:
+    def mean(key: str) -> float:
+        return _mean_numeric(rows, key)
+
+    legacy = {
         "N_evaluated": len(rows),
         "Mean_F1_c0": mean("f1_c0"),
         "Mean_Prec_c0": mean("precision_c0"),
@@ -532,6 +749,23 @@ def aggregate_metrics(rows: List[Dict]) -> Dict:
         "Mean_pred_contact_count": mean("n_pred_contact"),
         "Mean_true_contact_count": mean("n_true_contact"),
     }
+    summary = dict(legacy)
+    summary.update({
+        "sample_mean": _metric_block(rows, "sample"),
+        "protein_mean_of_ligand_mean": _metric_block(rows, "mean"),
+        "protein_mean_of_ligand_max": _metric_block(rows, "max"),
+        "key_alignment": _key_alignment_summary(rows, tag_mode),
+        "contact_count_distribution": _contact_count_summary(rows),
+        "metric_definitions": {
+            "sample_mean": "Mean over every row in the benchmark CSV.",
+            "protein_mean_of_ligand_mean": "Mean over proteins after averaging ligand rows within each protein.",
+            "protein_mean_of_ligand_max": "Mean over proteins after taking the best ligand row within each protein for each metric; distance-like metrics use min distance.",
+            "PDR": "Pocket Detection Rate: predicted contact center is within dcc_thresh of any true ligand-pocket center for the same protein.",
+            "LAA": "Ligand Assignment Accuracy: for proteins with >=2 ligand-pocket centers, the current ligand pocket is the nearest true pocket to the predicted center and is within dcc_thresh.",
+            "BP": "Boundary Precision: contact boundary F1/precision/IoU averaged only over rows whose predicted center localizes the current ligand pocket within dcc_thresh.",
+        },
+    })
+    return summary
 
 
 CSV_FIELDS = [
@@ -563,8 +797,22 @@ CSV_FIELDS = [
     "dcc_ligand_success",
     "dcc_contact_center",
     "dcc_contact_success",
+    "pdr_union_dcc",
+    "pdr_union_success",
+    "laa_success",
+    "laa_rank",
+    "laa_margin",
+    "bp_f1_c0",
+    "bp_precision_c0",
+    "bp_iou_c0",
     "top1_ligand_dist",
     "top1_ligand_success",
+    "pred_contact_center_x",
+    "pred_contact_center_y",
+    "pred_contact_center_z",
+    "true_contact_center_x",
+    "true_contact_center_y",
+    "true_contact_center_z",
     "len_protein",
     "len_esm",
     "len_labels",
@@ -681,7 +929,8 @@ def run_dataset(
             }
             row.update(metrics)
             rows.append(row)
-    summary = aggregate_metrics(rows)
+    enrich_rows_with_interpretability_metrics(rows, dcc_thresh=args.dcc_thresh)
+    summary = aggregate_metrics(rows, tag_mode=args.tag_mode)
     save_csv(rows, out_dir / f"{dataset_name}_all_results.csv")
     with (out_dir / f"{dataset_name}_summary.json").open("w") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
