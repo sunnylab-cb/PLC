@@ -38,7 +38,7 @@
 #SBATCH --output=logs/top5_atoms_%j.out
 #SBATCH --error=logs/top5_atoms_%j.err
 
-set -uo pipefail
+set -o pipefail
 
 PROJECT_DIR="/hpc2hdd/home/shuang886/jhspoolers/PLC"
 
@@ -101,6 +101,7 @@ else
   exit 1
 fi
 conda activate af3
+set -u
 
 cd "${PROJECT_DIR}" || exit 1
 
