@@ -18,6 +18,7 @@
 #   2 seed44_all3_lr5e4
 #   3 seed44_group_rescompat_lr2e4
 #   4 seed44_chem_adapter_lr2e4
+#   5 seed45_group_rescompat_lr2e4
 
 #SBATCH --job-name=top5_plig
 #SBATCH --partition=i64m1tga800ue
@@ -42,6 +43,7 @@ RUN_NAMES=(
   "seed44_all3_lr5e4"
   "seed44_group_rescompat_lr2e4"
   "seed44_chem_adapter_lr2e4"
+  "seed45_group_rescompat_lr2e4"
 )
 
 CHECKPOINTS=(
@@ -50,6 +52,7 @@ CHECKPOINTS=(
   "outputs/pocket_gvp_fusion_seed44_all3_lr5e4_v11m13_20260611_205603/best_f1_c0_model.pt"
   "outputs/pocket_gvp_fusion_seed44_group_rescompat_lr2e4_v11m13_20260611_205114/best_f1_c0_model.pt"
   "outputs/pocket_gvp_fusion_seed44_chem_adapter_lr2e4_v11m13_20260611_205604/best_f1_c0_model.pt"
+  "outputs/pocket_gvp_fusion_seed45_group_rescompat_lr2e4_v11m13_20260614_022638/best_f1_c0_model.pt"
 )
 
 TASK_ID="${BENCH_TASK_ID:-${SLURM_ARRAY_TASK_ID:-0}}"
