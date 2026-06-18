@@ -39,7 +39,9 @@
 #SBATCH --output=logs/v11m15_assign_%A_%a.out
 #SBATCH --error=logs/v11m15_assign_%A_%a.err
 
-set -euo pipefail
+# Avoid `set -u`: this cluster's conda deactivate hook reads an unset
+# _CONDA_PYTHON_SYSCONFIGDATA_NAME_USED variable and exits before training.
+set -eo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
 BASE_CONFIG="${BASE_CONFIG:-outputs/pocket_gvp_fusion_seed44_group_rescompat_lr2e4_v11m13_20260611_205114/config.yaml}"
