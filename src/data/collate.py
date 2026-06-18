@@ -522,6 +522,13 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     if has_raw_distances:
         raw_distances = torch.full((B, max_residues), 999.0)  # pad with large distance
 
+    has_assignment_negatives = any('assignment_neg_indices' in sample for sample in batch)
+    if has_assignment_negatives:
+        max_assignment_negs = max(len(sample.get('assignment_neg_indices', [])) for sample in batch)
+        assignment_neg_masks = torch.zeros(B, max_assignment_negs, max_residues, dtype=torch.bool)
+        assignment_neg_valid = torch.zeros(B, max_assignment_negs, dtype=torch.bool)
+        assignment_neg_ids = []
+
     ligand_features = torch.zeros(B, max_atoms, ligand_dim)
     ligand_coords = torch.zeros(B, max_atoms, 3)
     ligand_mask = torch.zeros(B, max_atoms, dtype=torch.bool)
@@ -556,6 +563,21 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
             rd = sample['raw_distances']
             n_rd = min(len(rd), n_res)
             raw_distances[i, :n_rd] = rd[:n_rd]
+
+        if has_assignment_negatives:
+            ids_i = []
+            for j, neg_idx in enumerate(sample.get('assignment_neg_indices', [])):
+                if j >= max_assignment_negs:
+                    break
+                neg_idx = torch.as_tensor(neg_idx, dtype=torch.long)
+                neg_idx = neg_idx[(neg_idx >= 0) & (neg_idx < n_res)]
+                if neg_idx.numel() == 0:
+                    continue
+                assignment_neg_masks[i, j, neg_idx] = True
+                assignment_neg_valid[i, j] = True
+                neg_ids = sample.get('assignment_neg_ids', [])
+                ids_i.append(str(neg_ids[j]) if j < len(neg_ids) else "")
+            assignment_neg_ids.append(ids_i)
 
         ligand_features[i, :n_atm] = sample['ligand_features'][:n_atm]
         ligand_coords[i, :n_atm] = sample['ligand_coords'][:n_atm]
@@ -621,6 +643,11 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 
     if has_raw_distances:
         result['raw_distances'] = raw_distances
+
+    if has_assignment_negatives:
+        result['assignment_neg_masks'] = assignment_neg_masks
+        result['assignment_neg_valid'] = assignment_neg_valid
+        result['assignment_neg_ids'] = assignment_neg_ids
 
     return result
 

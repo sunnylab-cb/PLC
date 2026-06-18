@@ -134,6 +134,14 @@ def main() -> None:
     ap.add_argument("--splits", required=True)
     ap.add_argument("--split", default="train")
     ap.add_argument("--output", required=True)
+    ap.add_argument(
+        "--save-artifact",
+        default=None,
+        help=(
+            "Optional .pt artifact for training. Stores per-sample valid same-"
+            "protein negative contact indices aligned by exact residue order."
+        ),
+    )
     ap.add_argument("--max-samples", type=int, default=0)
     ap.add_argument("--jaccard-thresh", type=float, default=0.25)
     ap.add_argument("--centroid-min-dist", type=float, default=7.0)
@@ -178,6 +186,7 @@ def main() -> None:
             "n_residues": n,
             "n_contact": int(mask.sum()),
             "mask": mask,
+            "contact_indices": np.nonzero(mask)[0].astype(np.int64),
             "centroid": _centroid(coords, mask),
         })
 
@@ -192,6 +201,7 @@ def main() -> None:
     overlap_counts = []
     group_sizes = []
     valid_sample_ids = []
+    artifact_negatives: Dict[str, List[Dict]] = defaultdict(list)
     invalid_reason_counts = defaultdict(int)
 
     for group in groups.values():
@@ -228,6 +238,14 @@ def main() -> None:
                     invalid_reason_counts["overlap_count_masked"] += 1
                     continue
                 n_valid += 1
+                artifact_negatives[src["pdb_id"]].append({
+                    "neg_pdb_id": neg["pdb_id"],
+                    "contact_indices": torch.as_tensor(neg["contact_indices"], dtype=torch.long),
+                    "jaccard": float(jac),
+                    "centroid_distance": float(dist),
+                    "overlap_count": int(inter),
+                    "n_contact": int(neg["n_contact"]),
+                })
             candidate_counts.append(n_candidates)
             valid_counts.append(n_valid)
             if n_valid > 0:
@@ -272,6 +290,26 @@ def main() -> None:
     with out.open("w") as handle:
         json.dump(result, handle, indent=2, sort_keys=True)
     print(json.dumps(result, indent=2, sort_keys=True))
+
+    if args.save_artifact:
+        artifact_path = Path(args.save_artifact)
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "metadata": {
+                    "source_summary": str(out),
+                    "config": str(config_path),
+                    "splits": str(Path(args.splits)),
+                    "split": args.split,
+                    "mask_policy": result["mask_policy"],
+                    "n_samples": n_samples,
+                    "samples_with_valid_masked_negative": len(valid_sample_ids),
+                },
+                "negatives": dict(artifact_negatives),
+            },
+            artifact_path,
+        )
+        print(f"Saved assignment negative artifact: {artifact_path}")
 
 
 if __name__ == "__main__":

@@ -129,6 +129,8 @@ class PocketDatasetV8(Dataset):
         spatial_clamp_dims: Optional[List[int]] = None,
         spatial_clamp_range: Optional[List[float]] = None,
         atom_truncation_policy: str = "head",
+        assignment_negatives_file: Optional[str] = None,
+        assignment_max_negatives: int = 4,
         *,
         split: Optional[str] = None,
         verbose: bool = True,
@@ -144,6 +146,19 @@ class PocketDatasetV8(Dataset):
         self.max_seq_len = max_seq_len
         self.max_atoms = max_atoms
         self.atom_truncation_policy = str(atom_truncation_policy or "head").lower()
+        self.assignment_max_negatives = max(0, int(assignment_max_negatives))
+        self.assignment_negatives: Dict[str, List[Dict]] = {}
+        if assignment_negatives_file:
+            neg_path = Path(assignment_negatives_file)
+            if neg_path.exists():
+                neg_data = torch.load(neg_path, map_location="cpu", weights_only=False)
+                self.assignment_negatives = neg_data.get("negatives", neg_data)
+                self._log(
+                    f"{self._log_prefix()} assignment negatives loaded: "
+                    f"{len(self.assignment_negatives)} samples from {neg_path}"
+                )
+            else:
+                self._warn(f"Warning: assignment negatives file not found: {neg_path}")
 
         # V8: NMA parameters
         self.use_nma = use_nma
@@ -568,6 +583,24 @@ class PocketDatasetV8(Dataset):
 
         if raw_distances is not None:
             result['raw_distances'] = raw_distances.float()
+
+        if self.assignment_negatives:
+            neg_items = self.assignment_negatives.get(pdb_id, [])
+            neg_indices = []
+            neg_ids = []
+            for item in neg_items[: self.assignment_max_negatives]:
+                idx = item.get("contact_indices", [])
+                idx = torch.as_tensor(idx, dtype=torch.long)
+                if idx.numel() == 0:
+                    continue
+                idx = idx[(idx >= 0) & (idx < n_residues)]
+                if idx.numel() == 0:
+                    continue
+                neg_indices.append(idx)
+                neg_ids.append(str(item.get("neg_pdb_id", "")))
+            if neg_indices:
+                result["assignment_neg_indices"] = neg_indices
+                result["assignment_neg_ids"] = neg_ids
 
         return result
 

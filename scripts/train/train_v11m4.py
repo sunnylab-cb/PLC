@@ -233,6 +233,82 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
     if local_delta_anchor not in source:
         raise RuntimeError("Could not patch V11m3 local-delta diagnostics block for V11m4")
     source = source.replace(local_delta_anchor, local_delta_anchor + local_delta_block, 1)
+    assignment_data_anchor = "    atom_truncation_policy = data_cfg.get('atom_truncation_policy', 'head')\n"
+    assignment_data_block = (
+        "    atom_truncation_policy = data_cfg.get('atom_truncation_policy', 'head')\n"
+        "    assignment_negatives_file = data_cfg.get('assignment_negatives_file')\n"
+        "    assignment_max_negatives = data_cfg.get('assignment_max_negatives', 4)\n"
+    )
+    if assignment_data_anchor not in source:
+        raise RuntimeError("Could not patch assignment data config block for V11m15")
+    source = source.replace(assignment_data_anchor, assignment_data_block, 1)
+
+    assignment_dataset_anchor = (
+        "        atom_truncation_policy=atom_truncation_policy,\n"
+        "        split=\"train\",\n"
+    )
+    assignment_dataset_block = (
+        "        atom_truncation_policy=atom_truncation_policy,\n"
+        "        assignment_negatives_file=assignment_negatives_file,\n"
+        "        assignment_max_negatives=assignment_max_negatives,\n"
+        "        split=\"train\",\n"
+    )
+    if assignment_dataset_anchor not in source:
+        raise RuntimeError("Could not patch assignment dataset args for V11m15")
+    source = source.replace(assignment_dataset_anchor, assignment_dataset_block, 1)
+
+    assignment_loss_anchor = """            else:
+                dist_aux_loss = torch.tensor(0.0, device=device)
+
+            # 防御式处理：确保所有损失为标量
+"""
+    assignment_loss_block = """            else:
+                dist_aux_loss = torch.tensor(0.0, device=device)
+
+            # V11m15: optional ligand-pocket assignment auxiliary loss.  The
+            # method lives on the model so older variants are unaffected.
+            assignment_aux_loss = torch.tensor(0.0, device=device)
+            assignment_aux_stats = {}
+            _assignment_model = model.module if isinstance(model, DDP) else model
+            if hasattr(_assignment_model, 'compute_assignment_auxiliary_loss'):
+                assignment_aux_loss, assignment_aux_stats = (
+                    _assignment_model.compute_assignment_auxiliary_loss(
+                        outputs=outputs,
+                        labels=labels,
+                        mask=mask,
+                        batch=batch,
+                    )
+                )
+                if torch.is_tensor(assignment_aux_loss):
+                    loss = loss + assignment_aux_loss
+
+            # 防御式处理：确保所有损失为标量
+"""
+    if assignment_loss_anchor not in source:
+        raise RuntimeError("Could not patch assignment aux loss block for V11m15")
+    source = source.replace(assignment_loss_anchor, assignment_loss_block, 1)
+
+    assignment_tb_anchor = """                # V10m8: dist aux loss
+                if dist_aux_enabled:
+                    writer.add_scalar('Train/dist_aux_loss', dist_aux_loss.item(), global_step)
+
+                # 健康诊断（GVP范数、门控开放度、注意力熵）
+"""
+    assignment_tb_block = """                # V10m8: dist aux loss
+                if dist_aux_enabled:
+                    writer.add_scalar('Train/dist_aux_loss', dist_aux_loss.item(), global_step)
+
+                # V11m15: assignment auxiliary diagnostics.
+                for key, value in assignment_aux_stats.items():
+                    if torch.is_tensor(value):
+                        value = value.detach().float().mean().item()
+                    writer.add_scalar(f'Assignment/{key}', float(value), global_step)
+
+                # 健康诊断（GVP范数、门控开放度、注意力熵）
+"""
+    if assignment_tb_anchor not in source:
+        raise RuntimeError("Could not patch assignment TensorBoard block for V11m15")
+    source = source.replace(assignment_tb_anchor, assignment_tb_block, 1)
     return source.replace(old_best_tail, new_best_tail, 1)
 
 

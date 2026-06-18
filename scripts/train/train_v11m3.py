@@ -1020,6 +1020,11 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     if hasattr(model, 'ligand_encoder') and model.ligand_encoder is not None:
         stats['grad_norm_ligand_encoder'] = get_grad_norm(model.ligand_encoder)
 
+    if hasattr(model, 'assignment_lig_proj') and model.assignment_lig_proj is not None:
+        stats['grad_norm_assignment_lig_proj'] = get_grad_norm(model.assignment_lig_proj)
+    if hasattr(model, 'assignment_pocket_proj') and model.assignment_pocket_proj is not None:
+        stats['grad_norm_assignment_pocket_proj'] = get_grad_norm(model.assignment_pocket_proj)
+
     # V11: Ligand internal self-attention
     if hasattr(model, 'ligand_self_attn') and model.ligand_self_attn is not None:
         stats['grad_norm_ligand_self_attn'] = get_grad_norm(model.ligand_self_attn)
