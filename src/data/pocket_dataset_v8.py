@@ -146,6 +146,13 @@ class PocketDatasetV8(Dataset):
         self.max_seq_len = max_seq_len
         self.max_atoms = max_atoms
         self.atom_truncation_policy = str(atom_truncation_policy or "head").lower()
+
+        # V8: NMA parameters.  Set before optional assignment artifact logging,
+        # because _log_prefix() reports these fields.
+        self.use_nma = use_nma
+        self.nma_n_confs = max(1, nma_n_confs)
+        self.nma_max_conf = nma_max_conf
+
         self.assignment_max_negatives = max(0, int(assignment_max_negatives))
         self.assignment_negatives: Dict[str, List[Dict]] = {}
         if assignment_negatives_file:
@@ -159,11 +166,6 @@ class PocketDatasetV8(Dataset):
                 )
             else:
                 self._warn(f"Warning: assignment negatives file not found: {neg_path}")
-
-        # V8: NMA parameters
-        self.use_nma = use_nma
-        self.nma_n_confs = max(1, nma_n_confs)
-        self.nma_max_conf = nma_max_conf
 
         # Label thresholds for d_min (minimum heavy-atom pairwise distance)
         self.label_contact_thresh = label_contact_thresh
