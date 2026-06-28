@@ -227,6 +227,11 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'residue_atom_bias_abs_mean',
                     'residue_atom_triangle_alpha',
                     'residue_atom_triangle_abs_mean',
+                    'ligand_slots_attn_entropy',
+                    'ligand_slots_abs_mean',
+                    'local54_qk_reparam_alpha',
+                    'local54_qk_reparam_q_abs_mean',
+                    'local54_qk_reparam_k_abs_mean',
                 ):
                     if key in outputs:
                         value = outputs[key]

@@ -40,6 +40,7 @@ def setup_experiment(config: Dict, rank: int, resume_path: str = None) -> Path:
         "v11m5", "v11m5t", "v11m6", "v11m6n", "v11m7", "v11m8", "v11m8x",
         "v11m9", "v11m10", "v11m11", "v11m12", "v11m13", "v11m14",
         "v11m15", "v13m0",
+        "v13m1", "v13m2",
     }
     raw_exp_name = config["experiment"]["name"]
     version_suffix = config.get("experiment", {}).get("version_suffix", "v13m0")
@@ -95,6 +96,9 @@ def _load_init_checkpoint(model: torch.nn.Module, config: Dict) -> None:
         "cross_attention_layers.",
         "residue_atom_bias_",
         "residue_atom_triangle_",
+        "ligand_slot_",
+        "local54_q",
+        "local54_k",
     )
     bad_missing = [k for k in missing if not k.startswith(allowed_missing)]
     if unexpected or bad_missing:
@@ -160,6 +164,8 @@ def create_model(
         "Creating V13m0 model "
         f"(res_atom_bias={model_cfg.get('use_residue_atom_bias', False)}, "
         f"triangle_bias={model_cfg.get('use_residue_atom_triangle_bias', False)}, "
+        f"slots={model_cfg.get('use_ligand_slots_delta', False)}, "
+        f"qk_reparam={model_cfg.get('use_local54_qk_reparam', False)}, "
         f"coattn={model_cfg.get('use_v12_coattention_block', False)}, "
         f"l54_kv={model_cfg.get('use_local54_interaction_kv', False)}, "
         f"l54_compat={model_cfg.get('use_local54_residue_chem_compat', False)}, "

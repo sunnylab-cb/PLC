@@ -63,6 +63,25 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         "residue_atom_triangle_window": 7,
         "residue_atom_triangle_alpha_init": 0.02,
         "residue_atom_triangle_alpha_max": 0.12,
+        "use_ligand_slots_delta": False,
+        "ligand_slots_num": 16,
+        "ligand_slots_hidden": 128,
+        "ligand_slots_local54_groups": [
+            "base33",
+            "electronic3",
+            "sasa_hbond4",
+            "flex_rot5",
+        ],
+        "use_local54_qk_reparam": False,
+        "local54_qk_reparam_hidden": 96,
+        "local54_qk_reparam_alpha_init": 0.03,
+        "local54_qk_reparam_alpha_max": 0.20,
+        "local54_qk_reparam_local54_groups": [
+            "base33",
+            "electronic3",
+            "sasa_hbond4",
+            "flex_rot5",
+        ],
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -78,6 +97,8 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         self.use_residue_atom_triangle_bias = bool(
             cfg.get("use_residue_atom_triangle_bias", False)
         )
+        self.use_ligand_slots_delta = bool(cfg.get("use_ligand_slots_delta", False))
+        self.use_local54_qk_reparam = bool(cfg.get("use_local54_qk_reparam", False))
         self.residue_atom_triangle_window = max(
             1, int(cfg.get("residue_atom_triangle_window", 7))
         )
@@ -90,6 +111,14 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         d_model = int(self.config["d_model"])
         hidden = int(cfg.get("residue_atom_bias_hidden", 48))
         chem_dim = _groups_dim(self.residue_atom_bias_groups)
+        self.ligand_slots_groups = _parse_bias_groups(
+            cfg.get("ligand_slots_local54_groups")
+        )
+        self.local54_qk_reparam_groups = _parse_bias_groups(
+            cfg.get("local54_qk_reparam_local54_groups")
+        )
+        slot_chem_dim = _groups_dim(self.ligand_slots_groups)
+        qk_chem_dim = _groups_dim(self.local54_qk_reparam_groups)
         if self.use_residue_atom_bias:
             self.residue_atom_bias_res = nn.Sequential(
                 nn.LayerNorm(d_model),
@@ -142,9 +171,77 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
                 "residue_atom_triangle_raw_alpha", torch.tensor(0.0), persistent=False
             )
 
+        if self.use_ligand_slots_delta:
+            n_slots = int(cfg.get("ligand_slots_num", 16))
+            slot_hidden = int(cfg.get("ligand_slots_hidden", 128))
+            self.ligand_slot_queries = nn.Parameter(
+                torch.empty(n_slots, self.local_delta_dim)
+            )
+            nn.init.normal_(self.ligand_slot_queries, mean=0.0, std=0.02)
+            self.ligand_slot_atom_k = nn.Sequential(
+                nn.LayerNorm(d_model + slot_chem_dim),
+                nn.Linear(d_model + slot_chem_dim, slot_hidden, bias=False),
+                nn.GELU(),
+                nn.LayerNorm(slot_hidden),
+                nn.Linear(slot_hidden, self.local_delta_dim, bias=False),
+            )
+            self.ligand_slot_atom_v = nn.Sequential(
+                nn.LayerNorm(d_model + slot_chem_dim),
+                nn.Linear(d_model + slot_chem_dim, slot_hidden, bias=False),
+                nn.GELU(),
+                nn.LayerNorm(slot_hidden),
+                nn.Linear(slot_hidden, d_model, bias=False),
+            )
+            self.ligand_slot_to_k = nn.Linear(d_model, self.local_delta_dim, bias=False)
+            self.ligand_slot_to_v = nn.Linear(d_model, d_model, bias=False)
+        else:
+            self.ligand_slot_queries = None
+            self.ligand_slot_atom_k = None
+            self.ligand_slot_atom_v = None
+            self.ligand_slot_to_k = None
+            self.ligand_slot_to_v = None
+
+        self.local54_qk_reparam_alpha_max = float(
+            cfg.get("local54_qk_reparam_alpha_max", 0.20)
+        )
+        if self.use_local54_qk_reparam:
+            qk_hidden = int(cfg.get("local54_qk_reparam_hidden", 96))
+            self.local54_q_reparam = nn.Sequential(
+                nn.LayerNorm(d_model),
+                nn.Linear(d_model, qk_hidden, bias=False),
+                nn.GELU(),
+                nn.LayerNorm(qk_hidden),
+                nn.Linear(qk_hidden, self.local_delta_dim, bias=False),
+            )
+            self.local54_k_reparam = nn.Sequential(
+                nn.LayerNorm(d_model + qk_chem_dim),
+                nn.Linear(d_model + qk_chem_dim, qk_hidden, bias=False),
+                nn.GELU(),
+                nn.LayerNorm(qk_hidden),
+                nn.Linear(qk_hidden, self.local_delta_dim, bias=False),
+            )
+            nn.init.zeros_(self.local54_q_reparam[-1].weight)
+            nn.init.zeros_(self.local54_k_reparam[-1].weight)
+            init = float(cfg.get("local54_qk_reparam_alpha_init", 0.03))
+            self.local54_qk_reparam_raw_alpha = nn.Parameter(
+                torch.tensor(_atanh_ratio(init, self.local54_qk_reparam_alpha_max))
+            )
+        else:
+            self.local54_q_reparam = None
+            self.local54_k_reparam = None
+            self.register_buffer(
+                "local54_qk_reparam_raw_alpha", torch.tensor(0.0), persistent=False
+            )
+
         self.config["use_residue_atom_bias"] = self.use_residue_atom_bias
         self.config["residue_atom_bias_local54_groups"] = list(self.residue_atom_bias_groups)
         self.config["use_residue_atom_triangle_bias"] = self.use_residue_atom_triangle_bias
+        self.config["use_ligand_slots_delta"] = self.use_ligand_slots_delta
+        self.config["ligand_slots_local54_groups"] = list(self.ligand_slots_groups)
+        self.config["use_local54_qk_reparam"] = self.use_local54_qk_reparam
+        self.config["local54_qk_reparam_local54_groups"] = list(
+            self.local54_qk_reparam_groups
+        )
         self._cached_v13m0_stats: Dict[str, torch.Tensor] = {}
 
     def _bias_local54_features(self, local54: torch.Tensor) -> torch.Tensor:
@@ -152,6 +249,85 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         for group in self.residue_atom_bias_groups:
             pieces.append(self._extract_local54_group(local54, group))
         return torch.cat(pieces, dim=-1)
+
+    def _local54_features_for_groups(
+        self,
+        local54: torch.Tensor,
+        groups: Iterable[str],
+    ) -> torch.Tensor:
+        pieces = [self._extract_local54_group(local54, group) for group in groups]
+        return torch.cat(pieces, dim=-1)
+
+    def _apply_local54_qk_reparam(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        hl: torch.Tensor,
+        local54: torch.Tensor,
+        ligand_context: torch.Tensor,
+        ligand_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.local54_q_reparam is None or self.local54_k_reparam is None:
+            return q, k
+
+        chem = self._local54_features_for_groups(
+            local54, self.local54_qk_reparam_groups
+        ).to(dtype=hl.dtype)
+        atom_in = torch.cat([hl, chem], dim=-1)
+        q_shift = self.local54_q_reparam(ligand_context.float()).unsqueeze(1)
+        k_shift = self.local54_k_reparam(atom_in.float()).to(dtype=k.dtype)
+        alpha = self._bounded_scale(
+            self.local54_qk_reparam_raw_alpha.to(dtype=q.dtype),
+            self.local54_qk_reparam_alpha_max,
+        )
+        atom_valid = ligand_mask.bool()
+        zero = q.new_tensor(0.0, dtype=torch.float32)
+        self._cached_v13m0_stats["local54_qk_reparam_alpha"] = alpha.detach().float()
+        self._cached_v13m0_stats["local54_qk_reparam_q_abs_mean"] = (
+            q_shift.detach().float().abs().mean()
+        )
+        self._cached_v13m0_stats["local54_qk_reparam_k_abs_mean"] = (
+            k_shift.detach()[atom_valid].float().abs().mean() if atom_valid.any() else zero
+        )
+        return q + alpha.to(dtype=q.dtype) * q_shift.to(dtype=q.dtype), k + alpha.to(dtype=k.dtype) * k_shift
+
+    def _build_ligand_slots(
+        self,
+        hl: torch.Tensor,
+        local54: torch.Tensor,
+        ligand_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.ligand_slot_queries is None:
+            raise RuntimeError("_build_ligand_slots called with slots disabled")
+        chem = self._local54_features_for_groups(local54, self.ligand_slots_groups).to(
+            dtype=hl.dtype
+        )
+        atom_in = torch.cat([hl, chem], dim=-1)
+        atom_k = self.ligand_slot_atom_k(atom_in.float())
+        atom_v = self.ligand_slot_atom_v(atom_in.float()).to(dtype=hl.dtype)
+        queries = self.ligand_slot_queries.to(device=hl.device, dtype=atom_k.dtype)
+        slot_scores = torch.matmul(queries.unsqueeze(0), atom_k.transpose(-2, -1))
+        slot_scores = slot_scores / math.sqrt(self.local_delta_dim)
+        atom_mask = ligand_mask.bool()
+        slot_scores = slot_scores.masked_fill(~atom_mask.unsqueeze(1), -1.0e4)
+        has_atom = atom_mask.any(dim=1).view(-1, 1, 1)
+        slot_scores = torch.where(has_atom, slot_scores, torch.zeros_like(slot_scores))
+        slot_attn = torch.softmax(slot_scores.float(), dim=-1).to(dtype=atom_v.dtype)
+        slot_attn = slot_attn * atom_mask.unsqueeze(1).to(dtype=slot_attn.dtype)
+        denom = slot_attn.sum(dim=-1, keepdim=True).clamp(min=1e-6)
+        slot_attn = torch.where(has_atom, slot_attn / denom, torch.zeros_like(slot_attn))
+        slots = torch.matmul(slot_attn, atom_v)
+        slot_k = self.ligand_slot_to_k(slots)
+        slot_v = self.ligand_slot_to_v(slots).to(dtype=hl.dtype)
+        slot_mask = atom_mask.any(dim=1, keepdim=True).expand(-1, slots.size(1))
+        entropy = -(slot_attn.float() * slot_attn.float().clamp(min=1e-8).log()).sum(dim=-1)
+        self._cached_v13m0_stats["ligand_slots_attn_entropy"] = (
+            entropy.detach()[slot_mask].mean() if slot_mask.any() else hl.new_tensor(0.0, dtype=torch.float32)
+        )
+        self._cached_v13m0_stats["ligand_slots_abs_mean"] = (
+            slots.detach()[slot_mask].float().abs().mean() if slot_mask.any() else hl.new_tensor(0.0, dtype=torch.float32)
+        )
+        return slot_k, slot_v, slot_mask
 
     def _apply_residue_atom_bias(
         self,
@@ -291,6 +467,20 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
             k = k + self.local_delta_k_local(lf)
             v = v + self.local_delta_v_local(lf).to(dtype=hl.dtype)
         k, v = self._apply_interaction_kv_delta(k, v, local54)
+        q, k = self._apply_local54_qk_reparam(
+            q=q,
+            k=k,
+            hl=hl,
+            local54=local54,
+            ligand_context=ligand_context,
+            ligand_mask=ligand_mask,
+        )
+
+        use_slots = self.use_ligand_slots_delta
+        if use_slots:
+            k, v, token_mask = self._build_ligand_slots(hl, local54, ligand_mask)
+        else:
+            token_mask = ligand_mask.bool()
 
         if self.local_delta_use_qk_norm:
             q_score = F.normalize(q.float(), dim=-1)
@@ -300,11 +490,12 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         else:
             scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.local_delta_dim)
         scores = scores.float().clamp(-self.local_delta_score_clip, self.local_delta_score_clip)
-        scores = self._apply_residue_atom_bias(scores, hp, hl, local54, protein_mask, ligand_mask)
-        scores = self._apply_residue_atom_triangle_bias(scores, hp, protein_mask, ligand_mask)
+        if not use_slots:
+            scores = self._apply_residue_atom_bias(scores, hp, hl, local54, protein_mask, ligand_mask)
+            scores = self._apply_residue_atom_triangle_bias(scores, hp, protein_mask, ligand_mask)
         scores = scores.float().clamp(-self.local_delta_score_clip, self.local_delta_score_clip)
 
-        atom_mask = ligand_mask.bool()
+        atom_mask = token_mask.bool()
         valid_pair_mask = protein_mask.bool().unsqueeze(-1) & atom_mask.unsqueeze(1)
         valid_scores = scores[valid_pair_mask]
         score_mask = atom_mask.unsqueeze(1)
@@ -318,14 +509,15 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         attn = torch.where(has_atom, attn / denom, torch.zeros_like(attn))
 
         lig_read = torch.matmul(attn, v)
-        lig_read = self._apply_residue_chem_compat(
-            hp=hp,
-            lig_read=lig_read,
-            local54=local54,
-            ligand_context=ligand_context,
-            attn=attn,
-            protein_mask=protein_mask,
-        )
+        if not use_slots:
+            lig_read = self._apply_residue_chem_compat(
+                hp=hp,
+                lig_read=lig_read,
+                local54=local54,
+                ligand_context=ligand_context,
+                attn=attn,
+                protein_mask=protein_mask,
+            )
         lig_read = self._apply_pocket_virtual_tokens(hp, lig_read, ligand_context, protein_mask)
 
         masked_scores = scores.masked_fill(~score_mask, -1.0e4)
