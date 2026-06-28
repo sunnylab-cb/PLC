@@ -11,8 +11,9 @@
 #   - no init checkpoint
 #   - freeze_v11_base=false
 #   - all parameters train from scratch
-#   - batch_size=32
-#   - residue_atom_bias_hidden=96
+#   - batch_size defaults to 32, but can be overridden with BATCH_SIZE.
+#   - accumulation defaults to 1, but can be overridden with ACCUMULATION_STEPS.
+#   - residue_atom_bias_hidden defaults to 96, but can be overridden with BIAS_HIDDEN.
 #
 # Variants:
 #   0 coattn_scratch_resatom_b32_h96
@@ -36,6 +37,10 @@ set -eo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
 BASE_CONFIG="${BASE_CONFIG:-configs/pocket_gvp_v11m6n_hpc.yaml}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
+ACCUMULATION_STEPS="${ACCUMULATION_STEPS:-1}"
+BIAS_HIDDEN="${BIAS_HIDDEN:-96}"
+USE_GRADIENT_CHECKPOINTING="${USE_GRADIENT_CHECKPOINTING:-false}"
 
 VARIANTS=(
   "coattn_scratch_resatom_b32_h96"
@@ -62,6 +67,10 @@ echo "Node: ${SLURMD_NODENAME}"
 echo "Start time: $(date)"
 echo "Project: ${PROJECT_DIR}"
 echo "Base config: ${BASE_CONFIG}"
+echo "Batch size: ${BATCH_SIZE}"
+echo "Accumulation steps: ${ACCUMULATION_STEPS}"
+echo "Bias hidden: ${BIAS_HIDDEN}"
+echo "Gradient checkpointing: ${USE_GRADIENT_CHECKPOINTING}"
 echo "============================================"
 
 if command -v module &> /dev/null; then
@@ -88,7 +97,7 @@ python --version
 mkdir -p tmp/slurm_configs
 CONFIG_FILE="tmp/slurm_configs/v13m0_scratch_${VARIANT}_${SLURM_JOB_ID}_${TASK_ID}.yaml"
 
-python - "${BASE_CONFIG}" "${CONFIG_FILE}" "${VARIANT}" <<'PY'
+python - "${BASE_CONFIG}" "${CONFIG_FILE}" "${VARIANT}" "${BATCH_SIZE}" "${ACCUMULATION_STEPS}" "${BIAS_HIDDEN}" "${USE_GRADIENT_CHECKPOINTING}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -97,15 +106,22 @@ import yaml
 base_path = Path(sys.argv[1])
 out_path = Path(sys.argv[2])
 variant = sys.argv[3]
+batch_size = int(sys.argv[4])
+accumulation_steps = int(sys.argv[5])
+bias_hidden = int(sys.argv[6])
+use_gradient_checkpointing = sys.argv[7].strip().lower() in {"1", "true", "yes", "y"}
 
 with base_path.open() as f:
     cfg = yaml.safe_load(f)
 
 is_coattn = variant.startswith("coattn_")
 use_triangle = "_tri_" in variant
+run_variant = variant.replace("b32_h96", f"b{batch_size}_acc{accumulation_steps}_h{bias_hidden}")
+if use_gradient_checkpointing:
+    run_variant = f"{run_variant}_ckpt"
 
 cfg.setdefault("experiment", {})
-cfg["experiment"]["name"] = f"pocket_gvp_fusion_{variant}"
+cfg["experiment"]["name"] = f"pocket_gvp_fusion_{run_variant}"
 cfg["experiment"]["version_suffix"] = "v13m0"
 cfg["experiment"]["seed"] = 44
 
@@ -119,7 +135,7 @@ model = cfg["model"]
 model["local_delta_detach_protein"] = False
 model["local_delta_protein_grad_scale"] = 0.60
 model["use_global_delta_gate"] = False
-model["use_gradient_checkpointing"] = False
+model["use_gradient_checkpointing"] = use_gradient_checkpointing
 model["local_delta_use_qk_norm"] = bool(model.get("local_delta_use_qk_norm", False))
 
 # Define the two baselines explicitly.
@@ -169,7 +185,7 @@ model["ligand_context_prior_sources"] = []
 
 # Larger V13m0 compatibility bias capacity.
 model["use_residue_atom_bias"] = True
-model["residue_atom_bias_hidden"] = 96
+model["residue_atom_bias_hidden"] = bias_hidden
 model["residue_atom_bias_local54_groups"] = [
     "base33",
     "electronic3",
@@ -189,8 +205,8 @@ train = cfg.setdefault("training", {})
 train["init_from_checkpoint"] = None
 train["init_from_v11m3"] = None
 train["freeze_v11_base"] = False
-train["batch_size"] = 32
-train["accumulation_steps"] = 1
+train["batch_size"] = batch_size
+train["accumulation_steps"] = accumulation_steps
 train["learning_rate"] = 5.0e-5
 train["min_lr"] = 1.0e-6
 train["warmup_epochs"] = 3
@@ -205,7 +221,11 @@ with out_path.open("w") as f:
 
 print(f"Wrote V13m0 scratch config: {out_path}")
 print(f"variant={variant} coattn={is_coattn} triangle={use_triangle}")
-print("freeze_v11_base=False init_from_checkpoint=None batch_size=32 hidden=96")
+print(
+    "freeze_v11_base=False init_from_checkpoint=None "
+    f"batch_size={batch_size} accumulation_steps={accumulation_steps} "
+    f"hidden={bias_hidden} gradient_checkpointing={use_gradient_checkpointing}"
+)
 PY
 
 echo "Generated config:"
@@ -213,12 +233,13 @@ sed -n '1,280p' "${CONFIG_FILE}"
 
 export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
-echo "Training command: python scripts/train/train_v13m0.py --config ${CONFIG_FILE} --amp --accumulation-steps 1"
+echo "Training command: python scripts/train/train_v13m0.py --config ${CONFIG_FILE} --amp --accumulation-steps ${ACCUMULATION_STEPS}"
 python scripts/train/train_v13m0.py \
   --config "${CONFIG_FILE}" \
   --amp \
-  --accumulation-steps 1
+  --accumulation-steps "${ACCUMULATION_STEPS}"
 
 TRAIN_EXIT=$?
 if [ "${TRAIN_EXIT}" -ne 0 ]; then
@@ -226,7 +247,11 @@ if [ "${TRAIN_EXIT}" -ne 0 ]; then
   exit "${TRAIN_EXIT}"
 fi
 
-RUN_DIR="$(ls -dt outputs/pocket_gvp_fusion_${VARIANT}_v13m0_* 2>/dev/null | head -1 || true)"
+RUN_VARIANT="${VARIANT/b32_h96/b${BATCH_SIZE}_acc${ACCUMULATION_STEPS}_h${BIAS_HIDDEN}}"
+if [ "${USE_GRADIENT_CHECKPOINTING}" = "true" ] || [ "${USE_GRADIENT_CHECKPOINTING}" = "1" ]; then
+  RUN_VARIANT="${RUN_VARIANT}_ckpt"
+fi
+RUN_DIR="$(ls -dt outputs/pocket_gvp_fusion_${RUN_VARIANT}_v13m0_* 2>/dev/null | head -1 || true)"
 if [ -z "${RUN_DIR}" ]; then
   echo "ERROR: could not locate output dir for ${VARIANT}"
   exit 5
