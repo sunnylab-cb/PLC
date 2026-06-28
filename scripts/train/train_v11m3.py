@@ -1024,6 +1024,10 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
         stats['grad_norm_assignment_lig_proj'] = get_grad_norm(model.assignment_lig_proj)
     if hasattr(model, 'assignment_pocket_proj') and model.assignment_pocket_proj is not None:
         stats['grad_norm_assignment_pocket_proj'] = get_grad_norm(model.assignment_pocket_proj)
+    if hasattr(model, 'residue_atom_bias_out') and model.residue_atom_bias_out is not None:
+        stats['grad_norm_residue_atom_bias'] = get_grad_norm(model.residue_atom_bias_out)
+    if hasattr(model, 'residue_atom_triangle_gate') and model.residue_atom_triangle_gate is not None:
+        stats['grad_norm_residue_atom_triangle'] = get_grad_norm(model.residue_atom_triangle_gate)
 
     # V11: Ligand internal self-attention
     if hasattr(model, 'ligand_self_attn') and model.ligand_self_attn is not None:
