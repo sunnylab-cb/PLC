@@ -207,8 +207,8 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         if self.use_local54_qk_reparam:
             qk_hidden = int(cfg.get("local54_qk_reparam_hidden", 96))
             self.local54_q_reparam = nn.Sequential(
-                nn.LayerNorm(d_model),
-                nn.Linear(d_model, qk_hidden, bias=False),
+                nn.LayerNorm(d_model + self.local_delta_local_dim),
+                nn.Linear(d_model + self.local_delta_local_dim, qk_hidden, bias=False),
                 nn.GELU(),
                 nn.LayerNorm(qk_hidden),
                 nn.Linear(qk_hidden, self.local_delta_dim, bias=False),
