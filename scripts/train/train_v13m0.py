@@ -99,6 +99,7 @@ def _load_init_checkpoint(model: torch.nn.Module, config: Dict) -> None:
         "ligand_slot_",
         "local54_q",
         "local54_k",
+        "residue_chem_value_enrich_",
     )
     bad_missing = [k for k in missing if not k.startswith(allowed_missing)]
     if unexpected or bad_missing:
@@ -166,6 +167,7 @@ def create_model(
         f"triangle_bias={model_cfg.get('use_residue_atom_triangle_bias', False)}, "
         f"slots={model_cfg.get('use_ligand_slots_delta', False)}, "
         f"qk_reparam={model_cfg.get('use_local54_qk_reparam', False)}, "
+        f"value_enrich={model_cfg.get('use_residue_chem_value_enrich', False)}, "
         f"coattn={model_cfg.get('use_v12_coattention_block', False)}, "
         f"l54_kv={model_cfg.get('use_local54_interaction_kv', False)}, "
         f"l54_compat={model_cfg.get('use_local54_residue_chem_compat', False)}, "

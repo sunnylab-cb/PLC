@@ -82,6 +82,19 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
             "sasa_hbond4",
             "flex_rot5",
         ],
+        "use_residue_chem_value_enrich": False,
+        "residue_chem_value_enrich_groups": [
+            "base33",
+            "electronic3",
+            "sasa_hbond4",
+            "flex_rot5",
+        ],
+        "residue_chem_value_enrich_hidden": 128,
+        "residue_chem_value_enrich_gate_bias_init": 0.01,
+        "residue_chem_value_enrich_alpha_init": 0.02,
+        "residue_chem_value_enrich_alpha_max": 0.12,
+        "residue_chem_value_enrich_normalize": True,
+        "residue_chem_value_enrich_scale": 0.35,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -99,6 +112,9 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         )
         self.use_ligand_slots_delta = bool(cfg.get("use_ligand_slots_delta", False))
         self.use_local54_qk_reparam = bool(cfg.get("use_local54_qk_reparam", False))
+        self.use_residue_chem_value_enrich = bool(
+            cfg.get("use_residue_chem_value_enrich", False)
+        )
         self.residue_atom_triangle_window = max(
             1, int(cfg.get("residue_atom_triangle_window", 7))
         )
@@ -116,6 +132,9 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         )
         self.local54_qk_reparam_groups = _parse_bias_groups(
             cfg.get("local54_qk_reparam_local54_groups")
+        )
+        self.residue_chem_value_enrich_groups = _parse_bias_groups(
+            cfg.get("residue_chem_value_enrich_groups")
         )
         slot_chem_dim = _groups_dim(self.ligand_slots_groups)
         qk_chem_dim = _groups_dim(self.local54_qk_reparam_groups)
@@ -233,6 +252,59 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
                 "local54_qk_reparam_raw_alpha", torch.tensor(0.0), persistent=False
             )
 
+        self.residue_chem_value_enrich_alpha_max = float(
+            cfg.get("residue_chem_value_enrich_alpha_max", 0.12)
+        )
+        self.residue_chem_value_enrich_normalize = bool(
+            cfg.get("residue_chem_value_enrich_normalize", True)
+        )
+        self.residue_chem_value_enrich_scale = float(
+            cfg.get("residue_chem_value_enrich_scale", 0.35)
+        )
+        if self.use_residue_chem_value_enrich:
+            enrich_hidden = int(cfg.get("residue_chem_value_enrich_hidden", 128))
+            self.residue_chem_value_enrich_value = nn.ModuleDict()
+            for group in self.residue_chem_value_enrich_groups:
+                group_dim = _groups_dim((group,))
+                self.residue_chem_value_enrich_value[group] = nn.Sequential(
+                    nn.LayerNorm(group_dim, elementwise_affine=False),
+                    nn.Linear(group_dim, enrich_hidden, bias=False),
+                    nn.GELU(),
+                    nn.LayerNorm(enrich_hidden),
+                    nn.Linear(enrich_hidden, d_model, bias=False),
+                )
+                nn.init.zeros_(self.residue_chem_value_enrich_value[group][-1].weight)
+            gate_in = d_model + d_model + d_model + self.local_delta_local_dim
+            self.residue_chem_value_enrich_gate = nn.Sequential(
+                nn.LayerNorm(gate_in),
+                nn.Linear(gate_in, enrich_hidden),
+                nn.GELU(),
+                nn.Linear(enrich_hidden, len(self.residue_chem_value_enrich_groups)),
+            )
+            nn.init.zeros_(self.residue_chem_value_enrich_gate[-1].weight)
+            gate_bias = float(cfg.get("residue_chem_value_enrich_gate_bias_init", 0.01))
+            nn.init.constant_(self.residue_chem_value_enrich_gate[-1].bias, gate_bias)
+            if self.residue_chem_value_enrich_normalize:
+                self.residue_chem_value_enrich_norm = nn.LayerNorm(
+                    d_model,
+                    elementwise_affine=False,
+                )
+            else:
+                self.residue_chem_value_enrich_norm = None
+            init = float(cfg.get("residue_chem_value_enrich_alpha_init", 0.02))
+            self.residue_chem_value_enrich_raw_alpha = nn.Parameter(
+                torch.tensor(_atanh_ratio(init, self.residue_chem_value_enrich_alpha_max))
+            )
+        else:
+            self.residue_chem_value_enrich_value = None
+            self.residue_chem_value_enrich_gate = None
+            self.residue_chem_value_enrich_norm = None
+            self.register_buffer(
+                "residue_chem_value_enrich_raw_alpha",
+                torch.tensor(0.0),
+                persistent=False,
+            )
+
         self.config["use_residue_atom_bias"] = self.use_residue_atom_bias
         self.config["residue_atom_bias_local54_groups"] = list(self.residue_atom_bias_groups)
         self.config["use_residue_atom_triangle_bias"] = self.use_residue_atom_triangle_bias
@@ -241,6 +313,12 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         self.config["use_local54_qk_reparam"] = self.use_local54_qk_reparam
         self.config["local54_qk_reparam_local54_groups"] = list(
             self.local54_qk_reparam_groups
+        )
+        self.config["use_residue_chem_value_enrich"] = (
+            self.use_residue_chem_value_enrich
+        )
+        self.config["residue_chem_value_enrich_groups"] = list(
+            self.residue_chem_value_enrich_groups
         )
         self._cached_v13m0_stats: Dict[str, torch.Tensor] = {}
 
@@ -328,6 +406,66 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
             slots.detach()[slot_mask].float().abs().mean() if slot_mask.any() else hl.new_tensor(0.0, dtype=torch.float32)
         )
         return slot_k, slot_v, slot_mask
+
+    def _apply_residue_chem_value_enrich(
+        self,
+        hp: torch.Tensor,
+        lig_read: torch.Tensor,
+        local54: torch.Tensor,
+        ligand_context: torch.Tensor,
+        attn: torch.Tensor,
+        protein_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        if (
+            self.residue_chem_value_enrich_value is None
+            or self.residue_chem_value_enrich_gate is None
+        ):
+            return lig_read
+
+        group_reads = []
+        for group in self.residue_chem_value_enrich_groups:
+            feat = self._local54_features_for_groups(local54, (group,)).to(
+                dtype=lig_read.dtype
+            )
+            group_v = self.residue_chem_value_enrich_value[group](feat.float()).to(
+                dtype=lig_read.dtype
+            )
+            group_reads.append(torch.matmul(attn, group_v))
+        reads = torch.stack(group_reads, dim=-2)
+
+        context = ligand_context.to(dtype=hp.dtype).unsqueeze(1).expand(-1, hp.size(1), -1)
+        gate_in = torch.cat([hp, lig_read.to(dtype=hp.dtype), context], dim=-1)
+        gates = torch.tanh(self.residue_chem_value_enrich_gate(gate_in)).to(
+            dtype=reads.dtype
+        )
+        enrich = (reads * gates.unsqueeze(-1)).sum(dim=-2)
+        raw_enrich = enrich
+        if self.residue_chem_value_enrich_norm is not None:
+            enrich = self.residue_chem_value_enrich_norm(enrich.to(dtype=hp.dtype)).to(
+                dtype=lig_read.dtype
+            )
+        if self.residue_chem_value_enrich_scale != 1.0:
+            enrich = enrich * enrich.new_tensor(self.residue_chem_value_enrich_scale)
+        alpha = self._bounded_scale(
+            self.residue_chem_value_enrich_raw_alpha.to(dtype=lig_read.dtype),
+            self.residue_chem_value_enrich_alpha_max,
+        )
+        valid = protein_mask.bool()
+        zero = hp.new_tensor(0.0, dtype=torch.float32)
+        self._cached_v13m0_stats["residue_chem_value_enrich_alpha"] = (
+            alpha.detach().float()
+        )
+        self._cached_v13m0_stats["residue_chem_value_enrich_gate_abs_mean"] = (
+            gates.detach()[valid].abs().mean() if valid.any() else zero
+        )
+        self._cached_v13m0_stats["residue_chem_value_enrich_raw_abs_mean"] = (
+            raw_enrich.detach()[valid].abs().mean() if valid.any() else zero
+        )
+        self._cached_v13m0_stats["residue_chem_value_enrich_abs_mean"] = (
+            enrich.detach()[valid].abs().mean() if valid.any() else zero
+        )
+        mask = protein_mask.unsqueeze(-1).to(dtype=lig_read.dtype)
+        return lig_read + alpha.to(dtype=lig_read.dtype) * enrich * mask
 
     def _apply_residue_atom_bias(
         self,
@@ -518,6 +656,14 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
                 attn=attn,
                 protein_mask=protein_mask,
             )
+            lig_read = self._apply_residue_chem_value_enrich(
+                hp=hp,
+                lig_read=lig_read,
+                local54=local54,
+                ligand_context=ligand_context,
+                attn=attn,
+                protein_mask=protein_mask,
+            )
         lig_read = self._apply_pocket_virtual_tokens(hp, lig_read, ligand_context, protein_mask)
 
         masked_scores = scores.masked_fill(~score_mask, -1.0e4)
@@ -582,6 +728,10 @@ class PocketGVPFusionV13m0(PocketGVPFusionV11m13):
         outputs["residue_atom_triangle_alpha"] = self._bounded_scale(
             self.residue_atom_triangle_raw_alpha.detach(),
             self.residue_atom_triangle_alpha_max,
+        )
+        outputs["residue_chem_value_enrich_alpha"] = self._bounded_scale(
+            self.residue_chem_value_enrich_raw_alpha.detach(),
+            self.residue_chem_value_enrich_alpha_max,
         )
         for key, value in self._cached_v13m0_stats.items():
             outputs[key] = value

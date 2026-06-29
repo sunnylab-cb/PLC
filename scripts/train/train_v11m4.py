@@ -232,6 +232,10 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'local54_qk_reparam_alpha',
                     'local54_qk_reparam_q_abs_mean',
                     'local54_qk_reparam_k_abs_mean',
+                    'residue_chem_value_enrich_alpha',
+                    'residue_chem_value_enrich_gate_abs_mean',
+                    'residue_chem_value_enrich_raw_abs_mean',
+                    'residue_chem_value_enrich_abs_mean',
                 ):
                     if key in outputs:
                         value = outputs[key]

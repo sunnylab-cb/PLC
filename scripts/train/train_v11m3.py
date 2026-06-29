@@ -1032,6 +1032,8 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
         stats['grad_norm_ligand_slots'] = get_grad_norm(model.ligand_slot_atom_k)
     if hasattr(model, 'local54_q_reparam') and model.local54_q_reparam is not None:
         stats['grad_norm_local54_qk_reparam'] = get_grad_norm(model.local54_q_reparam)
+    if hasattr(model, 'residue_chem_value_enrich_gate') and model.residue_chem_value_enrich_gate is not None:
+        stats['grad_norm_residue_chem_value_enrich'] = get_grad_norm(model.residue_chem_value_enrich_gate)
 
     # V11: Ligand internal self-attention
     if hasattr(model, 'ligand_self_attn') and model.ligand_self_attn is not None:
