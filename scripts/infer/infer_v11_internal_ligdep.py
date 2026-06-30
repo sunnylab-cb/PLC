@@ -111,8 +111,13 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
     )
     has_v11m14_probe = any(k.startswith("local54_basecond_") for k in state)
     has_v11m15_probe = any(k.startswith("assignment_") for k in state)
-    has_v13m0_probe = any(
-        k.startswith("residue_atom_bias_") or k.startswith("residue_atom_triangle_")
+    has_v13_probe = any(
+        k.startswith("residue_atom_bias_")
+        or k.startswith("residue_atom_triangle_")
+        or k.startswith("ligand_slot_")
+        or k.startswith("local54_q_reparam")
+        or k.startswith("local54_k_reparam")
+        or k.startswith("residue_chem_value_enrich_")
         for k in state
     )
     has_v11m13_probe = any(k.startswith("local54_edge_context_") for k in state)
@@ -121,7 +126,7 @@ def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
         or any(k.startswith("mamba_lig_") for k in state)
     )
 
-    if "v13m0" in exp_name or has_v13m0_probe:
+    if any(tag in exp_name for tag in ("v13m0", "v13m1", "v13m2")) or has_v13_probe:
         return "v13m0"
     if "v11m15" in exp_name or has_v11m15_probe:
         return "v11m15"
