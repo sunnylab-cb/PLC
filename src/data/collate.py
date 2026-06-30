@@ -37,14 +37,15 @@ def pocket_collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     
     B = len(batch)
 
-    # Detect ESM embedding dimension from first sample
-    esm_dim = batch[0]['esm'].shape[-1]
+    # Detect ESM embedding tail shape from first sample.  Standard ESM is
+    # [N, D]; multi-layer ESM is [N, K, D] and is fused inside the model.
+    esm_tail_shape = tuple(batch[0]['esm'].shape[1:])
 
     # Detect protein scalar feature dimension from first sample
     protein_scalar_dim = batch[0]['protein_scalar'].shape[-1]
 
     # Initialize padded tensors
-    esm_embeddings = torch.zeros(B, max_residues, esm_dim)
+    esm_embeddings = torch.zeros(B, max_residues, *esm_tail_shape)
     protein_scalar = torch.zeros(B, max_residues, protein_scalar_dim)
     protein_coords = torch.zeros(B, max_residues, 3)
     protein_vectors = torch.zeros(B, max_residues, 4, 3)
@@ -316,12 +317,12 @@ def pocket_collate_fn_v8(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     B = len(batch)
 
     # Detect dimensions from first sample
-    esm_dim = batch[0]['esm'].shape[-1]
+    esm_tail_shape = tuple(batch[0]['esm'].shape[1:])
     physchem_dim = batch[0]['protein_physchem'].shape[-1]  # V8: 62D
     spatial_scalar_dim = batch[0]['protein_spatial_scalar'].shape[-1]  # V8: 72D
 
     # Initialize padded tensors
-    esm_embeddings = torch.zeros(B, max_residues, esm_dim)
+    esm_embeddings = torch.zeros(B, max_residues, *esm_tail_shape)
     protein_physchem = torch.zeros(B, max_residues, physchem_dim)  # V8: 62D
     protein_spatial_scalar = torch.zeros(B, max_residues, spatial_scalar_dim)  # V8: 72D
     protein_spatial_vector = torch.zeros(B, max_residues, 6, 3)  # V8: 6×3D
@@ -495,13 +496,13 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     max_atoms = max(n_atoms_list)
     B = len(batch)
 
-    esm_dim = batch[0]['esm'].shape[-1]
+    esm_tail_shape = tuple(batch[0]['esm'].shape[1:])
     physchem_dim = batch[0]['protein_physchem'].shape[-1]
     spatial_scalar_dim = batch[0]['protein_spatial_scalar'].shape[-1]
     spatial_vector_channels = batch[0]['protein_spatial_vector'].shape[1]
     ligand_dim = batch[0]['ligand_features'].shape[-1]
 
-    esm_embeddings = torch.zeros(B, max_residues, esm_dim)
+    esm_embeddings = torch.zeros(B, max_residues, *esm_tail_shape)
     protein_physchem = torch.zeros(B, max_residues, physchem_dim)
     protein_spatial_scalar = torch.zeros(B, max_residues, spatial_scalar_dim)
     protein_spatial_vector = torch.zeros(B, max_residues, spatial_vector_channels, 3)

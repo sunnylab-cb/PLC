@@ -68,6 +68,34 @@ def _load_model(device: torch.device, model_name: str):
     return model, alphabet
 
 
+def _parse_repr_layers(value: str | None, num_layers: int) -> list[int]:
+    if value is None or str(value).strip() == "":
+        return [num_layers]
+    layers = []
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        layer = int(part)
+        if layer < 0:
+            layer = num_layers + 1 + layer
+        if layer < 0 or layer > num_layers:
+            raise ValueError(f"Invalid ESM repr layer {part!r}; valid range is 0..{num_layers}")
+        layers.append(layer)
+    if not layers:
+        return [num_layers]
+    return layers
+
+
+def _extract_representations(model, batch_tokens: torch.Tensor, repr_layers: list[int]) -> torch.Tensor:
+    with torch.no_grad():
+        results = model(batch_tokens, repr_layers=repr_layers)
+    reps = [results["representations"][layer][0, 1:-1].detach().cpu() for layer in repr_layers]
+    if len(reps) == 1:
+        return reps[0]
+    return torch.stack(reps, dim=1)  # [N, K, D]
+
+
 def _load_residue_name_map(pdb_path: Path) -> dict[tuple[str, int, str], str]:
     parser = _BioPDBParser(QUIET=True)
     structure = parser.get_structure("_", str(pdb_path))
@@ -89,7 +117,7 @@ def _fallback_res_name_3(aa_1: str) -> str:
     return residue_constants.restype_1to3.get(aa_1, "UNK")
 
 
-def _extract_complex(model, alphabet, pdb_path: Path) -> dict:
+def _extract_complex(model, alphabet, pdb_path: Path, repr_layers: list[int]) -> dict:
     complex_ = ProteinComplex.from_pdb(pdb_path)
     name_map = _load_residue_name_map(pdb_path)
 
@@ -112,9 +140,7 @@ def _extract_complex(model, alphabet, pdb_path: Path) -> dict:
     batch_labels, batch_strs, batch_tokens = batch_converter(data)
     batch_tokens = batch_tokens.to(model.device if hasattr(model, 'device') else next(model.parameters()).device)
 
-    with torch.no_grad():
-        results = model(batch_tokens, repr_layers=[model.num_layers])
-        emb = results["representations"][model.num_layers][0, 1:-1]  # remove BOS/EOS
+    emb = _extract_representations(model, batch_tokens, repr_layers)
 
     # Keep atom coordinates aligned to embeddings.
     mask_t = torch.from_numpy(mask)
@@ -142,6 +168,7 @@ def _extract_complex(model, alphabet, pdb_path: Path) -> dict:
 
     return {
         "embeddings": emb.cpu(),
+        "repr_layers": list(repr_layers),
         "chain_id": chain_id,
         "chain_id_numeric": chain_num.tolist(),
         "residue_index": res_idx.tolist(),
@@ -157,7 +184,7 @@ def _extract_complex(model, alphabet, pdb_path: Path) -> dict:
     }
 
 
-def _extract_chain(model, alphabet, pdb_path: Path, chain_id: str) -> dict:
+def _extract_chain(model, alphabet, pdb_path: Path, chain_id: str, repr_layers: list[int]) -> dict:
     chain = ProteinChain.from_pdb(pdb_path, chain_id=chain_id)
     name_map = _load_residue_name_map(pdb_path)
 
@@ -169,9 +196,7 @@ def _extract_chain(model, alphabet, pdb_path: Path, chain_id: str) -> dict:
     batch_labels, batch_strs, batch_tokens = batch_converter(data)
     batch_tokens = batch_tokens.to(model.device if hasattr(model, 'device') else next(model.parameters()).device)
 
-    with torch.no_grad():
-        results = model(batch_tokens, repr_layers=[model.num_layers])
-        emb = results["representations"][model.num_layers][0, 1:-1]  # remove BOS/EOS
+    emb = _extract_representations(model, batch_tokens, repr_layers)
 
     if emb.shape[0] != len(chain.sequence):
         raise ValueError(
@@ -194,6 +219,7 @@ def _extract_chain(model, alphabet, pdb_path: Path, chain_id: str) -> dict:
 
     return {
         "embeddings": emb.cpu(),
+        "repr_layers": list(repr_layers),
         "chain_id": [chain.chain_id] * len(chain.sequence),
         "chain_id_numeric": None,
         "residue_index": chain.residue_index.tolist(),
@@ -238,12 +264,15 @@ def _process_files(
     overwrite: bool,
     tag: str,
     failure_tsv: Path | None = None,
+    repr_layers_arg: str | None = None,
 ) -> int:
     _set_default_cache()
     device = _resolve_device(device_str)
     if device.type == "cuda":
         torch.cuda.set_device(device)
     model, alphabet = _load_model(device, model_name)
+    repr_layers = _parse_repr_layers(repr_layers_arg, model.num_layers)
+    print(f"[{tag}] repr_layers={repr_layers}")
 
     total = len(pdb_files)
     failures = []
@@ -259,10 +288,11 @@ def _process_files(
 
         try:
             if chain:
-                data = _extract_chain(model, alphabet, pdb_path, chain)
+                data = _extract_chain(model, alphabet, pdb_path, chain, repr_layers)
             else:
-                data = _extract_complex(model, alphabet, pdb_path)
+                data = _extract_complex(model, alphabet, pdb_path, repr_layers)
             data["model_name"] = model_name
+            data["embedding_layout"] = "residue_layer_dim" if len(repr_layers) > 1 else "residue_dim"
             torch.save(data, out_path)
             print(f"[{tag} {idx}/{total}] ok   {rel}")
         except Exception as exc:
@@ -298,9 +328,10 @@ def _worker_entry(
     overwrite: bool,
     tag: str,
     failure_tsv: Path | None = None,
+    repr_layers_arg: str | None = None,
 ):
     code = _process_files(
-        pdb_files, input_root, output_root, model_name, device_str, chain, overwrite, tag, failure_tsv
+        pdb_files, input_root, output_root, model_name, device_str, chain, overwrite, tag, failure_tsv, repr_layers_arg
     )
     raise SystemExit(code)
 
@@ -362,6 +393,15 @@ def main() -> int:
         action="store_true",
         help="Overwrite existing output files.",
     )
+    parser.add_argument(
+        "--repr-layers",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated ESM representation layers to save. Empty keeps the "
+            "old final-layer behavior. Example for MLC: 2,6,12,18,24,30,33"
+        ),
+    )
     args = parser.parse_args()
 
     input_root = Path(args.input).resolve()
@@ -412,6 +452,7 @@ def main() -> int:
                     args.overwrite,
                     tag,
                     output_root / f"failures_{tag.replace(':', '_')}.tsv",
+                    args.repr_layers,
                 ),
             )
             p.start()
@@ -435,6 +476,7 @@ def main() -> int:
         args.overwrite,
         tag,
         output_root / "failures.tsv",
+        args.repr_layers,
     )
 
 

@@ -599,6 +599,13 @@ class PocketGVPFusionV11(nn.Module):
 
     DEFAULT_CONFIG = {
         'd_esm': 1280,
+        'use_esm_mlc': False,
+        'esm_mlc_num_layers': 0,
+        'esm_mlc_fusion': 'weighted_sum',  # weighted_sum | concat_proj
+        'esm_mlc_init': 'uniform',         # uniform | last
+        'esm_mlc_last_logit_bias': 4.0,
+        'esm_mlc_concat_zero_init': True,
+        'esm_mlc_dropout': 0.0,
         'd_phys': 62,
         'd_spatial_scalar': 89,
         'd_phys_encoded': 128,
@@ -696,6 +703,40 @@ class PocketGVPFusionV11(nn.Module):
         n_pairwise = (c['n_gvp_vector_hidden'] * (c['n_gvp_vector_hidden'] + 1)) // 2
         d_geo = c['d_gvp_internal'] + n_pairwise + c['d_phys_encoded']
         d_half = c['d_model'] // 2
+
+        self.use_esm_mlc = bool(c.get('use_esm_mlc', False))
+        self.esm_mlc_fusion = str(c.get('esm_mlc_fusion', 'weighted_sum')).lower()
+        self.esm_mlc_num_layers = int(c.get('esm_mlc_num_layers', 0) or 0)
+        if self.use_esm_mlc:
+            if self.esm_mlc_num_layers <= 0:
+                raise ValueError("use_esm_mlc=true requires model.esm_mlc_num_layers > 0")
+            if self.esm_mlc_fusion not in {"weighted_sum", "concat_proj"}:
+                raise ValueError(
+                    "model.esm_mlc_fusion must be 'weighted_sum' or 'concat_proj', "
+                    f"got {self.esm_mlc_fusion!r}"
+                )
+            self.esm_mlc_layer_norm = nn.LayerNorm(c['d_esm'])
+            init_logits = torch.zeros(self.esm_mlc_num_layers)
+            if str(c.get('esm_mlc_init', 'uniform')).lower() in {'last', 'final'}:
+                init_logits[-1] = float(c.get('esm_mlc_last_logit_bias', 4.0))
+            self.esm_mlc_logits = nn.Parameter(init_logits)
+            if self.esm_mlc_fusion == "concat_proj":
+                self.esm_mlc_concat_proj = nn.Sequential(
+                    nn.LayerNorm(c['d_esm'] * self.esm_mlc_num_layers),
+                    nn.Linear(c['d_esm'] * self.esm_mlc_num_layers, c['d_esm']),
+                    nn.GELU(),
+                    nn.Dropout(float(c.get('esm_mlc_dropout', 0.0))),
+                    nn.LayerNorm(c['d_esm']),
+                )
+                if bool(c.get('esm_mlc_concat_zero_init', True)):
+                    nn.init.zeros_(self.esm_mlc_concat_proj[1].weight)
+                    nn.init.zeros_(self.esm_mlc_concat_proj[1].bias)
+            else:
+                self.esm_mlc_concat_proj = None
+        else:
+            self.esm_mlc_layer_norm = None
+            self.register_buffer("esm_mlc_logits", torch.zeros(0), persistent=False)
+            self.esm_mlc_concat_proj = None
 
         self.gvp_proj = nn.Sequential(
             nn.Linear(d_geo, d_half),
@@ -827,6 +868,40 @@ class PocketGVPFusionV11(nn.Module):
         else:
             self.dist_aux_head = None
 
+        self._cached_esm_mlc_weights = None
+
+    def _fuse_esm_mlc(self, esm_embeddings: torch.Tensor) -> torch.Tensor:
+        """Fuse optional multi-layer ESM [B, L, K, D] to standard [B, L, D]."""
+        if esm_embeddings.ndim == 3:
+            self._cached_esm_mlc_weights = None
+            return esm_embeddings
+        if esm_embeddings.ndim != 4:
+            raise ValueError(
+                "esm_embeddings must be [B,L,D] or [B,L,K,D], "
+                f"got shape={tuple(esm_embeddings.shape)}"
+            )
+        if not self.use_esm_mlc:
+            raise ValueError(
+                "Received multi-layer ESM embeddings [B,L,K,D], but "
+                "model.use_esm_mlc is false."
+            )
+
+        n_layers = int(esm_embeddings.size(2))
+        if n_layers != self.esm_mlc_num_layers:
+            raise ValueError(
+                f"ESM MLC layer count mismatch: input K={n_layers}, "
+                f"config esm_mlc_num_layers={self.esm_mlc_num_layers}"
+            )
+
+        x = self.esm_mlc_layer_norm(esm_embeddings)
+        weights = torch.softmax(self.esm_mlc_logits.to(dtype=x.dtype), dim=0)
+        self._cached_esm_mlc_weights = weights.detach()
+        if self.esm_mlc_fusion == "concat_proj":
+            fused = self.esm_mlc_concat_proj(x.flatten(start_dim=2))
+            # Residual weighted sum keeps concat-proj anchored to a stable ESM scale.
+            return fused + torch.sum(weights.view(1, 1, -1, 1) * x, dim=2)
+        return torch.sum(weights.view(1, 1, -1, 1) * x, dim=2)
+
     def forward(
         self,
         esm_embeddings: torch.Tensor,
@@ -846,6 +921,8 @@ class PocketGVPFusionV11(nn.Module):
         ligand_to_protein: Optional[torch.Tensor] = None,  # legacy placeholder, ignored
     ) -> Dict[str, torch.Tensor]:
 
+        raw_esm_embeddings = esm_embeddings
+        esm_embeddings = self._fuse_esm_mlc(esm_embeddings)
         B, L, _ = esm_embeddings.shape
         device = esm_embeddings.device
         c = self.config
@@ -988,7 +1065,8 @@ class PocketGVPFusionV11(nn.Module):
             p_drop_esm = c.get('esm_dropout_prob', 0.3)
             esm_dropout_mask = torch.bernoulli(torch.full((B, 1, 1), 1 - p_drop_esm, device=device))
             current_esm = current_esm * esm_dropout_mask
-        self._cached_current_esm = current_esm  # always cached (post-dropout ESM)
+        self._cached_raw_esm_input = raw_esm_embeddings
+        self._cached_current_esm = current_esm  # always cached (post-fusion/dropout ESM)
         h_gvp_proj = self.gvp_proj(h_geo)
         h_esm_proj = self.esm_proj(current_esm)
         h_concat = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
@@ -1154,6 +1232,9 @@ class PocketGVPFusionV11(nn.Module):
             'h_ligand_fused': h_lig_fused,
             'protein_physchem_encoded': protein_physchem_encoded,  # exposed for subclass reuse
         }
+        if self._cached_esm_mlc_weights is not None:
+            for idx, weight in enumerate(self._cached_esm_mlc_weights):
+                result[f'esm_mlc_weight_{idx}'] = weight.detach()
 
         # V10m8: Distance regression auxiliary head
         if self.dist_aux_head is not None:

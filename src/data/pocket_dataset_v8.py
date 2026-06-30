@@ -117,6 +117,7 @@ class PocketDatasetV8(Dataset):
         max_atoms: int = 100,
         distances_file: str = None,
         distances_file_original: str = None,
+        esm_features_dir: str = 'esm2_latents',
         ligand_features_dir: str = 'ligand_features_v4',
         protein_features_dir: str = 'complete_features_v3',     # fallback (conf0 base)
         nma_features_dir: str = 'complete_features_v3_nma',     # V8: NMA confs dir
@@ -181,7 +182,7 @@ class PocketDatasetV8(Dataset):
         # Feature directories
         self.protein_features_dir = self.data_root / protein_features_dir  # fallback
         self.nma_features_dir = self.data_root / nma_features_dir          # V8: NMA dir
-        self.esm_dir = self.data_root / 'esm2_latents'
+        self.esm_dir = self.data_root / esm_features_dir
         self.ligand_dir = self.data_root / ligand_features_dir
 
         # Load distance labels
@@ -299,6 +300,7 @@ class PocketDatasetV8(Dataset):
             f"{prefix} complexes={len(self.pdb_ids)} samples={n_samples}",
             f"nma_dir={self.nma_features_dir.name}",
             f"use_nma={self.use_nma}",
+            f"esm_features={self.esm_dir.name}",
             f"ligand_features={self.ligand_dir.name}",
             f"labels_vdw={self._distances_file_path}",
         ]

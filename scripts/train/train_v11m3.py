@@ -1855,6 +1855,7 @@ def main():
 
     ligand_features_dir = data_cfg.get('ligand_features_dir', 'ligand_features_v4')
     protein_features_dir = data_cfg.get('protein_features_dir', 'complete_features_v3')
+    esm_features_dir = data_cfg.get('esm_features_dir', 'esm2_latents')
     nma_features_dir = data_cfg.get('nma_features_dir', 'complete_features_v3_nma')  # V9
     nma_n_confs = data_cfg.get('nma_n_confs', 3)   # V9: default 3
     nma_max_conf = data_cfg.get('nma_max_conf', 9)  # V9: default 9
@@ -1872,6 +1873,7 @@ def main():
     if is_main_process():
         print_rank0("Data sources:")
         print_rank0(f"  protein_features_dir: data/{protein_features_dir}")
+        print_rank0(f"  esm_features_dir: data/{esm_features_dir}")
         print_rank0(f"  nma_features_dir: data/{nma_features_dir}")
         print_rank0(f"  nma_n_confs: {nma_n_confs} (train only)")
         print_rank0(f"  ligand_features_dir: data/{ligand_features_dir}")
@@ -1901,6 +1903,7 @@ def main():
         max_atoms=data_cfg['max_atoms'],
         distances_file=distances_file,
         distances_file_original=distances_file_original,
+        esm_features_dir=esm_features_dir,
         ligand_features_dir=ligand_features_dir,
         protein_features_dir=protein_features_dir,
         nma_features_dir=nma_features_dir,  # V9
@@ -1925,6 +1928,7 @@ def main():
         max_atoms=data_cfg['max_atoms'],
         distances_file=distances_file,
         distances_file_original=distances_file_original,
+        esm_features_dir=esm_features_dir,
         ligand_features_dir=ligand_features_dir,
         protein_features_dir=protein_features_dir,
         nma_features_dir=nma_features_dir,

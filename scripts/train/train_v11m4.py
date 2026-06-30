@@ -242,6 +242,11 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                         if torch.is_tensor(value):
                             value = value.detach().float().mean().item()
                         writer.add_scalar(f'Health/{key}', float(value), global_step)
+                for key, value in outputs.items():
+                    if key.startswith('esm_mlc_weight_'):
+                        if torch.is_tensor(value):
+                            value = value.detach().float().mean().item()
+                        writer.add_scalar(f'Health/{key}', float(value), global_step)
 """
     if local_delta_anchor not in source:
         raise RuntimeError("Could not patch V11m3 local-delta diagnostics block for V11m4")

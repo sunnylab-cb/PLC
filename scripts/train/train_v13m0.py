@@ -90,6 +90,7 @@ def _load_init_checkpoint(model: torch.nn.Module, config: Dict) -> None:
         "local54_interaction_",
         "local54_compat_",
         "local54_edge_context_",
+        "esm_mlc_",
         "ligand_context_prior",
         "pocket_",
         "center_aux_",

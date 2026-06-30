@@ -595,6 +595,7 @@ def build_internal_dataset(config: Dict, args) -> PocketDatasetV8:
         max_seq_len=int(data_cfg.get("max_seq_len", 1800)),
         max_atoms=int(data_cfg.get("max_atoms", 128)),
         distances_file=data_cfg.get("distances_file", "data/residue_ligand_distances_dcenter.pt"),
+        esm_features_dir=data_cfg.get("esm_features_dir", "esm2_latents"),
         ligand_features_dir=data_cfg.get("ligand_features_dir", "ligand_features_v5"),
         protein_features_dir=data_cfg.get("protein_features_dir", "complete_features_v4"),
         nma_features_dir=data_cfg.get("nma_features_dir", "complete_features_v4_nma"),
