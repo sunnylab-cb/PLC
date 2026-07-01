@@ -606,6 +606,14 @@ class PocketGVPFusionV11(nn.Module):
         'esm_mlc_last_logit_bias': 4.0,
         'esm_mlc_concat_zero_init': True,
         'esm_mlc_dropout': 0.0,
+        'use_esm3': False,
+        'd_esm3': 1536,
+        'esm3_fusion': 'global_prior',     # global_prior | residue_gate | concat_proj
+        'esm3_alpha_init': 0.02,
+        'esm3_alpha_max': 0.20,
+        'esm3_gate_bias_init': 1.5,
+        'esm3_zero_init': True,
+        'esm3_dropout_prob': 0.0,
         'd_phys': 62,
         'd_spatial_scalar': 89,
         'd_phys_encoded': 128,
@@ -748,6 +756,49 @@ class PocketGVPFusionV11(nn.Module):
             nn.LayerNorm(d_half),
             nn.Dropout(c['dropout'])
         )
+        self.use_esm3 = bool(c.get('use_esm3', False))
+        self.esm3_fusion = str(c.get('esm3_fusion', 'global_prior')).lower()
+        self.esm3_alpha_max = float(c.get('esm3_alpha_max', 0.20))
+        if self.use_esm3:
+            if self.esm3_fusion not in {"global_prior", "residue_gate", "concat_proj"}:
+                raise ValueError(
+                    "model.esm3_fusion must be one of global_prior/residue_gate/concat_proj, "
+                    f"got {self.esm3_fusion!r}"
+                )
+            d_esm3 = int(c.get('d_esm3', 1536))
+            self.esm3_input_norm = nn.LayerNorm(d_esm3, elementwise_affine=False)
+            self.esm3_proj = nn.Sequential(
+                nn.Linear(d_esm3, d_half),
+                nn.LayerNorm(d_half),
+                nn.Dropout(c['dropout']),
+            )
+            if self.esm3_fusion == "residue_gate":
+                self.esm3_gate = nn.Linear(d_half * 2, d_half)
+                nn.init.constant_(self.esm3_gate.bias, float(c.get('esm3_gate_bias_init', 1.5)))
+                self.esm3_concat_proj = None
+            elif self.esm3_fusion == "concat_proj":
+                self.esm3_gate = None
+                self.esm3_concat_proj = nn.Sequential(
+                    nn.LayerNorm(d_half * 2),
+                    nn.Linear(d_half * 2, d_half),
+                    nn.GELU(),
+                    nn.LayerNorm(d_half),
+                )
+                if bool(c.get('esm3_zero_init', True)):
+                    nn.init.zeros_(self.esm3_concat_proj[1].weight)
+                    nn.init.zeros_(self.esm3_concat_proj[1].bias)
+            else:
+                self.esm3_gate = None
+                self.esm3_concat_proj = None
+            ratio = float(c.get('esm3_alpha_init', 0.02)) / max(self.esm3_alpha_max, 1e-8)
+            ratio = min(max(ratio, 1e-5), 1.0 - 1e-5)
+            self.esm3_raw_alpha = nn.Parameter(torch.tensor(math.log(ratio / (1.0 - ratio))))
+        else:
+            self.esm3_input_norm = None
+            self.esm3_proj = None
+            self.esm3_gate = None
+            self.esm3_concat_proj = None
+            self.register_buffer("esm3_raw_alpha", torch.tensor(0.0), persistent=False)
         self.modality_gate = nn.Sequential(
             nn.Linear(d_half * 2, d_half),
             nn.ReLU(),
@@ -869,6 +920,45 @@ class PocketGVPFusionV11(nn.Module):
             self.dist_aux_head = None
 
         self._cached_esm_mlc_weights = None
+        self._cached_esm3_alpha = None
+
+    def _apply_esm3_fusion(
+        self,
+        h_esm_proj: torch.Tensor,
+        esm3_embeddings: Optional[torch.Tensor],
+        protein_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Inject optional ESM3 prior into the ESM-side half-width stream."""
+        self._cached_esm3_alpha = None
+        if not self.use_esm3:
+            return h_esm_proj
+        if esm3_embeddings is None:
+            raise ValueError("model.use_esm3=true requires esm3_embeddings in forward inputs")
+        if esm3_embeddings.ndim != 3:
+            raise ValueError(f"esm3_embeddings must be [B,L,D], got {tuple(esm3_embeddings.shape)}")
+        if esm3_embeddings.shape[:2] != h_esm_proj.shape[:2]:
+            raise ValueError(
+                "ESM3 shape mismatch: "
+                f"esm3={tuple(esm3_embeddings.shape)}, h_esm={tuple(h_esm_proj.shape)}"
+            )
+        x3 = self.esm3_input_norm(esm3_embeddings.float()).to(dtype=h_esm_proj.dtype)
+        if self.training and float(self.config.get('esm3_dropout_prob', 0.0)) > 0:
+            keep = 1.0 - float(self.config.get('esm3_dropout_prob', 0.0))
+            mask = torch.bernoulli(torch.full((x3.shape[0], 1, 1), keep, device=x3.device, dtype=x3.dtype))
+            x3 = x3 * mask
+        h3 = self.esm3_proj(x3)
+        alpha = self.esm3_alpha_max * torch.sigmoid(self.esm3_raw_alpha.to(dtype=h_esm_proj.dtype))
+        self._cached_esm3_alpha = alpha.detach()
+
+        if self.esm3_fusion == "global_prior":
+            valid = protein_mask.to(dtype=h3.dtype).unsqueeze(-1)
+            pooled = (h3 * valid).sum(dim=1, keepdim=True) / valid.sum(dim=1, keepdim=True).clamp(min=1.0)
+            return h_esm_proj + alpha * pooled
+        if self.esm3_fusion == "residue_gate":
+            gate = torch.sigmoid(self.esm3_gate(torch.cat([h_esm_proj, h3], dim=-1)))
+            return h_esm_proj + alpha * gate * (h3 - h_esm_proj)
+        delta = self.esm3_concat_proj(torch.cat([h_esm_proj, h3], dim=-1))
+        return h_esm_proj + alpha * delta
 
     def _fuse_esm_mlc(self, esm_embeddings: torch.Tensor) -> torch.Tensor:
         """Fuse optional multi-layer ESM [B, L, K, D] to standard [B, L, D]."""
@@ -919,6 +1009,7 @@ class PocketGVPFusionV11(nn.Module):
         ligand_mask: torch.Tensor,
         chain_ids: Optional[torch.Tensor] = None,   # [B, L] integer chain indices
         ligand_to_protein: Optional[torch.Tensor] = None,  # legacy placeholder, ignored
+        esm3_embeddings: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
 
         raw_esm_embeddings = esm_embeddings
@@ -1069,6 +1160,7 @@ class PocketGVPFusionV11(nn.Module):
         self._cached_current_esm = current_esm  # always cached (post-fusion/dropout ESM)
         h_gvp_proj = self.gvp_proj(h_geo)
         h_esm_proj = self.esm_proj(current_esm)
+        h_esm_proj = self._apply_esm3_fusion(h_esm_proj, esm3_embeddings, protein_mask)
         h_concat = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
         gate = self.modality_gate(h_concat)
         h_seq = torch.cat([gate * h_gvp_proj, (1 - gate) * h_esm_proj], dim=-1)
@@ -1235,6 +1327,8 @@ class PocketGVPFusionV11(nn.Module):
         if self._cached_esm_mlc_weights is not None:
             for idx, weight in enumerate(self._cached_esm_mlc_weights):
                 result[f'esm_mlc_weight_{idx}'] = weight.detach()
+        if self._cached_esm3_alpha is not None:
+            result['esm3_alpha'] = self._cached_esm3_alpha.detach()
 
         # V10m8: Distance regression auxiliary head
         if self.dist_aux_head is not None:

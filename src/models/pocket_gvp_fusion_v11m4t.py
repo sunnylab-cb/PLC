@@ -129,6 +129,7 @@ class PocketGVPFusionV11m4t(PocketGVPFusionV11m4):
         chain_ids: Optional[torch.Tensor] = None,
         ligand_to_protein: Optional[torch.Tensor] = None,
         unimol_embed: Optional[torch.Tensor] = None,
+        esm3_embeddings: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         outputs = super().forward(
             esm_embeddings=esm_embeddings,
@@ -147,6 +148,7 @@ class PocketGVPFusionV11m4t(PocketGVPFusionV11m4):
             chain_ids=chain_ids,
             ligand_to_protein=ligand_to_protein,
             unimol_embed=unimol_embed,
+            esm3_embeddings=esm3_embeddings,
         )
 
         gate = self._compute_delta_gate(

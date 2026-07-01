@@ -511,6 +511,7 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         chain_ids: Optional[torch.Tensor] = None,
         ligand_to_protein: Optional[torch.Tensor] = None,
         unimol_embed: Optional[torch.Tensor] = None,
+        esm3_embeddings: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         self._cached_v11m10_global55 = self._mean_ligand_global55(
             ligand_x, ligand_batch, ligand_mask
@@ -539,6 +540,7 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
             chain_ids=chain_ids,
             ligand_to_protein=ligand_to_protein,
             unimol_embed=unimol_embed,
+            esm3_embeddings=esm3_embeddings,
         )
 
         outputs["local54_interaction_kv_alpha"] = self._bounded_scale(

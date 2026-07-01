@@ -497,12 +497,16 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     B = len(batch)
 
     esm_tail_shape = tuple(batch[0]['esm'].shape[1:])
+    has_esm3 = any('esm3' in sample for sample in batch)
+    esm3_dim = batch[0]['esm3'].shape[-1] if has_esm3 and 'esm3' in batch[0] else None
     physchem_dim = batch[0]['protein_physchem'].shape[-1]
     spatial_scalar_dim = batch[0]['protein_spatial_scalar'].shape[-1]
     spatial_vector_channels = batch[0]['protein_spatial_vector'].shape[1]
     ligand_dim = batch[0]['ligand_features'].shape[-1]
 
     esm_embeddings = torch.zeros(B, max_residues, *esm_tail_shape)
+    if has_esm3:
+        esm3_embeddings = torch.zeros(B, max_residues, esm3_dim)
     protein_physchem = torch.zeros(B, max_residues, physchem_dim)
     protein_spatial_scalar = torch.zeros(B, max_residues, spatial_scalar_dim)
     protein_spatial_vector = torch.zeros(B, max_residues, spatial_vector_channels, 3)
@@ -540,6 +544,8 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         n_atm = sample['n_atoms']
 
         esm_embeddings[i, :n_res] = sample['esm'][:n_res]
+        if has_esm3 and 'esm3' in sample:
+            esm3_embeddings[i, :n_res] = sample['esm3'][:n_res]
         protein_physchem[i, :n_res] = sample['protein_physchem'][:n_res]
         protein_spatial_scalar[i, :n_res] = sample['protein_spatial_scalar'][:n_res]
         protein_spatial_vector[i, :n_res] = sample['protein_spatial_vector'][:n_res]
@@ -639,6 +645,9 @@ def pocket_collate_fn_v10(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         'n_atoms': torch.tensor(n_atoms_list),
     }
 
+    if has_esm3:
+        result['esm3_embeddings'] = esm3_embeddings
+
     if has_labels_original:
         result['labels_original'] = labels_original
 
@@ -684,6 +693,8 @@ def prepare_model_inputs_v10(
         'ligand_to_protein': torch.zeros(B, max_atoms, 512).to(device, non_blocking=non_blocking),
         'ligand_mask': batch['ligand_mask'].to(device, non_blocking=non_blocking),
     }
+    if 'esm3_embeddings' in batch:
+        model_inputs['esm3_embeddings'] = batch['esm3_embeddings'].to(device, non_blocking=non_blocking)
     return model_inputs
 
 
@@ -715,6 +726,8 @@ def prepare_model_inputs_v11(
         'ligand_batch': batch['ligand_batch'].to(device, non_blocking=non_blocking),
         'ligand_mask': batch['ligand_mask'].to(device, non_blocking=non_blocking),
     }
+    if 'esm3_embeddings' in batch:
+        model_inputs['esm3_embeddings'] = batch['esm3_embeddings'].to(device, non_blocking=non_blocking)
     return model_inputs
 
 

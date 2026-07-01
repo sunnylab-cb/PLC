@@ -156,6 +156,7 @@ class PocketGVPFusionV11m3(PocketGVPFusionV11m2):
         chain_ids: Optional[torch.Tensor] = None,
         ligand_to_protein: Optional[torch.Tensor] = None,
         unimol_embed: Optional[torch.Tensor] = None,
+        esm3_embeddings: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         ligand_x = self._augment_ligand_x(
             ligand_x=ligand_x,
@@ -179,4 +180,5 @@ class PocketGVPFusionV11m3(PocketGVPFusionV11m2):
             ligand_mask=ligand_mask,
             chain_ids=chain_ids,
             ligand_to_protein=ligand_to_protein,
+            esm3_embeddings=esm3_embeddings,
         )

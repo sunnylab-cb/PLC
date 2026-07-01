@@ -1230,6 +1230,7 @@ def train_epoch(
         with torch.amp.autocast("cuda", enabled=use_amp, dtype=amp_dtype):
             outputs = model(
                 esm_embeddings=inputs['esm_embeddings'],
+                esm3_embeddings=inputs.get('esm3_embeddings'),
                 protein_physchem=inputs['protein_physchem'],  # V8: 62D 物理化学特征
                 protein_spatial_scalar=inputs['protein_spatial_scalar'],  # V8: 72D 空间标量特征
                 protein_spatial_vector=inputs['protein_spatial_vector'],  # V8: 6×3D 空间矢量特征
@@ -1594,6 +1595,7 @@ def evaluate(
         with torch.amp.autocast("cuda", enabled=use_amp):
             outputs = model(
                 esm_embeddings=inputs['esm_embeddings'],
+                esm3_embeddings=inputs.get('esm3_embeddings'),
                 protein_physchem=inputs['protein_physchem'],  # V8: 62D 物理化学特征
                 protein_spatial_scalar=inputs['protein_spatial_scalar'],  # V8: 72D 空间标量特征
                 protein_spatial_vector=inputs['protein_spatial_vector'],  # V8: 6×3D 空间矢量特征
@@ -1856,6 +1858,7 @@ def main():
     ligand_features_dir = data_cfg.get('ligand_features_dir', 'ligand_features_v4')
     protein_features_dir = data_cfg.get('protein_features_dir', 'complete_features_v3')
     esm_features_dir = data_cfg.get('esm_features_dir', 'esm2_latents')
+    esm3_features_dir = data_cfg.get('esm3_features_dir', None)
     nma_features_dir = data_cfg.get('nma_features_dir', 'complete_features_v3_nma')  # V9
     nma_n_confs = data_cfg.get('nma_n_confs', 3)   # V9: default 3
     nma_max_conf = data_cfg.get('nma_max_conf', 9)  # V9: default 9
@@ -1874,6 +1877,8 @@ def main():
         print_rank0("Data sources:")
         print_rank0(f"  protein_features_dir: data/{protein_features_dir}")
         print_rank0(f"  esm_features_dir: data/{esm_features_dir}")
+        if esm3_features_dir:
+            print_rank0(f"  esm3_features_dir: data/{esm3_features_dir}")
         print_rank0(f"  nma_features_dir: data/{nma_features_dir}")
         print_rank0(f"  nma_n_confs: {nma_n_confs} (train only)")
         print_rank0(f"  ligand_features_dir: data/{ligand_features_dir}")
@@ -1904,6 +1909,7 @@ def main():
         distances_file=distances_file,
         distances_file_original=distances_file_original,
         esm_features_dir=esm_features_dir,
+        esm3_features_dir=esm3_features_dir,
         ligand_features_dir=ligand_features_dir,
         protein_features_dir=protein_features_dir,
         nma_features_dir=nma_features_dir,  # V9
@@ -1929,6 +1935,7 @@ def main():
         distances_file=distances_file,
         distances_file_original=distances_file_original,
         esm_features_dir=esm_features_dir,
+        esm3_features_dir=esm3_features_dir,
         ligand_features_dir=ligand_features_dir,
         protein_features_dir=protein_features_dir,
         nma_features_dir=nma_features_dir,

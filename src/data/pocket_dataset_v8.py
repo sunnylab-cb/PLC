@@ -118,6 +118,7 @@ class PocketDatasetV8(Dataset):
         distances_file: str = None,
         distances_file_original: str = None,
         esm_features_dir: str = 'esm2_latents',
+        esm3_features_dir: Optional[str] = None,
         ligand_features_dir: str = 'ligand_features_v4',
         protein_features_dir: str = 'complete_features_v3',     # fallback (conf0 base)
         nma_features_dir: str = 'complete_features_v3_nma',     # V8: NMA confs dir
@@ -183,6 +184,7 @@ class PocketDatasetV8(Dataset):
         self.protein_features_dir = self.data_root / protein_features_dir  # fallback
         self.nma_features_dir = self.data_root / nma_features_dir          # V8: NMA dir
         self.esm_dir = self.data_root / esm_features_dir
+        self.esm3_dir = self.data_root / esm3_features_dir if esm3_features_dir else None
         self.ligand_dir = self.data_root / ligand_features_dir
 
         # Load distance labels
@@ -258,8 +260,11 @@ class PocketDatasetV8(Dataset):
                         (complex_dir / f'{cid}_protein.pt').exists()
                     )
                     esm_file = self.esm_dir / year_range / cid / f'{cid}_protein.pt'
+                    esm3_ok = True
+                    if self.esm3_dir is not None:
+                        esm3_ok = (self.esm3_dir / year_range / cid / f'{cid}_protein.pt').exists()
                     ligand_file = self.ligand_dir / year_range / cid / f'{cid}_ligand.pt'
-                    if has_protein and esm_file.exists() and ligand_file.exists():
+                    if has_protein and esm_file.exists() and esm3_ok and ligand_file.exists():
                         complex_ids.add(cid)
 
         return sorted(complex_ids)
@@ -304,6 +309,8 @@ class PocketDatasetV8(Dataset):
             f"ligand_features={self.ligand_dir.name}",
             f"labels_vdw={self._distances_file_path}",
         ]
+        if self.esm3_dir is not None:
+            parts.append(f"esm3_features={self.esm3_dir.name}")
         if self.use_spatial_clamp:
             parts.append(
                 f"spatial_clamp=dims{self.spatial_clamp_dims}"
@@ -362,6 +369,47 @@ class PocketDatasetV8(Dataset):
                 return f
         return None
 
+    @staticmethod
+    def _residue_key_list(data: Dict) -> Optional[List[tuple]]:
+        chains = data.get("chain_id", None)
+        residue_idx = data.get("residue_index", data.get("residue_indices", None))
+        ins_codes = data.get("insertion_code", data.get("insertion_codes", None))
+        if chains is None or residue_idx is None:
+            return None
+        n = min(len(chains), len(residue_idx))
+        if ins_codes is None:
+            ins_codes = [""] * n
+        n = min(n, len(ins_codes))
+        return [
+            (str(chains[i]), int(residue_idx[i]), str(ins_codes[i]).strip())
+            for i in range(n)
+        ]
+
+    @classmethod
+    def _align_aux_esm_to_reference(cls, aux_data: Dict, ref_data: Dict) -> torch.Tensor:
+        """Align auxiliary residue embeddings to the primary ESM/protein residue keys.
+
+        ESM3 caches can omit unresolved residues that are present in the legacy
+        ESM2/protein feature cache.  Key-based alignment keeps the main sample
+        indexing stable and fills missing ESM3 rows with zeros.
+        """
+        aux_emb = aux_data["embeddings"].float()
+        ref_keys = cls._residue_key_list(ref_data)
+        aux_keys = cls._residue_key_list(aux_data)
+        if ref_keys is None or aux_keys is None:
+            n = int(ref_data["embeddings"].shape[0])
+            out = aux_emb.new_zeros((n, aux_emb.shape[-1]))
+            out[: min(n, aux_emb.shape[0])] = aux_emb[: min(n, aux_emb.shape[0])]
+            return out
+
+        aux_map = {key: i for i, key in enumerate(aux_keys)}
+        out = aux_emb.new_zeros((len(ref_keys), aux_emb.shape[-1]))
+        for i, key in enumerate(ref_keys):
+            j = aux_map.get(key)
+            if j is not None:
+                out[i] = aux_emb[j]
+        return out
+
     def __getitem__(self, idx: int) -> Dict:
         # ── Resolve pdb_id and conf_idx ─────────────────────────────────────
         if self.use_nma:
@@ -390,20 +438,23 @@ class PocketDatasetV8(Dataset):
 
         # ── Load ESM and Ligand (always by pdb_id, no conf suffix) ───────────
         esm_file = self._find_file(pdb_id, self.esm_dir, 'protein')
+        esm3_file = self._find_file(pdb_id, self.esm3_dir, 'protein') if self.esm3_dir is not None else None
         ligand_file = self._find_file(pdb_id, self.ligand_dir, 'ligand')
 
-        if protein_file is None or esm_file is None or ligand_file is None:
+        if protein_file is None or esm_file is None or ligand_file is None or (self.esm3_dir is not None and esm3_file is None):
             raise FileNotFoundError(
                 f"Missing files for {pdb_id} conf{conf_idx}: "
-                f"protein={protein_file}, esm={esm_file}, ligand={ligand_file}"
+                f"protein={protein_file}, esm={esm_file}, esm3={esm3_file}, ligand={ligand_file}"
             )
 
         protein_data = torch.load(protein_file, weights_only=False)
         esm_data = torch.load(esm_file, weights_only=False)
+        esm3_data = torch.load(esm3_file, weights_only=False) if esm3_file is not None else None
         ligand_data = torch.load(ligand_file, weights_only=False)
 
         # ── Extract features ─────────────────────────────────────────────────
         esm = esm_data['embeddings']  # [N, 1280]
+        esm3 = self._align_aux_esm_to_reference(esm3_data, esm_data) if esm3_data is not None else None
 
         if 'physchem_features' not in protein_data:
             raise KeyError(f"Cannot find V3 features in {protein_file}")
@@ -486,6 +537,8 @@ class PocketDatasetV8(Dataset):
             len(labels), len(chain_ids_int),
             len(protein_rsa_raw), len(protein_rsa_mask),
         ]
+        if esm3 is not None:
+            lengths.append(len(esm3))
         if labels_original is not None:
             lengths.append(len(labels_original))
         if raw_distances is not None:
@@ -493,6 +546,8 @@ class PocketDatasetV8(Dataset):
         n_residues = min(lengths)
 
         esm = esm[:n_residues]
+        if esm3 is not None:
+            esm3 = esm3[:n_residues]
         protein_physchem = protein_physchem[:n_residues]
         protein_spatial_scalar = protein_spatial_scalar[:n_residues]
         protein_spatial_vector = protein_spatial_vector[:n_residues]
@@ -511,6 +566,8 @@ class PocketDatasetV8(Dataset):
 
         if n_residues > self.max_seq_len:
             esm = esm[:self.max_seq_len]
+            if esm3 is not None:
+                esm3 = esm3[:self.max_seq_len]
             protein_physchem = protein_physchem[:self.max_seq_len]
             protein_spatial_scalar = protein_spatial_scalar[:self.max_seq_len]
             protein_spatial_vector = protein_spatial_vector[:self.max_seq_len]
@@ -581,6 +638,9 @@ class PocketDatasetV8(Dataset):
             'n_residues': n_residues,
             'n_atoms': n_atoms
         }
+
+        if esm3 is not None:
+            result['esm3'] = esm3.float()
 
         if labels_original is not None:
             result['labels_original'] = labels_original.long()
