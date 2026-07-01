@@ -6,6 +6,7 @@ Coords are intentionally excluded:
             not raw xyz; coords/coords_heavy_current/coords_original are separate keys)
   - protein: loads physchem[62] and spatial_scalar[89] only (ca_coords is a separate key)
   - esm2:   loads embeddings[1280] only (atom37_positions is a separate key)
+  - esm3:   loads embeddings[1536] only (atom37_positions is a separate key)
   - unimol: loads embedding[512] only (molecular-level, no coords)
 
 Dim classification:
@@ -47,6 +48,9 @@ def load_ligand(path):
 def load_esm2(path):
     return _load(path)["embeddings"].numpy().astype(np.float32)       # [L, 1280]
 
+def load_esm3(path):
+    return _load(path)["embeddings"].numpy().astype(np.float32)       # [L, 1536]
+
 def load_unimol(path):
     return _load(path)["embedding"].unsqueeze(0).numpy().astype(np.float32)  # [1, 512]
 
@@ -60,6 +64,7 @@ def load_protein_spatial(path):
 LOADERS = {
     "ligand":   (load_ligand,           109,  "ligand_features_v5",       "**/*_ligand.pt"),
     "esm2":     (load_esm2,             1280, "esm2_latents",             "**/*_protein.pt"),
+    "esm3":     (load_esm3,             1536, "esm3_latents",             "**/*_protein.pt"),
     "unimol":   (load_unimol,           512,  "unimol_embeddings",        "**/*_unimol.pt"),
     "physchem": (load_protein_physchem, 62,   "complete_features_v4_nma", "**/*_conf0.pt"),
     "spatial":  (load_protein_spatial,  89,   "complete_features_v4_nma", "**/*_conf0.pt"),

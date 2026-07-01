@@ -31,6 +31,7 @@ Normalization policy from full-dataset stats:
   - protein spatial_scalar_features[89]: keep existing z-score, clamp four
     extreme dims to [-5, 5].
   - ESM2 and physchem are intentionally not processed here.
+  - ESM3 embedding[1536]: z-score all dims when requested.
 """
 
 from __future__ import annotations
@@ -214,6 +215,44 @@ def process_unimol(args, stats: dict) -> None:
     _run_parallel(paths, _worker, workers=args.workers, log_every=args.log_every, prefix="[unimol]")
 
 
+def process_esm3(args, stats: dict) -> None:
+    in_root = Path(args.data_root) / args.esm3_in_dir
+    paths = _sample_paths(list(in_root.rglob("*_protein.pt")), args.max_files)
+    if not paths:
+        print(f"[esm3] no files found under {in_root}")
+        return
+
+    esm3_stats = stats["esm3"]
+    mean = _as_tensor(esm3_stats["mean"])
+    std = _as_tensor(esm3_stats["std"])
+    dims = list(range(mean.numel()))
+
+    print(
+        f"[esm3] files={len(paths)} source={in_root} out_dir={args.esm3_out_dir} "
+        f"norm_dims=all/{len(dims)} workers={args.workers}"
+    )
+
+    def _worker(src: Path) -> str:
+        obj = torch.load(src, map_location="cpu", weights_only=False)
+        if not isinstance(obj, dict) or "embeddings" not in obj:
+            raise KeyError(f"{src} missing embeddings")
+        before = obj["embeddings"].float()
+        if before.shape[-1] != mean.numel():
+            raise ValueError(f"{src} embeddings dim={before.shape[-1]} expected={mean.numel()}")
+        new_obj = copy.deepcopy(obj)
+        after = _zscore_all(before, mean, std)
+        new_obj["embeddings"] = after
+        new_obj["feature_normalization"] = {
+            "esm3_embeddings": "zscore_all_dims",
+            "stats_source": str(args.stats),
+        }
+        dst = _relative_destination(src, in_root, Path(args.output_root), args.esm3_out_dir)
+        wrote = _save_pt(new_obj, dst, overwrite=args.overwrite)
+        return f"[esm3] {'wrote' if wrote else 'kept '} {dst} | {_summarize_delta(before, after, dims)}"
+
+    _run_parallel(paths, _worker, workers=args.workers, log_every=args.log_every, prefix="[esm3]")
+
+
 def _protein_patterns(root: Path) -> List[Path]:
     files = list(root.rglob("*_protein.pt"))
     files.extend(root.rglob("*_protein_conf*.pt"))
@@ -267,7 +306,7 @@ def parse_args():
     parser.add_argument("--stats", default="data/stats/stats_output.pt")
     parser.add_argument("--output-root", default="tmp/feature_norm_check")
     parser.add_argument("--features", nargs="+", default=["ligand", "unimol", "spatial"],
-                        choices=["ligand", "unimol", "spatial"])
+                        choices=["ligand", "unimol", "spatial", "esm3"])
     parser.add_argument("--max-files", type=int, default=5,
                         help="Files per feature type for dry-run. Ignored when --all is set.")
     parser.add_argument("--all", action="store_true", help="Process all matching files.")
@@ -279,6 +318,8 @@ def parse_args():
     parser.add_argument("--ligand-out-dir", default="ligand_features_v5_norm")
     parser.add_argument("--unimol-in-dir", default="unimol_embeddings")
     parser.add_argument("--unimol-out-dir", default="unimol_embeddings_norm")
+    parser.add_argument("--esm3-in-dir", default="esm3_latents")
+    parser.add_argument("--esm3-out-dir", default="esm3_latents_norm")
     parser.add_argument("--protein-in-dirs", nargs="+", default=["complete_features_v4_nma", "complete_features_v4"])
     parser.add_argument("--protein-out-dirs", nargs="+", default=["complete_features_v4_nma_norm", "complete_features_v4_norm"])
     parser.add_argument("--spatial-clamp-dims", nargs="+", type=int, default=DEFAULT_SPATIAL_CLAMP_DIMS)
@@ -305,6 +346,8 @@ def main() -> None:
         process_ligands(args, stats)
     if "unimol" in args.features:
         process_unimol(args, stats)
+    if "esm3" in args.features:
+        process_esm3(args, stats)
     if "spatial" in args.features:
         process_spatial(args, stats)
 

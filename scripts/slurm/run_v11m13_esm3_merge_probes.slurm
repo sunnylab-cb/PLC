@@ -7,7 +7,7 @@
 #   validated local54/graph ligand-delta path.
 #
 # Data requirement:
-#   data/${ESM3_FEATURES_DIR} must contain ESM3 caches with embeddings [N,1536].
+#   data/${ESM3_FEATURES_DIR} must contain normalized ESM3 caches with embeddings [N,1536].
 #   The dataset aligns ESM3 to the primary ESM2/protein residue keys
 #   (chain_id, residue_index, insertion_code); missing ESM3 residues are zero.
 #
@@ -38,7 +38,7 @@ set -eo pipefail
 PROJECT_DIR="${PROJECT_DIR:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
 BASE_CONFIG="${BASE_CONFIG:-outputs/pocket_gvp_fusion_seed44_group_rescompat_lr2e4_v11m13_20260611_205114/config.yaml}"
 INIT_CHECKPOINT="${INIT_CHECKPOINT:-outputs/pocket_gvp_fusion_seed44_group_rescompat_lr2e4_v11m13_20260611_205114/best_f1_c0_model.pt}"
-ESM3_FEATURES_DIR="${ESM3_FEATURES_DIR:-esm3_latents}"
+ESM3_FEATURES_DIR="${ESM3_FEATURES_DIR:-esm3_latents_norm}"
 BATCH_SIZE="${BATCH_SIZE:-20}"
 
 VARIANTS=(
@@ -91,7 +91,7 @@ if [ ! -f "${INIT_CHECKPOINT}" ]; then
 fi
 if [ ! -d "data/${ESM3_FEATURES_DIR}" ]; then
   echo "ERROR: ESM3 feature dir not found: data/${ESM3_FEATURES_DIR}"
-  echo "Sync local /media/WDisk/ProtBind/PLC/data/esm3_latents first."
+  echo "Sync local /media/WDisk/ProtBind/PLC/data/esm3_latents_norm first."
   exit 5
 fi
 
