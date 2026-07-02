@@ -26,7 +26,7 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -185,6 +185,7 @@ class BenchmarkV11Dataset(Dataset):
         tag_file: Path,
         protein_feature_root: Path,
         esm_root: Path,
+        esm3_root: Optional[Path],
         ligand_feature_root: Path,
         contact_thresh: float = 5.0,
         near_thresh: float = 8.0,
@@ -221,6 +222,7 @@ class BenchmarkV11Dataset(Dataset):
         self.spatial_clamp_max = float(clamp_range[1])
         self.protein_root = protein_feature_root / dataset
         self.esm_root = esm_root / dataset
+        self.esm3_root = (esm3_root / dataset) if esm3_root is not None else None
         self.ligand_root = ligand_feature_root / dataset
         self.dist_dict = torch.load(tag_file, map_location="cpu", weights_only=False)
         self.keys = sorted(self.dist_dict.keys())
@@ -259,6 +261,60 @@ class BenchmarkV11Dataset(Dataset):
         if not path.exists():
             raise FileNotFoundError(f"ESM feature not found for {protein_key}: {path}")
         return path
+
+    def _esm3_path(self, protein_key: str) -> Path:
+        if self.esm3_root is None:
+            raise FileNotFoundError("ESM3 root is not configured")
+        candidates = [
+            self.esm3_root / f"{protein_key}.pt",
+            self.esm3_root / f"{protein_key}_protein.pt",
+            self.esm3_root / protein_key / f"{protein_key}_protein.pt",
+        ]
+        for path in candidates:
+            if path.exists():
+                return path
+        raise FileNotFoundError(f"ESM3 feature not found for {protein_key}: {candidates[0]}")
+
+    @staticmethod
+    def _align_aux_esm_to_reference(aux_data: Dict, ref_data: Dict) -> torch.Tensor:
+        aux = aux_data["embeddings"].float()
+        ref = ref_data["embeddings"].float()
+        if aux.shape[0] == ref.shape[0]:
+            return aux
+
+        def _keys(data: Dict) -> Optional[List[Tuple[str, int, str]]]:
+            chains = data.get("chain_id")
+            residues = data.get("residue_index")
+            insertions = data.get("insertion_code")
+            if chains is None or residues is None:
+                return None
+            if insertions is None:
+                insertions = [""] * len(residues)
+            if len(chains) != len(residues) or len(chains) != len(insertions):
+                return None
+            return [
+                (str(c), int(r), str(i).strip())
+                for c, r, i in zip(chains, residues, insertions)
+            ]
+
+        aux_keys = _keys(aux_data)
+        ref_keys = _keys(ref_data)
+        if aux_keys is None or ref_keys is None:
+            raise ValueError(
+                f"Cannot align ESM3 length {aux.shape[0]} to ESM2 length {ref.shape[0]} without residue keys"
+            )
+        aux_map = {key: idx for idx, key in enumerate(aux_keys)}
+        aligned = torch.zeros((len(ref_keys), aux.shape[-1]), dtype=aux.dtype)
+        missing = 0
+        for i, key in enumerate(ref_keys):
+            j = aux_map.get(key)
+            if j is None:
+                missing += 1
+                continue
+            aligned[i] = aux[j]
+        if missing == len(ref_keys):
+            raise ValueError("ESM3/ESM2 alignment failed: no shared residue keys")
+        return aligned
 
     def _ligand_files(self, sample_key: str, protein_key: str) -> list[Path]:
         if self.tag_mode == "per_ligand":
@@ -336,7 +392,12 @@ class BenchmarkV11Dataset(Dataset):
         ligand_protein_key = self._protein_key(ligand_key)
 
         prot = torch.load(self._protein_path(protein_key), map_location="cpu", weights_only=False)
-        esm = torch.load(self._esm_path(protein_key), map_location="cpu", weights_only=False)["embeddings"].float()
+        esm_data = torch.load(self._esm_path(protein_key), map_location="cpu", weights_only=False)
+        esm = esm_data["embeddings"].float()
+        esm3 = None
+        if self.esm3_root is not None:
+            esm3_data = torch.load(self._esm3_path(protein_key), map_location="cpu", weights_only=False)
+            esm3 = self._align_aux_esm_to_reference(esm3_data, esm_data)
         lig = self._merge_ligands(self._ligand_files(ligand_key, ligand_protein_key))
         lig = self._apply_ligand_mode(lig)
 
@@ -357,7 +418,12 @@ class BenchmarkV11Dataset(Dataset):
             "labels": int(labels.shape[0]),
             "ligand_atoms_raw": int(lig["atom_features"].shape[0]),
         }
-        n_res = min(lengths["protein"], lengths["esm"], lengths["labels"], self.max_seq_len)
+        if esm3 is not None:
+            lengths["esm3"] = int(esm3.shape[0])
+        residue_lengths = [lengths["protein"], lengths["esm"], lengths["labels"]]
+        if esm3 is not None:
+            residue_lengths.append(lengths["esm3"])
+        n_res = min(*residue_lengths, self.max_seq_len)
 
         phys = phys[:n_res]
         scalar = scalar[:n_res]
@@ -376,6 +442,8 @@ class BenchmarkV11Dataset(Dataset):
         gvp_vectors = gvp_vectors[:n_res]
         chain_ids = chain_ids[:n_res]
         esm = esm[:n_res]
+        if esm3 is not None:
+            esm3 = esm3[:n_res]
         labels = labels[:n_res]
         distances = distances[:n_res]
 
@@ -406,6 +474,7 @@ class BenchmarkV11Dataset(Dataset):
             "protein_key": protein_key,
             "ligand_key": ligand_key,
             "esm": esm,
+            **({"esm3": esm3.float()} if esm3 is not None else {}),
             "protein_physchem": phys,
             "protein_spatial_scalar": scalar,
             "protein_spatial_vector": vector,
@@ -854,6 +923,7 @@ def run_dataset(
         tag_file=tag_file,
         protein_feature_root=_as_path(args.benchmark_root, args.protein_feature_root),
         esm_root=_as_path(args.benchmark_root, args.esm_root),
+        esm3_root=(_as_path(args.benchmark_root, args.esm3_root) if args.esm3_root else None),
         ligand_feature_root=_as_path(args.benchmark_root, args.ligand_feature_root),
         contact_thresh=args.contact_thresh,
         near_thresh=args.near_thresh,
@@ -948,6 +1018,7 @@ def main() -> None:
     parser.add_argument("--datasets", default="coach420,holo4k")
     parser.add_argument("--protein-feature-root", default="features_fixed_conservative/protein_v4")
     parser.add_argument("--esm-root", default="esm2")
+    parser.add_argument("--esm3-root", default=None, help="Optional ESM3 benchmark feature root, relative to benchmark-root")
     parser.add_argument("--ligand-feature-root", default="ligand_features_v5")
     parser.add_argument("--tag-root", default="residue_ligand_tags/atom_h")
     parser.add_argument("--tag-mode", default="aggregate", choices=["aggregate", "per_ligand"])
@@ -986,6 +1057,8 @@ def main() -> None:
         print("Ligand normalization: disabled")
     print(f"Spatial clamp: dims={spatial_clamp_dims} range={spatial_clamp_range}")
     model, version = create_v11_model(ckpt, config, device)
+    if config.get("model", {}).get("use_esm3", False) and not args.esm3_root:
+        raise ValueError("checkpoint config has model.use_esm3=true; provide --esm3-root for benchmark inference")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.output) if args.output else Path("results") / f"benchmark_{version}_{args.tag_mode}_{args.ligand_mode}_{ts}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1022,6 +1095,7 @@ def main() -> None:
         "spatial_clamp_range": spatial_clamp_range,
         "protein_feature_root": args.protein_feature_root,
         "esm_root": args.esm_root,
+        "esm3_root": args.esm3_root,
         "ligand_feature_root": args.ligand_feature_root,
         "tag_root": args.tag_root,
         "max_seq_len": args.max_seq_len,

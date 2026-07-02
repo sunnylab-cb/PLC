@@ -217,7 +217,8 @@ def process_unimol(args, stats: dict) -> None:
 
 def process_esm3(args, stats: dict) -> None:
     in_root = Path(args.data_root) / args.esm3_in_dir
-    paths = _sample_paths(list(in_root.rglob("*_protein.pt")), args.max_files)
+    paths = sorted(set(in_root.rglob("*_protein.pt")) | set(in_root.rglob("*.pt")))
+    paths = _sample_paths(paths, args.max_files)
     if not paths:
         print(f"[esm3] no files found under {in_root}")
         return
