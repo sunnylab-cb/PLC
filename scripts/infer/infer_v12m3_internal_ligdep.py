@@ -22,6 +22,7 @@ from scripts.infer.internal_ligand_dependency import (
     add_common_args,
     load_checkpoint,
     load_config_from_checkpoint_or_yaml,
+    resolve_contact_threshold,
     run_ligand_dependency_eval,
 )
 from src.data.collate import prepare_model_inputs_v12
@@ -56,6 +57,7 @@ def main() -> None:
 
     device = torch.device("cpu" if args.cpu else ("cuda" if torch.cuda.is_available() else "cpu"))
     ckpt = load_checkpoint(args.checkpoint, device)
+    resolve_contact_threshold(args, ckpt)
     config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
     model = create_v12m3_model(ckpt, config, device)
     d_unimol = int(config.get("model", {}).get("d_unimol", 512))
@@ -74,4 +76,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

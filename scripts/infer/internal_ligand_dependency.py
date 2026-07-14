@@ -50,6 +50,7 @@ from tqdm import tqdm
 from src.data.collate import pocket_collate_fn_v10
 from src.data.pocket_dataset import load_splits
 from src.data.pocket_dataset_v8 import PocketDatasetV8
+from src.metrics.metrics import contact_gate_predictions
 
 
 LIGAND_MODES = (
@@ -231,6 +232,17 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         default=0.0,
         help="additive inference-only bias to class-0/contact logits",
     )
+    parser.add_argument(
+        "--contact_threshold",
+        type=float,
+        default=None,
+        help="contact probability gate; default keeps legacy three-class argmax",
+    )
+    parser.add_argument(
+        "--use_checkpoint_gate",
+        action="store_true",
+        help="use val_contact_gate stored in the selected checkpoint",
+    )
 
 
 def load_checkpoint(path: str, device: torch.device) -> Dict:
@@ -247,6 +259,29 @@ def load_config_from_checkpoint_or_yaml(ckpt: Dict, config_path: Optional[str]) 
         with open(config_path, "r") as f:
             return yaml.safe_load(f)
     return ckpt["config"]
+
+
+def resolve_contact_threshold(args, ckpt: Dict) -> Optional[float]:
+    """Resolve an explicit or validation-selected contact gate."""
+    explicit = getattr(args, "contact_threshold", None)
+    use_checkpoint = bool(getattr(args, "use_checkpoint_gate", False))
+    if explicit is not None and use_checkpoint:
+        raise ValueError("choose either --contact_threshold or --use_checkpoint_gate, not both")
+
+    if use_checkpoint:
+        if "val_contact_gate" not in ckpt:
+            raise KeyError(
+                "checkpoint has no val_contact_gate; use an AUPRC/AUROC/F1 "
+                "checkpoint produced by the updated trainer or pass an explicit threshold"
+            )
+        explicit = float(ckpt["val_contact_gate"])
+
+    if explicit is not None and not 0.0 <= float(explicit) <= 1.0:
+        raise ValueError(f"contact threshold must be in [0, 1], got {explicit}")
+    args.contact_threshold = None if explicit is None else float(explicit)
+    decision = "three-class argmax" if explicit is None else f"p(contact)>={float(explicit):.6f}"
+    print(f"Contact decision rule: {decision}")
+    return args.contact_threshold
 
 
 def _clone_value(v):
@@ -805,7 +840,13 @@ def evaluate_mode(
             if class0_bias:
                 logits = logits.clone()
                 logits[..., 0] = logits[..., 0] + class0_bias
-            pred = logits.argmax(dim=-1).detach().cpu()
+            contact_threshold = getattr(args, "contact_threshold", None)
+            if contact_threshold is None:
+                pred = logits.argmax(dim=-1)
+            else:
+                probabilities = torch.softmax(logits.float(), dim=-1)
+                pred = contact_gate_predictions(probabilities, contact_threshold)
+            pred = pred.detach().cpu()
             labels = batch["labels"].detach().cpu()
             mask = batch["protein_mask"].bool().detach().cpu()
             pdb_ids = batch["pdb_ids"]
@@ -833,6 +874,7 @@ def evaluate_mode(
             "mode": mode_label,
             "base_mode": mode,
             "n_residues_global": counts["total"],
+            "contact_threshold": getattr(args, "contact_threshold", None),
         }
     )
     if mode == "custom_local54":

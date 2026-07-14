@@ -921,6 +921,9 @@ class PocketGVPFusionV11(nn.Module):
 
         self._cached_esm_mlc_weights = None
         self._cached_esm3_alpha = None
+        self._cached_esm3_prior_abs_mean = None
+        self._cached_esm3_delta_abs_mean = None
+        self._cached_esm3_gate_mean = None
 
     def _apply_esm3_fusion(
         self,
@@ -930,6 +933,9 @@ class PocketGVPFusionV11(nn.Module):
     ) -> torch.Tensor:
         """Inject optional ESM3 prior into the ESM-side half-width stream."""
         self._cached_esm3_alpha = None
+        self._cached_esm3_prior_abs_mean = None
+        self._cached_esm3_delta_abs_mean = None
+        self._cached_esm3_gate_mean = None
         if not self.use_esm3:
             return h_esm_proj
         if esm3_embeddings is None:
@@ -953,12 +959,22 @@ class PocketGVPFusionV11(nn.Module):
         if self.esm3_fusion == "global_prior":
             valid = protein_mask.to(dtype=h3.dtype).unsqueeze(-1)
             pooled = (h3 * valid).sum(dim=1, keepdim=True) / valid.sum(dim=1, keepdim=True).clamp(min=1.0)
-            return h_esm_proj + alpha * pooled
+            delta = alpha * pooled
+            self._cached_esm3_prior_abs_mean = pooled.detach().float().abs().mean()
+            self._cached_esm3_delta_abs_mean = delta.detach().float().abs().mean()
+            return h_esm_proj + delta
         if self.esm3_fusion == "residue_gate":
             gate = torch.sigmoid(self.esm3_gate(torch.cat([h_esm_proj, h3], dim=-1)))
-            return h_esm_proj + alpha * gate * (h3 - h_esm_proj)
+            delta = alpha * gate * (h3 - h_esm_proj)
+            self._cached_esm3_prior_abs_mean = h3.detach().float().abs().mean()
+            self._cached_esm3_delta_abs_mean = delta.detach().float().abs().mean()
+            self._cached_esm3_gate_mean = gate.detach().float().mean()
+            return h_esm_proj + delta
         delta = self.esm3_concat_proj(torch.cat([h_esm_proj, h3], dim=-1))
-        return h_esm_proj + alpha * delta
+        self._cached_esm3_prior_abs_mean = delta.detach().float().abs().mean()
+        delta = alpha * delta
+        self._cached_esm3_delta_abs_mean = delta.detach().float().abs().mean()
+        return h_esm_proj + delta
 
     def _fuse_esm_mlc(self, esm_embeddings: torch.Tensor) -> torch.Tensor:
         """Fuse optional multi-layer ESM [B, L, K, D] to standard [B, L, D]."""
@@ -1329,6 +1345,12 @@ class PocketGVPFusionV11(nn.Module):
                 result[f'esm_mlc_weight_{idx}'] = weight.detach()
         if self._cached_esm3_alpha is not None:
             result['esm3_alpha'] = self._cached_esm3_alpha.detach()
+        if self._cached_esm3_prior_abs_mean is not None:
+            result['esm3_prior_abs_mean'] = self._cached_esm3_prior_abs_mean.detach()
+        if self._cached_esm3_delta_abs_mean is not None:
+            result['esm3_delta_abs_mean'] = self._cached_esm3_delta_abs_mean.detach()
+        if self._cached_esm3_gate_mean is not None:
+            result['esm3_gate_mean'] = self._cached_esm3_gate_mean.detach()
 
         # V10m8: Distance regression auxiliary head
         if self.dist_aux_head is not None:

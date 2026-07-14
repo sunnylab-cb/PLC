@@ -151,6 +151,12 @@ class PocketGVPFusionV11m4t(PocketGVPFusionV11m4):
             esm3_embeddings=esm3_embeddings,
         )
 
+        # The parent already applies the delta with a differentiable scale.
+        # Recomputing the no-gate path from the detached diagnostic tensor
+        # `pair_delta_scale` used to silently freeze the scale parameter.
+        if not self.use_global_delta_gate:
+            return outputs
+
         gate = self._compute_delta_gate(
             ligand_x=ligand_x,
             ligand_batch=ligand_batch,
@@ -160,7 +166,7 @@ class PocketGVPFusionV11m4t(PocketGVPFusionV11m4):
         ).to(dtype=outputs["delta_logits"].dtype)
 
         gated_delta = outputs["delta_logits"] * gate.unsqueeze(1)
-        scale = outputs["pair_delta_scale"].to(dtype=outputs["base_logits"].dtype)
+        scale = self._delta_scale().to(dtype=outputs["base_logits"].dtype)
         outputs["logits"] = outputs["base_logits"] + scale * gated_delta
         outputs["delta_gate"] = gate.detach()
         outputs["delta_gate_mean"] = gate.detach().mean()

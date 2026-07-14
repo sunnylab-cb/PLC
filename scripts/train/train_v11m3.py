@@ -31,6 +31,7 @@ V11m2 更新 (基于 V11):
 """
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -57,7 +58,11 @@ from src.data.pocket_dataset import save_splits, load_splits, load_splits_with_c
 from src.data.collate import pocket_collate_fn_v10, prepare_model_inputs_v11
 from src.models.pocket_gvp_fusion_v11m3 import PocketGVPFusionV11m3
 from src.data.pocket_dataset_v6 import create_data_splits_v5
-from src.metrics.metrics import compute_segmentation_metrics, compute_enhanced_metrics
+from src.metrics.metrics import (
+    compute_contact_probability_metrics,
+    compute_enhanced_metrics,
+    compute_segmentation_metrics,
+)
 from src.metrics.diagnostics import collect_model_diagnostics, compute_feature_statistics
 from src.losses import compute_combined_iou_loss, compute_iou_metric  # V7m2: IoU Loss
 from src.losses.boundary_loss import compute_boundary_loss, compute_combined_loss_with_boundary  # V9m2: Boundary Loss
@@ -987,6 +992,26 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
                 n_params += 1
         return (total_norm ** 0.5) if n_params > 0 else 0.0
 
+    def add_parameter_grad_stats(name: str) -> None:
+        """Log scalar/control gradients even when they are unexpectedly absent."""
+        parameter = getattr(model, name, None)
+        if not isinstance(parameter, torch.nn.Parameter):
+            return
+
+        grad = parameter.grad
+        stats[f'grad_present_{name}'] = float(grad is not None)
+        if grad is None:
+            stats[f'grad_norm_{name}'] = 0.0
+            return
+
+        grad = grad.detach()
+        values = grad.coalesce()._values() if grad.is_sparse else grad
+        stats[f'grad_norm_{name}'] = (
+            torch.linalg.vector_norm(values.float(), ord=2).item()
+            if torch.isfinite(values).all()
+            else float('nan')
+        )
+
     # Unwrap DDP if needed
     if isinstance(model, DDP):
         model = model.module
@@ -1053,6 +1078,26 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
     if isinstance(alpha, torch.nn.Parameter) and alpha.grad is not None:
         stats['grad_norm_unimol_ligand_alpha'] = alpha.grad.detach().float().norm(2).item()
 
+    # High-value scalar controls are easy to silently detach while the rest of
+    # the branch still trains. Keep an explicit presence bit next to each norm.
+    for parameter_name in (
+        'pair_delta_logit_scale',
+        'local_delta_logit_scale',
+        'local_delta_qk_log_scale',
+        'esm3_raw_alpha',
+        'local_ligand_film_raw_alpha',
+        'pocket_virtual_raw_alpha',
+        'center_aux_raw_scale',
+        'local54_chem_adapter_raw_scale',
+        'local54_interaction_kv_raw_alpha',
+        'local54_compat_raw_alpha',
+        'local54_edge_context_raw_alpha',
+    ):
+        add_parameter_grad_stats(parameter_name)
+
+    if hasattr(model, 'esm3_proj') and model.esm3_proj is not None:
+        stats['grad_norm_esm3_proj'] = get_grad_norm(model.esm3_proj)
+
     # Cross-attention (support both old and new multi-layer format)
     cross_attn_norm = 0.0
     if hasattr(model, 'cross_attention_layers') and model.cross_attention_layers is not None:
@@ -1079,7 +1124,11 @@ def compute_gradient_stats(model: nn.Module) -> Dict[str, float]:
         stats['grad_ratio_esm_pathway'] = esm_total / modality_total
 
     # Overall GVP ratio (encoder only, for backward compat)
-    total_grad = sum(v for v in stats.values() if not v.__class__.__name__.startswith('str'))
+    total_grad = sum(
+        value
+        for key, value in stats.items()
+        if key.startswith('grad_norm_') and math.isfinite(value)
+    )
     if total_grad > 0 and 'grad_norm_gvp_encoder' in stats:
         stats['grad_ratio_gvp'] = stats['grad_norm_gvp_encoder'] / total_grad
 
@@ -1575,6 +1624,8 @@ def evaluate(
     # 累积预测和标签用于计算epoch级别的分割指标
     all_preds = []
     all_labels = []
+    all_contact_scores = []
+    all_contact_targets = []
 
     # V5: 如果需要评估原始标签
     total_loss_original = 0.0
@@ -1643,6 +1694,13 @@ def evaluate(
         preds = logits.argmax(dim=-1)
         all_preds.append(preds[mask].cpu())
         all_labels.append(labels[mask].cpu())
+        contact_scores = torch.softmax(logits.detach().float(), dim=-1)[..., 0].cpu()
+        contact_targets = (labels == 0).cpu()
+        contact_mask = mask.cpu()
+        for sample_idx in range(labels.shape[0]):
+            valid = contact_mask[sample_idx]
+            all_contact_scores.append(contact_scores[sample_idx][valid])
+            all_contact_targets.append(contact_targets[sample_idx][valid])
 
         # V5: 如果需要评估原始标签
         if evaluate_original and 'labels_original' in batch:
@@ -1703,6 +1761,17 @@ def evaluate(
         )
         avg_metrics['dice_c0'] = seg_metrics['dice']
         avg_metrics['iou_c0'] = seg_metrics['iou']
+
+    # Threshold-independent ranking, val-selected gate, and per-protein Top-L.
+    # Names explicitly encode global-vs-macro aggregation to prevent accidental
+    # comparison with the legacy batch-averaged argmax F1 above.
+    avg_metrics.update(
+        compute_contact_probability_metrics(
+            all_contact_scores,
+            all_contact_targets,
+            top_l_divisors=(20, 10, 5),
+        )
+    )
 
     # V5: Aggregate original metrics if available
     if evaluate_original and all_metrics_original:
@@ -2279,6 +2348,17 @@ def main():
             # 打印分割指标
             if 'dice_c0' in val_metrics:
                 print_rank0(f"Val DICE (d_center): {val_metrics['dice_c0']:.4f}, IoU: {val_metrics['iou_c0']:.4f}, F1_c0: {val_metrics.get('f1_c0', 0):.4f}")
+            if 'auprc_c0_global' in val_metrics:
+                print_rank0(
+                    "Val Contact ranking: "
+                    f"AUPRC={val_metrics['auprc_c0_global']:.4f}, "
+                    f"AUROC={val_metrics['auroc_c0_global']:.4f}, "
+                    f"F1/MCC@0.5={val_metrics['f1_c0_at_0_5_global']:.4f}/"
+                    f"{val_metrics['mcc_c0_at_0_5_global']:.4f}, "
+                    f"best_gate={val_metrics['best_gate_c0']:.4f}, "
+                    f"F1/MCC@gate={val_metrics['f1_c0_at_best_gate_global']:.4f}/"
+                    f"{val_metrics['mcc_c0_at_best_gate_global']:.4f}"
+                )
 
             if writer is not None:
                 # V10m3: 命名空间策略
@@ -2317,6 +2397,27 @@ def main():
                 if 'dice_c0' in val_metrics:
                     writer.add_scalar('Val/dice_c0', val_metrics['dice_c0'], epoch)
                     writer.add_scalar('Val/iou_c0', val_metrics['iou_c0'], epoch)
+
+                for key in (
+                    'auprc_c0_global',
+                    'auroc_c0_global',
+                    'f1_c0_at_0_5_global',
+                    'mcc_c0_at_0_5_global',
+                    'best_gate_c0',
+                    'f1_c0_at_best_gate_global',
+                    'mcc_c0_at_best_gate_global',
+                    'top_l20_precision_c0_macro',
+                    'top_l20_recall_c0_macro',
+                    'top_l20_hit_rate_c0_macro',
+                    'top_l10_precision_c0_macro',
+                    'top_l10_recall_c0_macro',
+                    'top_l10_hit_rate_c0_macro',
+                    'top_l5_precision_c0_macro',
+                    'top_l5_recall_c0_macro',
+                    'top_l5_hit_rate_c0_macro',
+                ):
+                    if key in val_metrics:
+                        writer.add_scalar(f'Val/{key}', val_metrics[key], epoch)
 
             # ✅ Save checkpoints with complete state
             # 1. Save latest checkpoint after EVERY epoch

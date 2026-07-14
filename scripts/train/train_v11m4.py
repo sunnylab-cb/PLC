@@ -31,11 +31,6 @@ from src.models.pocket_gvp_fusion_v11m4 import PocketGVPFusionV11m4  # noqa: E40
 
 def _patch_v11m3_source_for_v11m4(source: str) -> str:
     """Patch the reused V11m3 train loop only inside the V11m4 entrypoint."""
-    source = source.replace(
-        "import time\nimport yaml",
-        "import time\nimport math\nimport yaml",
-    )
-
     old_grad_block = """            # ✅ Record gradients BEFORE clipping and optimizer step
             if writer is not None and is_main_process() and (batch_idx + 1) % log_every == 0:
                 global_step = epoch * len(dataloader) + batch_idx
@@ -99,17 +94,17 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
 
     source = source.replace(
         "    best_val_loss = float('inf')\n    patience_counter = 0",
-        "    best_val_loss = float('inf')\n    best_val_f1_c0 = -float('inf')\n    best_val_dice_c0 = -float('inf')\n    patience_counter = 0",
+        "    best_val_loss = float('inf')\n    best_val_f1_c0 = -float('inf')\n    best_val_dice_c0 = -float('inf')\n    best_val_auprc_c0 = -float('inf')\n    best_val_auroc_c0 = -float('inf')\n    patience_counter = 0",
         1,
     )
     source = source.replace(
         "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
-        "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            best_val_f1_c0 = checkpoint.get('best_val_f1_c0', -float('inf'))\n            best_val_dice_c0 = checkpoint.get('best_val_dice_c0', -float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
+        "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            best_val_f1_c0 = checkpoint.get('best_val_f1_c0', -float('inf'))\n            best_val_dice_c0 = checkpoint.get('best_val_dice_c0', -float('inf'))\n            best_val_auprc_c0 = checkpoint.get('best_val_auprc_c0', -float('inf'))\n            best_val_auroc_c0 = checkpoint.get('best_val_auroc_c0', -float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
         1,
     )
     source = source.replace(
         "                'best_val_loss': best_val_loss,\n                'patience_counter': patience_counter,",
-        "                'best_val_loss': best_val_loss,\n                'best_val_f1_c0': best_val_f1_c0,\n                'best_val_dice_c0': best_val_dice_c0,\n                'patience_counter': patience_counter,",
+        "                'best_val_loss': best_val_loss,\n                'best_val_f1_c0': best_val_f1_c0,\n                'best_val_dice_c0': best_val_dice_c0,\n                'best_val_auprc_c0': best_val_auprc_c0,\n                'best_val_auroc_c0': best_val_auroc_c0,\n                'patience_counter': patience_counter,",
     )
 
     old_best_tail = """            else:
@@ -133,6 +128,9 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'best_val_loss': best_val_loss,
                     'best_val_f1_c0': best_val_f1_c0,
                     'best_val_dice_c0': best_val_dice_c0,
+                    'best_val_auprc_c0': best_val_auprc_c0,
+                    'best_val_auroc_c0': best_val_auroc_c0,
+                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
                     'patience_counter': patience_counter,
                     'train_metrics': train_metrics,
                     'val_metrics': val_metrics,
@@ -154,6 +152,9 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'best_val_loss': best_val_loss,
                     'best_val_f1_c0': best_val_f1_c0,
                     'best_val_dice_c0': best_val_dice_c0,
+                    'best_val_auprc_c0': best_val_auprc_c0,
+                    'best_val_auroc_c0': best_val_auroc_c0,
+                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
                     'patience_counter': patience_counter,
                     'train_metrics': train_metrics,
                     'val_metrics': val_metrics,
@@ -163,6 +164,52 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     best_dice_checkpoint['scaler_state_dict'] = scaler.state_dict()
                 torch.save(best_dice_checkpoint, exp_dir / 'best_dice_c0_model.pt')
                 print_rank0(f"✓ Saved best DICE_c0 model (dice_c0={best_val_dice_c0:.4f})")
+
+            # Threshold-independent selectors. These inference checkpoints
+            # omit optimizer/scaler state to bound the extra storage cost.
+            current_auprc_c0 = float(val_metrics.get('auprc_c0_global', -float('inf')))
+            if math.isfinite(current_auprc_c0) and current_auprc_c0 > best_val_auprc_c0:
+                best_val_auprc_c0 = current_auprc_c0
+                best_auprc_checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'best_val_f1_c0': best_val_f1_c0,
+                    'best_val_dice_c0': best_val_dice_c0,
+                    'best_val_auprc_c0': best_val_auprc_c0,
+                    'best_val_auroc_c0': best_val_auroc_c0,
+                    'selection_metric': 'auprc_c0_global',
+                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
+                    'val_metrics': val_metrics,
+                    'config': config,
+                }
+                torch.save(best_auprc_checkpoint, exp_dir / 'best_auprc_c0_model.pt')
+                print_rank0(
+                    f"✓ Saved best AUPRC_c0 model (auprc={best_val_auprc_c0:.4f}, "
+                    f"val_gate={best_auprc_checkpoint['val_contact_gate']:.4f})"
+                )
+
+            current_auroc_c0 = float(val_metrics.get('auroc_c0_global', -float('inf')))
+            if math.isfinite(current_auroc_c0) and current_auroc_c0 > best_val_auroc_c0:
+                best_val_auroc_c0 = current_auroc_c0
+                best_auroc_checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'best_val_f1_c0': best_val_f1_c0,
+                    'best_val_dice_c0': best_val_dice_c0,
+                    'best_val_auprc_c0': best_val_auprc_c0,
+                    'best_val_auroc_c0': best_val_auroc_c0,
+                    'selection_metric': 'auroc_c0_global',
+                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
+                    'val_metrics': val_metrics,
+                    'config': config,
+                }
+                torch.save(best_auroc_checkpoint, exp_dir / 'best_auroc_c0_model.pt')
+                print_rank0(
+                    f"✓ Saved best AUROC_c0 model (auroc={best_val_auroc_c0:.4f}, "
+                    f"val_gate={best_auroc_checkpoint['val_contact_gate']:.4f})"
+                )
 
             # Early stopping
 """
@@ -236,6 +283,10 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'residue_chem_value_enrich_gate_abs_mean',
                     'residue_chem_value_enrich_raw_abs_mean',
                     'residue_chem_value_enrich_abs_mean',
+                    'esm3_alpha',
+                    'esm3_prior_abs_mean',
+                    'esm3_delta_abs_mean',
+                    'esm3_gate_mean',
                 ):
                     if key in outputs:
                         value = outputs[key]

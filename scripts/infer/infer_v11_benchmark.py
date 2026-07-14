@@ -43,8 +43,10 @@ from scripts.infer.infer_v11_internal_ligdep import (  # noqa: E402
 from scripts.infer.internal_ligand_dependency import (  # noqa: E402
     load_checkpoint,
     load_config_from_checkpoint_or_yaml,
+    resolve_contact_threshold,
 )
 from src.data.collate import pocket_collate_fn_v10, prepare_model_inputs_v11  # noqa: E402
+from src.metrics.metrics import contact_gate_predictions  # noqa: E402
 
 
 CLASS_NAMES = {0: "Contact", 1: "Near", 2: "Far"}
@@ -962,7 +964,10 @@ def run_dataset(
         if args.class0_logit_bias:
             logits[..., 0] = logits[..., 0] + float(args.class0_logit_bias)
         probs = F.softmax(logits.float(), dim=-1).cpu()
-        preds = probs.argmax(dim=-1)
+        if args.contact_threshold is None:
+            preds = probs.argmax(dim=-1)
+        else:
+            preds = contact_gate_predictions(probs, args.contact_threshold)
         labels_b = batch["labels"]
         mask_b = batch["protein_mask"]
         coords_b = batch["protein_coords"]
@@ -1035,6 +1040,17 @@ def main() -> None:
     parser.add_argument("--near-thresh", type=float, default=8.0)
     parser.add_argument("--dcc-thresh", type=float, default=4.0)
     parser.add_argument("--class0-logit-bias", type=float, default=0.0)
+    parser.add_argument(
+        "--contact-threshold",
+        type=float,
+        default=None,
+        help="contact probability gate; default keeps legacy three-class argmax",
+    )
+    parser.add_argument(
+        "--use-checkpoint-gate",
+        action="store_true",
+        help="use val_contact_gate stored in the selected checkpoint",
+    )
     parser.add_argument("--feature-stats", default=None, help="Training feature stats for ligand V5 normalization")
     parser.add_argument("--no-ligand-normalization", action="store_true")
     parser.add_argument("--no-spatial-clamp", action="store_true")
@@ -1045,6 +1061,7 @@ def main() -> None:
 
     device = torch.device("cpu" if args.cpu else ("cuda" if torch.cuda.is_available() else "cpu"))
     ckpt = load_checkpoint(args.checkpoint, device)
+    resolve_contact_threshold(args, ckpt)
     config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
     stats_path = _resolve_feature_stats_path(args, config)
     ligand_norm = _load_ligand_norm(stats_path, enabled=not args.no_ligand_normalization)
@@ -1089,6 +1106,7 @@ def main() -> None:
         "tag_mode": args.tag_mode,
         "ligand_mode": args.ligand_mode,
         "class0_logit_bias": args.class0_logit_bias,
+        "contact_threshold": args.contact_threshold,
         "feature_stats": str(stats_path) if stats_path else None,
         "ligand_normalization": None if ligand_norm is None else {"path": ligand_norm["path"], "n_dims": len(ligand_norm["dims"]), "dims": ligand_norm["dims"]},
         "spatial_clamp_dims": spatial_clamp_dims,

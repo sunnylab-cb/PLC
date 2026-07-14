@@ -50,6 +50,7 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         "local_delta_score_clip": 20.0,
         "local_delta_logit_scale_init": 0.5,
         "local_delta_logit_scale_max": 1.0,
+        "local_delta_trainable_logit_scale": True,
         "local_delta_detach_protein": True,
         "local_delta_protein_grad_scale": 1.0,
         "local_delta_detach_ligand": False,
@@ -76,6 +77,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.local_delta_dim = int(cfg.get("local_delta_dim", 128))
         self.local_delta_score_clip = float(cfg.get("local_delta_score_clip", 20.0))
         self.local_delta_logit_scale_max = float(cfg.get("local_delta_logit_scale_max", 1.0))
+        self.local_delta_trainable_logit_scale = bool(
+            cfg.get("local_delta_trainable_logit_scale", True)
+        )
         self.local_delta_detach_protein = bool(cfg.get("local_delta_detach_protein", True))
         self.local_delta_protein_grad_scale = float(cfg.get("local_delta_protein_grad_scale", 1.0))
         self.local_delta_detach_ligand = bool(cfg.get("local_delta_detach_ligand", False))
@@ -123,6 +127,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
 
             init_scale = float(cfg.get("local_delta_logit_scale_init", 0.5))
             self.local_delta_logit_scale = nn.Parameter(torch.tensor(init_scale))
+            self.local_delta_logit_scale.requires_grad_(
+                self.local_delta_trainable_logit_scale
+            )
             qk_scale_init = float(cfg.get("local_delta_qk_norm_scale_init", math.sqrt(self.local_delta_dim)))
             self.local_delta_qk_log_scale = nn.Parameter(torch.tensor(math.log(max(qk_scale_init, 1e-6))))
         else:
@@ -134,6 +141,9 @@ class PocketGVPFusionV11m6(PocketGVPFusionV11m4t):
         self.config["use_local_delta_only"] = self.use_local_delta_only
         self.config["local_delta_local_dim"] = self.local_delta_local_dim
         self.config["local_delta_dim"] = self.local_delta_dim
+        self.config["local_delta_trainable_logit_scale"] = (
+            self.local_delta_trainable_logit_scale
+        )
         self.config["local_delta_protein_grad_scale"] = self.local_delta_protein_grad_scale
         self.config["local_delta_use_qk_norm"] = self.local_delta_use_qk_norm
         self.config["ligand_source_dropout_p"] = self.ligand_source_dropout_p
