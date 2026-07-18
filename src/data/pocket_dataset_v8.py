@@ -13,6 +13,8 @@ Handles data organized by year ranges:
 - data/residue_ligand_distances_vdw.pt
 """
 
+import csv
+
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -118,6 +120,7 @@ class PocketDatasetV8(Dataset):
         distances_file: str = None,
         distances_file_original: str = None,
         esm_features_dir: str = 'esm2_latents',
+        esm_alignment_features_dir: Optional[str] = None,
         esm3_features_dir: Optional[str] = None,
         ligand_features_dir: str = 'ligand_features_v4',
         protein_features_dir: str = 'complete_features_v3',     # fallback (conf0 base)
@@ -184,8 +187,14 @@ class PocketDatasetV8(Dataset):
         self.protein_features_dir = self.data_root / protein_features_dir  # fallback
         self.nma_features_dir = self.data_root / nma_features_dir          # V8: NMA dir
         self.esm_dir = self.data_root / esm_features_dir
+        self.esm_alignment_dir = (
+            self.data_root / esm_alignment_features_dir
+            if esm_alignment_features_dir
+            else None
+        )
         self.esm3_dir = self.data_root / esm3_features_dir if esm3_features_dir else None
         self.ligand_dir = self.data_root / ligand_features_dir
+        self._esm_manifest_index = self._load_esm_manifest_index()
 
         # Load distance labels
         self._distances_file_path = self._resolve_distances_path(distances_file)
@@ -259,12 +268,24 @@ class PocketDatasetV8(Dataset):
                         (complex_dir / f'{cid}_protein_conf0.pt').exists() or
                         (complex_dir / f'{cid}_protein.pt').exists()
                     )
-                    esm_file = self.esm_dir / year_range / cid / f'{cid}_protein.pt'
+                    esm_file = self._find_primary_esm_file(cid)
+                    esm_alignment_ok = True
+                    if self.esm_alignment_dir is not None:
+                        esm_alignment_ok = (
+                            self.esm_alignment_dir / year_range / cid / f'{cid}_protein.pt'
+                        ).exists()
                     esm3_ok = True
                     if self.esm3_dir is not None:
                         esm3_ok = (self.esm3_dir / year_range / cid / f'{cid}_protein.pt').exists()
                     ligand_file = self.ligand_dir / year_range / cid / f'{cid}_ligand.pt'
-                    if has_protein and esm_file.exists() and esm3_ok and ligand_file.exists():
+                    if (
+                        has_protein
+                        and esm_file is not None
+                        and esm_file.exists()
+                        and esm_alignment_ok
+                        and esm3_ok
+                        and ligand_file.exists()
+                    ):
                         complex_ids.add(cid)
 
         return sorted(complex_ids)
@@ -311,6 +332,10 @@ class PocketDatasetV8(Dataset):
         ]
         if self.esm3_dir is not None:
             parts.append(f"esm3_features={self.esm3_dir.name}")
+        if self.esm_alignment_dir is not None:
+            parts.append(f"esm_alignment={self.esm_alignment_dir.name}")
+        if self._esm_manifest_index:
+            parts.append(f"esm_manifest={len(self._esm_manifest_index)}")
         if self.use_spatial_clamp:
             parts.append(
                 f"spatial_clamp=dims{self.spatial_clamp_dims}"
@@ -360,6 +385,38 @@ class PocketDatasetV8(Dataset):
             if f.exists():
                 return f
         return None
+
+    def _load_esm_manifest_index(self) -> Dict[str, Path]:
+        """Load an optional PDB-to-unique-feature manifest from the ESM root."""
+        manifest_path = self.esm_dir / "pdb_manifest.tsv"
+        if not manifest_path.exists():
+            return {}
+        with manifest_path.open(newline="") as handle:
+            rows = list(csv.DictReader(handle, delimiter="\t"))
+        required = {"pdb_id", "unique_id", "seq_sha256"}
+        if not rows or not required.issubset(rows[0]):
+            raise ValueError(
+                f"{manifest_path}: expected columns {sorted(required)}, "
+                f"found {sorted(rows[0]) if rows else []}"
+            )
+        index: Dict[str, Path] = {}
+        for row in rows:
+            pdb_id = row["pdb_id"].strip().lower()
+            if pdb_id in index:
+                raise ValueError(f"{manifest_path}: duplicate pdb_id={pdb_id}")
+            index[pdb_id] = (
+                self.esm_dir
+                / "unique"
+                / row["seq_sha256"][:2]
+                / f"{row['unique_id']}.pt"
+            )
+        return index
+
+    def _find_primary_esm_file(self, pdb_id: str) -> Optional[Path]:
+        if self._esm_manifest_index:
+            path = self._esm_manifest_index.get(pdb_id.lower())
+            return path if path is not None and path.exists() else None
+        return self._find_file(pdb_id, self.esm_dir, 'protein')
 
     def _find_file(self, pdb_id: str, base_dir: Path, suffix: str) -> Optional[Path]:
         """Find file in nested year directories (ESM / ligand)."""
@@ -437,24 +494,42 @@ class PocketDatasetV8(Dataset):
                 protein_file = self._find_base_protein_file(pdb_id)
 
         # ── Load ESM and Ligand (always by pdb_id, no conf suffix) ───────────
-        esm_file = self._find_file(pdb_id, self.esm_dir, 'protein')
+        esm_file = self._find_primary_esm_file(pdb_id)
+        esm_alignment_file = (
+            self._find_file(pdb_id, self.esm_alignment_dir, 'protein')
+            if self.esm_alignment_dir is not None
+            else None
+        )
         esm3_file = self._find_file(pdb_id, self.esm3_dir, 'protein') if self.esm3_dir is not None else None
         ligand_file = self._find_file(pdb_id, self.ligand_dir, 'ligand')
 
-        if protein_file is None or esm_file is None or ligand_file is None or (self.esm3_dir is not None and esm3_file is None):
+        if (
+            protein_file is None
+            or esm_file is None
+            or ligand_file is None
+            or (self.esm_alignment_dir is not None and esm_alignment_file is None)
+            or (self.esm3_dir is not None and esm3_file is None)
+        ):
             raise FileNotFoundError(
                 f"Missing files for {pdb_id} conf{conf_idx}: "
-                f"protein={protein_file}, esm={esm_file}, esm3={esm3_file}, ligand={ligand_file}"
+                f"protein={protein_file}, esm={esm_file}, esm_align={esm_alignment_file}, "
+                f"esm3={esm3_file}, ligand={ligand_file}"
             )
 
         protein_data = torch.load(protein_file, weights_only=False)
         esm_data = torch.load(esm_file, weights_only=False)
+        esm_alignment_data = (
+            torch.load(esm_alignment_file, weights_only=False)
+            if esm_alignment_file is not None
+            else None
+        )
         esm3_data = torch.load(esm3_file, weights_only=False) if esm3_file is not None else None
         ligand_data = torch.load(ligand_file, weights_only=False)
 
         # ── Extract features ─────────────────────────────────────────────────
-        esm = esm_data['embeddings']  # [N, 1280]
-        esm3 = self._align_aux_esm_to_reference(esm3_data, esm_data) if esm3_data is not None else None
+        esm = esm_data['embeddings']  # [N, D] or [N, K, D]
+        esm_reference = esm_alignment_data if esm_alignment_data is not None else esm_data
+        esm3 = self._align_aux_esm_to_reference(esm3_data, esm_reference) if esm3_data is not None else None
 
         if 'physchem_features' not in protein_data:
             raise KeyError(f"Cannot find V3 features in {protein_file}")

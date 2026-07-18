@@ -625,7 +625,11 @@ def compute_combined_loss_v4(
         cls_w_per_pos = (labels_one_hot * cls_w).sum(dim=-1)                   # [B, L]
         weighted_ce   = weighted_ce * cls_w_per_pos                            # [B, L]
 
-        masked_focal = weighted_ce * mask.float()                              # [B, L]
+        # Multiplying masked padding by zero does not clear NaN/Inf
+        # (NaN * 0 == NaN). Overwrite padding before reduction so validation
+        # loss reflects valid residues only, matching the ranking metrics.
+        valid_mask = mask.bool()
+        masked_focal = weighted_ce.masked_fill(~valid_mask, 0.0)               # [B, L]
         # V10m7: CNC — reduce focal loss for clipped c_2 residues
         if cnc_weights is not None:
             masked_focal = masked_focal * cnc_weights                          # [B, L]
@@ -637,7 +641,8 @@ def compute_combined_loss_v4(
     # ── Tversky Loss ─────────────────────────────────────────────────────────
     if _need_tversky:
         _, probs, _ = _get_shared()
-        p_contact = probs[:, :, 0]
+        valid_mask = mask.bool()
+        p_contact = probs[:, :, 0].masked_fill(~valid_mask, 0.0)
         t_contact = (labels == 0).float()
         m         = mask.float()
         TP = (p_contact * t_contact * m).sum(dim=1)
@@ -655,15 +660,17 @@ def compute_combined_loss_v4(
     # ── Weighted Dice Loss ───────────────────────────────────────────────────
     if _need_wdice:
         _, probs, labels_one_hot = _get_shared()
-        m_exp      = mask.unsqueeze(-1).float()
-        intersect  = (probs * labels_one_hot * m_exp).sum(dim=1)           # [B, C]
+        valid_exp   = mask.bool().unsqueeze(-1)
+        safe_probs  = probs.masked_fill(~valid_exp, 0.0)
+        safe_labels = labels_one_hot.masked_fill(~valid_exp, 0.0)
+        intersect  = (safe_probs * safe_labels).sum(dim=1)                 # [B, C]
         # V10m7: CNC — reduce pred_sum contribution of clipped c_2 residues
         if cnc_weights is not None:
             cnc_exp = cnc_weights.unsqueeze(-1)                            # [B, L, 1]
-            pred_sum = (probs * m_exp * cnc_exp).sum(dim=1)               # [B, C]
+            pred_sum = (safe_probs * cnc_exp).sum(dim=1)                  # [B, C]
         else:
-            pred_sum = (probs * m_exp).sum(dim=1)                         # [B, C]
-        tgt_sum    = (labels_one_hot * m_exp).sum(dim=1)                   # [B, C]
+            pred_sum = safe_probs.sum(dim=1)                              # [B, C]
+        tgt_sum    = safe_labels.sum(dim=1)                               # [B, C]
         dice_cls   = (2.0 * intersect + weighted_dice_smooth) / (pred_sum + tgt_sum + weighted_dice_smooth)
         w_norm     = class_weights.to(device) / class_weights.to(device).sum()
         wdice_per_sample = 1.0 - (dice_cls * w_norm.unsqueeze(0)).sum(dim=1)  # [B]
@@ -1927,6 +1934,7 @@ def main():
     ligand_features_dir = data_cfg.get('ligand_features_dir', 'ligand_features_v4')
     protein_features_dir = data_cfg.get('protein_features_dir', 'complete_features_v3')
     esm_features_dir = data_cfg.get('esm_features_dir', 'esm2_latents')
+    esm_alignment_features_dir = data_cfg.get('esm_alignment_features_dir', None)
     esm3_features_dir = data_cfg.get('esm3_features_dir', None)
     nma_features_dir = data_cfg.get('nma_features_dir', 'complete_features_v3_nma')  # V9
     nma_n_confs = data_cfg.get('nma_n_confs', 3)   # V9: default 3
@@ -1946,6 +1954,8 @@ def main():
         print_rank0("Data sources:")
         print_rank0(f"  protein_features_dir: data/{protein_features_dir}")
         print_rank0(f"  esm_features_dir: data/{esm_features_dir}")
+        if esm_alignment_features_dir:
+            print_rank0(f"  esm_alignment_features_dir: data/{esm_alignment_features_dir}")
         if esm3_features_dir:
             print_rank0(f"  esm3_features_dir: data/{esm3_features_dir}")
         print_rank0(f"  nma_features_dir: data/{nma_features_dir}")
@@ -1978,6 +1988,7 @@ def main():
         distances_file=distances_file,
         distances_file_original=distances_file_original,
         esm_features_dir=esm_features_dir,
+        esm_alignment_features_dir=esm_alignment_features_dir,
         esm3_features_dir=esm3_features_dir,
         ligand_features_dir=ligand_features_dir,
         protein_features_dir=protein_features_dir,
@@ -2004,6 +2015,7 @@ def main():
         distances_file=distances_file,
         distances_file_original=distances_file_original,
         esm_features_dir=esm_features_dir,
+        esm_alignment_features_dir=esm_alignment_features_dir,
         esm3_features_dir=esm3_features_dir,
         ligand_features_dir=ligand_features_dir,
         protein_features_dir=protein_features_dir,
