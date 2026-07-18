@@ -72,6 +72,21 @@ Star paths:
   esmc_600m_2024_12_mlc_l12_l24_l36_layered_fp16/   # PLC training cache
 ```
 
+HPC training cache:
+
+```text
+/hpc2hdd/home/shuang886/jhspoolers/PLC/data/
+  esmc_600m_2024_12_mlc_l12_l24_l36_layered_fp16/
+```
+
+The final local-to-HPC `rsync --checksum` reconciliation inspected 9,546
+entries (9,288 regular files including 9,284 tensors), totalled
+39,506,279,337 bytes, and transferred zero bytes.  Thus every target file
+already matched the verified local relay by content, not only by name/size.
+An HPC `af3` smoke resolved PDB `1jmi` through the manifest, loaded
+`[632,3,1152]`, collated `[1,632,3,1152]`, and produced a finite
+`[1,632,1152]` MLC output.
+
 The training cache uses one feature file per exact unique sequence plus
 `pdb_manifest.tsv`.  `PocketDatasetV8` resolves PDB IDs through this manifest,
 avoiding duplicated feature storage.  For ESM-C + ESM3 runs,
@@ -97,3 +112,15 @@ regime from being confounded with the protein representation.  Promotion
 requires a gain in test real F1 while preserving the real-shuffle
 ligand-dependency gap.  The default batch size remains 24, matching the
 promoted V11m13 configuration; batch 16 is reserved only as an OOM fallback.
+
+Warm-start preflight loaded 674 checkpoint tensors and skipped exactly one
+expected shape mismatch, `esm_proj.0.weight: [256,1280] -> [256,1152]`.
+The frozen-base adapter arm exposes 297,987 trainable parameters and freezes
+84,469,287 parameters.
+
+Submitted jobs:
+
+- `10001165_[0-3]`: fixed/trainable local-delta selector test dependency
+  (`real/shuffle/zero`) on `i64m1tga800ue`;
+- `10001643_[0-5]`: six ESM-C scratch/warm-start probes on
+  `i64m1tga800u`.
