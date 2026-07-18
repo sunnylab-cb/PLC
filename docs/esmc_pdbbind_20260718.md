@@ -95,4 +95,5 @@ language-model representation:
 All probes use seed 44.  The scratch and warm-start arms prevent initialization
 regime from being confounded with the protein representation.  Promotion
 requires a gain in test real F1 while preserving the real-shuffle
-ligand-dependency gap.
+ligand-dependency gap.  The default batch size remains 24, matching the
+promoted V11m13 configuration; batch 16 is reserved only as an OOM fallback.

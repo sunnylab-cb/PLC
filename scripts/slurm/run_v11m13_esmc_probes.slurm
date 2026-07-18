@@ -41,7 +41,7 @@ BASE_CONFIG="${BASE_CONFIG:-${ARCHIVE_ROOT}/outputs/pocket_gvp_fusion_seed44_gro
 OUTPUT_DIR="${OUTPUT_DIR:-${ARCHIVE_ROOT}/outputs}"
 ESMC_FEATURES_DIR="${ESMC_FEATURES_DIR:-esmc_600m_2024_12_mlc_l12_l24_l36_layered_fp16}"
 ESM3_FEATURES_DIR="${ESM3_FEATURES_DIR:-esm3_latents_norm}"
-BATCH_SIZE="${BATCH_SIZE:-16}"
+BATCH_SIZE="${BATCH_SIZE:-24}"
 
 VARIANTS=(
   "lastinit_wsum"
