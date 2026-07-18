@@ -55,6 +55,8 @@ Alignment and QC:
 - maximum complex sequence length: 5,400
 - longest-sequence smoke peak VRAM: 1.99 GiB
 - PDBbind full-complex hashes already present in the PPC chain cache: 6
+- representative FP32-to-FP16 packaging relative RMSE: 0.000207
+- representative FP32-to-FP16 cosine similarity: 1.000000
 
 The split-generation FASTA is not residue-identical to the cache consumed by
 training for 13,585/19,037 PDB IDs (often terminal residues differ).  Therefore
@@ -82,10 +84,15 @@ keys for ESM3 alignment; ESM2 embeddings are not fed to the model.
 group-rescompat/co-attention/local54 architecture and changes only the protein
 language-model representation:
 
-1. block-36-initialized learned weighted sum;
-2. uniform learned weighted sum;
-3. block-36-anchored concat residual;
-4. block-36-initialized weighted sum plus weak ESM3 global prior.
+1. scratch block-36-initialized learned weighted sum;
+2. scratch uniform learned weighted sum;
+3. scratch block-36-anchored concat residual;
+4. scratch block-36-initialized weighted sum plus weak ESM3 global prior;
+5. shape-compatible V11m13 warm-start followed by full fine-tuning;
+6. shape-compatible V11m13 warm-start with the established base frozen, training
+   only the new ESM-C layer fusion and 1152D input projection.
 
-All probes train from scratch with seed 44.  Promotion requires a gain in test
-real F1 while preserving the real-shuffle ligand-dependency gap.
+All probes use seed 44.  The scratch and warm-start arms prevent initialization
+regime from being confounded with the protein representation.  Promotion
+requires a gain in test real F1 while preserving the real-shuffle
+ligand-dependency gap.

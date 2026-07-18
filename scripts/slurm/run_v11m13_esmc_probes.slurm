@@ -12,6 +12,10 @@
 #   1 uniform_wsum        learned weighted sum, uniform 12/24/36 initialization
 #   2 concat              trainable concat projection, standard initialization
 #   3 lastinit_wsum_esm3  task 0 plus the existing weak ESM3 global prior
+#   4 lastinit_wsum_warmft initialize all shape-compatible V11m13 weights, then
+#                          full-finetune (the ESM input projection is new)
+#   5 lastinit_wsum_warmadapter
+#                          initialize V11m13 and train only esm_proj + ESM-C MLC
 #
 # Promotion rule:
 #   Compare best-AUPRC and best-F1 checkpoints on test real/shuffle/zero.
@@ -25,7 +29,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=96G
 #SBATCH --time=36:00:00
-#SBATCH --array=0-3
+#SBATCH --array=0-5
 #SBATCH --output=logs/v11m13_esmc_%A_%a.out
 #SBATCH --error=logs/v11m13_esmc_%A_%a.err
 
@@ -44,6 +48,8 @@ VARIANTS=(
   "uniform_wsum"
   "concat"
   "lastinit_wsum_esm3"
+  "lastinit_wsum_warmft"
+  "lastinit_wsum_warmadapter"
 )
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
@@ -107,8 +113,10 @@ with base_path.open() as handle:
     cfg = yaml.safe_load(handle)
 
 use_esm3 = variant.endswith("_esm3")
-fusion = "concat_proj" if variant == "concat" else "weighted_sum"
-init = "uniform" if variant == "uniform_wsum" else "last"
+is_warmft = variant.endswith("_warmft")
+is_warmadapter = variant.endswith("_warmadapter")
+fusion = "concat_proj" if variant.startswith("concat") else "weighted_sum"
+init = "uniform" if variant.startswith("uniform_wsum") else "last"
 
 experiment = cfg.setdefault("experiment", {})
 experiment["name"] = f"pocket_gvp_fusion_seed44_esmc_{variant}"
@@ -170,12 +178,20 @@ model["local54_compat_read_clip"] = 0.0
 model["use_local54_edge_context_kv"] = False
 
 training = cfg.setdefault("training", {})
-training["init_from_checkpoint"] = None
-training["freeze_v11_base"] = False
-training["learning_rate"] = 2.0e-4
+training["init_from_checkpoint"] = (
+    str(base_path.with_name("best_f1_c0_model.pt"))
+    if (is_warmft or is_warmadapter)
+    else None
+)
+training["freeze_v11_base"] = is_warmadapter
+if is_warmadapter:
+    # Learn a supervised ESM-C-to-established-V11m13 representation adapter
+    # without allowing the proven protein/ligand decision path to drift.
+    training["delta_trainable_tokens"] = ["esm_proj.", "esm_mlc_"]
+training["learning_rate"] = 1.0e-4 if is_warmft else 2.0e-4
 training["min_lr"] = 1.0e-6
-training["warmup_epochs"] = 3
-training["num_epochs"] = 80
+training["warmup_epochs"] = 2 if (is_warmft or is_warmadapter) else 3
+training["num_epochs"] = 60 if (is_warmft or is_warmadapter) else 80
 training["batch_size"] = batch_size
 training["accumulation_steps"] = 1
 training["early_stopping_patience"] = 40
@@ -189,7 +205,8 @@ with out_path.open("w") as handle:
 
 print(
     f"wrote={out_path} variant={variant} fusion={fusion} init={init} "
-    f"use_esm3={use_esm3} d_esm={model['d_esm']} batch={batch_size}"
+    f"use_esm3={use_esm3} warmft={is_warmft} "
+    f"warmadapter={is_warmadapter} d_esm={model['d_esm']} batch={batch_size}"
 )
 PY
 
