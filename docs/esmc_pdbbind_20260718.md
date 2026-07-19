@@ -30,6 +30,25 @@ Interpretation:
   `masked_fill`/valid-only tensors so invalid padding cannot poison early
   stopping.  A short rerun will verify this was the only NaN source.
 
+Test ligand-dependency evaluation initially used legacy three-class argmax,
+which is not the decision rule used by the selector metrics.  In particular,
+the trainable best-AUPRC checkpoint produced many low-confidence class-0 argmax
+predictions on a few long chains.  Re-evaluation with each checkpoint's stored
+validation gate (`10004843_[0-3]`) completed successfully:
+
+| variant | selector | test real F1 | shuffle F1 | zero F1 | real-shuffle | real-zero |
+|---|---|---:|---:|---:|---:|---:|
+| fixed | best F1 | **0.62446** | 0.56622 | 0.58999 | 0.05824 | 0.03447 |
+| fixed | best AUPRC | 0.62239 | 0.54614 | 0.59045 | **0.07624** | 0.03194 |
+| trainable | best F1 | 0.61555 | 0.54601 | 0.58381 | 0.06954 | 0.03173 |
+| trainable | best AUPRC | 0.60472 | 0.53885 | 0.52643 | 0.06588 | 0.07830 |
+
+The fixed local-delta scale remains preferred.  Its best-F1 checkpoint gives
+the highest real F1 in this control, while best-AUPRC gives the stronger
+ligand-shuffle dependency.  Neither surpasses the earlier seed-44 ESM3 global
+prior scratch result (real 0.62864, real-shuffle 0.07390), so this selector
+control is not a new mainline.
+
 Machine-readable checkpoint metadata is in
 `tmp/selector_9977123_summary.json` (not intended for version control).
 
