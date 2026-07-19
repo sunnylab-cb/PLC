@@ -23,6 +23,8 @@ PROJECT_DIR="${PROJECT_DIR:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
 ARCHIVE_ROOT="${ARCHIVE_ROOT:-/hpc2hdd/home/shuang886/PLC}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
+DECISION_MODE="${DECISION_MODE:-argmax}"
+CONTACT_THRESHOLD="${CONTACT_THRESHOLD:-}"
 
 RUN_NAMES=("scale_fixed" "scale_trainable")
 RUN_DIRS=(
@@ -47,14 +49,35 @@ fi
 
 CKPT="${RUN_DIR}/${CHECKPOINT_NAME}"
 CONFIG="${RUN_DIR}/config.yaml"
-OUT_ROOT="${PROJECT_DIR}/results/ligdep_v11m13_esm3_scale_selector_${SLURM_ARRAY_JOB_ID:-manual}"
+OUT_ROOT="${PROJECT_DIR}/results/ligdep_v11m13_esm3_scale_selector_${SLURM_ARRAY_JOB_ID:-manual}_${DECISION_MODE}"
 OUT_DIR="${OUT_ROOT}/${RUN_NAME}_${SELECTOR_NAME}"
+
+DECISION_ARGS=()
+case "${DECISION_MODE}" in
+  argmax)
+    ;;
+  checkpoint_gate)
+    DECISION_ARGS+=(--use_checkpoint_gate)
+    ;;
+  threshold)
+    if [ -z "${CONTACT_THRESHOLD}" ]; then
+      echo "ERROR: CONTACT_THRESHOLD is required when DECISION_MODE=threshold"
+      exit 5
+    fi
+    DECISION_ARGS+=(--contact_threshold "${CONTACT_THRESHOLD}")
+    ;;
+  *)
+    echo "ERROR: DECISION_MODE must be argmax, checkpoint_gate, or threshold"
+    exit 6
+    ;;
+esac
 
 mkdir -p "${PROJECT_DIR}/logs" "${OUT_DIR}"
 cd "${PROJECT_DIR}" || exit 1
 
 echo "run=${RUN_NAME} selector=${SELECTOR_NAME} checkpoint=${CKPT}"
 echo "purpose=test real/shuffle/zero for fixed-vs-trainable local delta scale"
+echo "decision_mode=${DECISION_MODE} contact_threshold=${CONTACT_THRESHOLD:-checkpoint/default}"
 echo "start=$(date) node=${SLURMD_NODENAME} job=${SLURM_JOB_ID}_${TASK_ID}"
 
 if command -v module &> /dev/null; then module purge || true; fi
@@ -76,6 +99,7 @@ python scripts/infer/infer_v11_internal_ligdep.py \
   --shuffle_seed 42 \
   --num_save_rows 1 \
   --output "${OUT_DIR}" \
+  "${DECISION_ARGS[@]}" \
   --amp
 
 echo "end=$(date)"
