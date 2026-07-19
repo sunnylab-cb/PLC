@@ -42,6 +42,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-${ARCHIVE_ROOT}/outputs}"
 ESMC_FEATURES_DIR="${ESMC_FEATURES_DIR:-esmc_600m_2024_12_mlc_l12_l24_l36_layered_fp16}"
 ESM3_FEATURES_DIR="${ESM3_FEATURES_DIR:-esm3_latents_norm}"
 BATCH_SIZE="${BATCH_SIZE:-24}"
+CONDA_ENV="${CONDA_ENV:-af3}"
 
 VARIANTS=(
   "lastinit_wsum"
@@ -68,6 +69,7 @@ echo "Variant: ${VARIANT}"
 echo "Job: ${SLURM_JOB_ID}_${TASK_ID} node=${SLURMD_NODENAME}"
 echo "ESMC cache: data/${ESMC_FEATURES_DIR}"
 echo "Base config: ${BASE_CONFIG}"
+echo "Conda env: ${CONDA_ENV}"
 echo "Start: $(date)"
 echo "============================================"
 
@@ -81,7 +83,7 @@ else
   echo "ERROR: conda command not found"
   exit 1
 fi
-conda activate af3
+conda activate "${CONDA_ENV}"
 
 if [ ! -f "${BASE_CONFIG}" ]; then
   echo "ERROR: base config not found: ${BASE_CONFIG}"
