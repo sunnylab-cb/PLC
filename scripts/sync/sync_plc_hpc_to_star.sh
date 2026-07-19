@@ -43,15 +43,8 @@ ssh "${SSH_ARGS[@]}" "${STAR_HOST}" mkdir -p \
   "${STAR_ROOT}/tmp"
 
 echo "[1/4] Syncing PLC code without generated data or history"
-rsync "${RSYNC_ARGS[@]}" \
-  --exclude=.git/ \
-  --exclude=data/ \
-  --exclude=outputs/ \
-  --exclude=results/ \
-  --exclude=logs/ \
-  --exclude=tmp/ \
-  "${SOURCE_PROJECT}/" \
-  "${STAR_HOST}:${STAR_ROOT}/repo/"
+git -C "${SOURCE_PROJECT}" archive --format=tar HEAD | \
+  ssh "${SSH_ARGS[@]}" "${STAR_HOST}" tar -xf - -C "${STAR_ROOT}/repo"
 
 echo "[2/4] Syncing the promoted V11m13 warm-start checkpoint"
 rsync "${RSYNC_ARGS[@]}" \
