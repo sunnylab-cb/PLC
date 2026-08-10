@@ -1337,6 +1337,10 @@ class PocketGVPFusionV11(nn.Module):
             'logits': logits,
             'h_prot_global': h_prot_global,
             'h_fused': h_prot_fused,
+            # Ligand-only state before bidirectional cross-attention.  Downstream
+            # assignment heads must use this rather than a protein-conditioned
+            # ligand state to avoid shortcut matching.
+            'h_ligand_context': h_lig_ctx,
             'h_ligand_fused': h_lig_fused,
             'protein_physchem_encoded': protein_physchem_encoded,  # exposed for subclass reuse
         }
