@@ -126,6 +126,22 @@ def print_rank0(*args, **kwargs):
         print(*args, **kwargs)
 
 
+def accumulate_validation_aux_metrics(
+    weighted_sums: Dict[str, float],
+    metrics: Dict[str, object],
+    sample_count: int,
+) -> None:
+    """Accumulate detached batch diagnostics for validation-only reporting."""
+    if sample_count <= 0:
+        return
+    for key, value in metrics.items():
+        if torch.is_tensor(value):
+            value = value.detach().float().mean().item()
+        scalar = float(value)
+        if math.isfinite(scalar):
+            weighted_sums[key] = weighted_sums.get(key, 0.0) + scalar * sample_count
+
+
 # ============================================================================
 # V11m3: Uni-Mol 嵌入快取
 # ============================================================================
@@ -1633,6 +1649,8 @@ def evaluate(
     total_focal_loss = 0.0
     total_samples = 0
     all_metrics = []
+    assignment_metric_sums: Dict[str, float] = {}
+    assignment_metric_samples = 0
 
     # 累积预测和标签用于计算epoch级别的分割指标
     all_preds = []
@@ -1695,6 +1713,22 @@ def evaluate(
             )
 
         batch_size = labels.size(0)
+        assignment_model = model.module if isinstance(model, DDP) else model
+        if hasattr(assignment_model, 'compute_assignment_auxiliary_loss'):
+            # Diagnostics only: do not add the auxiliary objective to validation
+            # loss, which must remain comparable across model variants.
+            _, assignment_stats = assignment_model.compute_assignment_auxiliary_loss(
+                outputs=outputs,
+                labels=labels,
+                mask=mask,
+                batch=batch,
+            )
+            accumulate_validation_aux_metrics(
+                assignment_metric_sums,
+                assignment_stats,
+                batch_size,
+            )
+            assignment_metric_samples += batch_size
         total_loss += loss.item() * batch_size
         total_dice_loss += tversky_loss_val.item() * batch_size   # V10m4 alias
         total_focal_loss += focal_loss.item() * batch_size
@@ -1785,6 +1819,9 @@ def evaluate(
             top_l_divisors=(20, 10, 5),
         )
     )
+    if assignment_metric_samples:
+        for key, weighted_sum in assignment_metric_sums.items():
+            avg_metrics[f'assignment_{key}'] = weighted_sum / assignment_metric_samples
 
     # V5: Aggregate original metrics if available
     if evaluate_original and all_metrics_original:
@@ -2377,6 +2414,16 @@ def main():
                     f"F1/MCC@gate={val_metrics['f1_c0_at_best_gate_global']:.4f}/"
                     f"{val_metrics['mcc_c0_at_best_gate_global']:.4f}"
                 )
+            if 'assignment_candidate_rank_acc' in val_metrics:
+                print_rank0(
+                    "Val Candidate health: "
+                    f"loss={val_metrics.get('assignment_candidate_loss', 0.0):.4f}, "
+                    f"rank_acc={val_metrics['assignment_candidate_rank_acc']:.4f}, "
+                    f"valid_frac={val_metrics.get('assignment_candidate_valid_frac', 0.0):.4f}, "
+                    f"coverage={val_metrics.get('assignment_candidate_best_coverage', 0.0):.4f}, "
+                    f"alpha={val_metrics.get('assignment_candidate_gate_alpha', 0.0):.5f}, "
+                    f"entropy={val_metrics.get('assignment_candidate_rank_entropy', 0.0):.4f}"
+                )
 
             if writer is not None:
                 # V10m3: 命名空间策略
@@ -2436,6 +2483,14 @@ def main():
                 ):
                     if key in val_metrics:
                         writer.add_scalar(f'Val/{key}', val_metrics[key], epoch)
+
+                for key, value in val_metrics.items():
+                    if key.startswith('assignment_'):
+                        writer.add_scalar(
+                            f"ValAssignment/{key.removeprefix('assignment_')}",
+                            value,
+                            epoch,
+                        )
 
             # ✅ Save checkpoints with complete state
             # 1. Save latest checkpoint after EVERY epoch
