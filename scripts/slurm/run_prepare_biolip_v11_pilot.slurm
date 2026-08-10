@@ -27,6 +27,7 @@ PROJECT="${PROJECT:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
 BIOLIP="${BIOLIP:-/hpc2hdd/home/shuang886/biolip}"
 QC_DIR="${QC_DIR:-${BIOLIP}/qc_training_manifest_20260811}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${BIOLIP}/v11_pilot_strict_nobench_20260811}"
+EXTRA_EXCLUDE="${EXTRA_EXCLUDE:-}"
 PYTHON="${PYTHON:-/hpc2ssd/softwares/anaconda3/envs/af3/bin/python}"
 
 mkdir -p "${PROJECT}/logs"
@@ -38,12 +39,24 @@ echo "BioLip V11 pilot materialization"
 echo "  source=${BIOLIP}"
 echo "  manifest=${QC_DIR}/biolip_current_feature_ready.tsv"
 echo "  exclusions=${QC_DIR}/exclude_coach420_holo4k_pdb_ids.txt"
+echo "  extra_exclusions=${EXTRA_EXCLUDE:-none}"
 echo "  output=${OUTPUT_ROOT}"
+
+EXCLUDE_ARGS=(
+  --exclude-pdb-ids "${QC_DIR}/exclude_coach420_holo4k_pdb_ids.txt"
+)
+if [ -n "${EXTRA_EXCLUDE}" ]; then
+  if [ ! -f "${EXTRA_EXCLUDE}" ]; then
+    echo "ERROR: EXTRA_EXCLUDE does not exist: ${EXTRA_EXCLUDE}" >&2
+    exit 2
+  fi
+  EXCLUDE_ARGS+=(--exclude-pdb-ids "${EXTRA_EXCLUDE}")
+fi
 
 "${PYTHON}" -u scripts/diagnostics/prepare_biolip_v11_pilot.py \
   --biolip-root "${BIOLIP}" \
   --manifest "${QC_DIR}/biolip_current_feature_ready.tsv" \
-  --exclude-pdb-ids "${QC_DIR}/exclude_coach420_holo4k_pdb_ids.txt" \
+  "${EXCLUDE_ARGS[@]}" \
   --output-root "${OUTPUT_ROOT}"
 
 "${PYTHON}" - "${OUTPUT_ROOT}" <<'PY'

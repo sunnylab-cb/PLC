@@ -272,9 +272,10 @@ Stage B: PDBbind finetune
 - 物化数据标签沿用主线定义：protein residue heavy atoms 到 ligand heavy atoms 的最小距离，`contact<5 A`、`near=5--8 A`。标签计数为 contact 9,989、near 14,213、far 191,682；每个 pair 至少 3 个 contact，最大 39 个。
 - 每条 chain sidecar 由 full-receptor V4 按 `(chain_id,residue_index,insertion_code)` 精确切片，并从 fixed CIF 补回 `all_atom_coords/all_atom_names`；源 V4、ESM2 和 ligand V6 文件保持只读，pair 目录只使用 symlink。
 - 新增 `allow_zero_unimol_fallback`：BioLip 预训练仍保留 V11m13 的全部 UniMol 层和 checkpoint shape，但在没有匹配缓存时显式传入 zero embedding；默认值为 false，因此不改变任何现有训练的严格行为。
-- 两阶段 pilot 的修正版已提交为 HPC2 job `10175195`（旧 pending job `10175174` 在零 GPU 消耗时取消）：Stage A 从 V11m13 seed44 初始化、冻结主干、只训 133,889 个 `assignment_candidate_*` 参数；Stage B 恢复 PDBbind 与真实 UniMol，并以较低 LR 微调同一 head，最后自动跑 test ligand-dependency。
+- 初始两阶段 jobs `10175174/10175195` 均在零 GPU 消耗时取消：第一项被 alpha-transfer 修正取代，第二项因 MMseqs 发现 PDBbind val/test 同源泄漏而停止。当前干净依赖链为分类审计 `10175198` -> internal-clean 物化/QC `10175200` -> 两阶段 GPU pilot `10175201`。Stage A 从 V11m13 seed44 初始化、冻结主干、只训 133,889 个 `assignment_candidate_*` 参数；Stage B 恢复 PDBbind 与真实 UniMol，并以较低 LR 微调同一 head，最后自动跑 test ligand-dependency。
 - PDBbind-only TB 显示 candidate loss 已从约 `1.22` 降到 `0.18`、batch rank accuracy 到 `0.91--1.00`，但 gate alpha 同时从 `0.020` 缩到 `0.0078`。因此 Stage A 结束后只迁移 query/key ranking 表征，并将 alpha 重置为 `0.02` 再进入 Stage B；alpha 被视为 target-domain coupling/calibration 参数，而不是应从 BioLip 迁移的表示。
-- direct PDB ID 排除仍不足以支撑 benchmark claim。HPC2 job `10175189` 使用 MMseqs 对 554 条 BioLip chain 检索 PDBbind val/test、COACH420、HOLO4K，门槛为 query coverage `>=0.8` 且 identity `>=0.3`，并按整个 BioLip PDB group 输出排除表。
+- direct PDB ID 排除仍不足以支撑 benchmark claim。HPC2 job `10175189` 使用 MMseqs 对 554 条 BioLip chain 检索 PDBbind val/test、COACH420、HOLO4K，门槛为 query coverage `>=0.8` 且 identity `>=0.3`：485/554 chains 命中至少一个评估集；按完整 PDB group 排除后仅剩 99 pairs、46 PDB、69 chains。分项命中为 PDBbind val 204 chains、test 165、COACH420 186、HOLO4K 413，说明 direct-ID filtering 远远不够。
+- `10175198` 进一步输出 category-specific exclusion/retained manifests。`internal-clean` 只用于 PDBbind val/test；若未来报告 COACH420/HOLO4K，则必须使用 all-evaluation clean 数据或从 38,218 个待补 ligand feature 的候选中扩展，不能复用 internal-clean pilot。
 
 ## 7. 推荐执行顺序
 

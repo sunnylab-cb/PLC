@@ -295,22 +295,55 @@ def main() -> int:
             hit["chain"] = query_meta["chain"]
             writer.writerow({field: hit[field] for field in best_fields})
 
-    excluded_query_ids = {
-        query_id
-        for (query_id, _category), hit in best.items()
-        if hit["identity"] >= args.min_seq_id
-        and hit["query_coverage"] >= args.query_coverage
+    scope_categories = {
+        "pdbbind_val": {"pdbbind_val"},
+        "pdbbind_test": {"pdbbind_test"},
+        "pdbbind_internal": {"pdbbind_val", "pdbbind_test"},
+        "coach420": {"coach420"},
+        "holo4k": {"holo4k"},
+        "external_benchmarks": {"coach420", "holo4k"},
+        "all_evaluation": set(EVAL_CATEGORIES),
     }
-    excluded_pdb_ids = {chain_to_pdb[query_id] for query_id in excluded_query_ids}
-    exclusion_path = output_dir / "exclude_sequence_homolog_pdb_ids.txt"
-    exclusion_path.write_text("\n".join(sorted(excluded_pdb_ids)) + ("\n" if excluded_pdb_ids else ""))
+    scope_results: dict[str, dict[str, Any]] = {}
+    for scope, categories in scope_categories.items():
+        excluded_queries = {
+            query_id
+            for (query_id, category), hit in best.items()
+            if category in categories
+            and hit["identity"] >= args.min_seq_id
+            and hit["query_coverage"] >= args.query_coverage
+        }
+        excluded_pdbs = {chain_to_pdb[query_id] for query_id in excluded_queries}
+        retained = [row for row in pilot_rows if row["pdb_id"].lower() not in excluded_pdbs]
+        exclusion_path = output_dir / f"exclude_sequence_homolog_pdb_ids_{scope}.txt"
+        exclusion_path.write_text(
+            "\n".join(sorted(excluded_pdbs)) + ("\n" if excluded_pdbs else "")
+        )
+        retained_path = output_dir / f"retained_pilot_manifest_{scope}.tsv"
+        with retained_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=pilot_fields, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(retained)
+        scope_results[scope] = {
+            "categories": sorted(categories),
+            "excluded_chains": len(excluded_queries),
+            "excluded_pdbs_group_safe": len(excluded_pdbs),
+            "retained_pairs": len(retained),
+            "retained_pdbs": len({row["pdb_id"].lower() for row in retained}),
+            "retained_chains": len(
+                {(row["pdb_id"].lower(), row["protein_chain"]) for row in retained}
+            ),
+        }
 
-    retained_rows = [row for row in pilot_rows if row["pdb_id"].lower() not in excluded_pdb_ids]
-    retained_path = output_dir / "retained_pilot_manifest.tsv"
-    with retained_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=pilot_fields, delimiter="\t")
-        writer.writeheader()
-        writer.writerows(retained_rows)
+    # Backward-compatible aliases always mean the strict union of every
+    # evaluation target. Scope-specific files above prevent accidental reuse.
+    all_scope = scope_results["all_evaluation"]
+    (output_dir / "exclude_sequence_homolog_pdb_ids.txt").write_text(
+        (output_dir / "exclude_sequence_homolog_pdb_ids_all_evaluation.txt").read_text()
+    )
+    (output_dir / "retained_pilot_manifest.tsv").write_text(
+        (output_dir / "retained_pilot_manifest_all_evaluation.tsv").read_text()
+    )
 
     category_summary = {}
     for category in EVAL_CATEGORIES:
@@ -342,13 +375,12 @@ def main() -> int:
         "evaluation_targets": len(target_records),
         "missing_evaluation_targets": len(missing_targets),
         "raw_hits": hit_count,
-        "excluded_chains": len(excluded_query_ids),
-        "excluded_pdbs_group_safe": len(excluded_pdb_ids),
-        "retained_pairs": len(retained_rows),
-        "retained_pdbs": len({row["pdb_id"].lower() for row in retained_rows}),
-        "retained_chains": len(
-            {(row["pdb_id"].lower(), row["protein_chain"]) for row in retained_rows}
-        ),
+        "excluded_chains": all_scope["excluded_chains"],
+        "excluded_pdbs_group_safe": all_scope["excluded_pdbs_group_safe"],
+        "retained_pairs": all_scope["retained_pairs"],
+        "retained_pdbs": all_scope["retained_pdbs"],
+        "retained_chains": all_scope["retained_chains"],
+        "retention_by_scope": scope_results,
         "query_x_fraction": {
             "max": max((row["x_fraction"] for row in query_metadata), default=0.0),
             "chains_above_0_05": sum(row["x_fraction"] > 0.05 for row in query_metadata),
