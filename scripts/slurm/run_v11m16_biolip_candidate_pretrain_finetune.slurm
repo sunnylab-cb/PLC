@@ -14,7 +14,8 @@
 #   - candidate auxiliary weight 0.05 to establish the ranking representation
 # Stage B:
 #   - restore the original PDBbind split and real Uni-Mol cache
-#   - initialize from Stage A latest checkpoint
+#   - transfer Stage A query/key projections but reset gate alpha to 0.02;
+#     otherwise a source-domain alpha collapse can erase the learned ranking
 #   - fine-tune the same candidate head with auxiliary weight 0.02
 #
 # This is a pilot, not benchmark-clean evidence: sequence/similarity filtering
@@ -157,8 +158,37 @@ if [ -z "${BIO_RUN}" ] || [ ! -f "${BIO_CHECKPOINT}" ]; then
   exit 3
 fi
 
+# Alpha is a target-domain coupling parameter, not a transferable BioLip
+# representation. Preserve the pretrained query/key projections while resetting
+# the bounded scale to the same low-risk 0.02 used by the PDBbind-only control.
+BIO_TRANSFER_CHECKPOINT="${BIO_RUN}/candidate_transfer_alpha002.pt"
+"${PYTHON}" - "${BIO_CHECKPOINT}" "${BIO_TRANSFER_CHECKPOINT}" <<'PY'
+import math
+import sys
+
+import torch
+
+source, target = sys.argv[1:]
+checkpoint = torch.load(source, map_location="cpu", weights_only=False)
+state = checkpoint.get("model_state_dict", checkpoint)
+key = "assignment_candidate_gate_raw_alpha"
+if key not in state:
+    raise KeyError(f"{key} missing from BioLip checkpoint")
+alpha_init = 0.02
+alpha_max = 0.30
+raw_alpha = math.atanh(alpha_init / alpha_max)
+state[key] = torch.full_like(state[key], raw_alpha)
+checkpoint["candidate_transfer"] = {
+    "source": source,
+    "gate_alpha_reset": alpha_init,
+    "reason": "transfer query/key representation, recalibrate coupling on PDBbind",
+}
+torch.save(checkpoint, target)
+print(f"Wrote {target}; reset {key} to bounded alpha={alpha_init}")
+PY
+
 FINETUNE_CONFIG="${CONFIG_ROOT}/v11m16_biolip_finetune_${RUN_ID}.yaml"
-"${PYTHON}" - "${BASE_CONFIG}" "${FINETUNE_CONFIG}" "${BIO_CHECKPOINT}" \
+"${PYTHON}" - "${BASE_CONFIG}" "${FINETUNE_CONFIG}" "${BIO_TRANSFER_CHECKPOINT}" \
   "${OUTPUT_ROOT}" <<'PY'
 import sys
 from pathlib import Path

@@ -272,7 +272,8 @@ Stage B: PDBbind finetune
 - 物化数据标签沿用主线定义：protein residue heavy atoms 到 ligand heavy atoms 的最小距离，`contact<5 A`、`near=5--8 A`。标签计数为 contact 9,989、near 14,213、far 191,682；每个 pair 至少 3 个 contact，最大 39 个。
 - 每条 chain sidecar 由 full-receptor V4 按 `(chain_id,residue_index,insertion_code)` 精确切片，并从 fixed CIF 补回 `all_atom_coords/all_atom_names`；源 V4、ESM2 和 ligand V6 文件保持只读，pair 目录只使用 symlink。
 - 新增 `allow_zero_unimol_fallback`：BioLip 预训练仍保留 V11m13 的全部 UniMol 层和 checkpoint shape，但在没有匹配缓存时显式传入 zero embedding；默认值为 false，因此不改变任何现有训练的严格行为。
-- 两阶段 pilot 已提交为 HPC2 job `10175174`（依赖预处理成功后已释放，当前排队）：Stage A 从 V11m13 seed44 初始化、冻结主干、只训 133,889 个 `assignment_candidate_*` 参数；Stage B 恢复 PDBbind 与真实 UniMol，并以较低 LR 微调同一 head，最后自动跑 test ligand-dependency。
+- 两阶段 pilot 的修正版已提交为 HPC2 job `10175195`（旧 pending job `10175174` 在零 GPU 消耗时取消）：Stage A 从 V11m13 seed44 初始化、冻结主干、只训 133,889 个 `assignment_candidate_*` 参数；Stage B 恢复 PDBbind 与真实 UniMol，并以较低 LR 微调同一 head，最后自动跑 test ligand-dependency。
+- PDBbind-only TB 显示 candidate loss 已从约 `1.22` 降到 `0.18`、batch rank accuracy 到 `0.91--1.00`，但 gate alpha 同时从 `0.020` 缩到 `0.0078`。因此 Stage A 结束后只迁移 query/key ranking 表征，并将 alpha 重置为 `0.02` 再进入 Stage B；alpha 被视为 target-domain coupling/calibration 参数，而不是应从 BioLip 迁移的表示。
 - direct PDB ID 排除仍不足以支撑 benchmark claim。HPC2 job `10175189` 使用 MMseqs 对 554 条 BioLip chain 检索 PDBbind val/test、COACH420、HOLO4K，门槛为 query coverage `>=0.8` 且 identity `>=0.3`，并按整个 BioLip PDB group 输出排除表。
 
 ## 7. 推荐执行顺序
