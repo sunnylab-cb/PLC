@@ -42,6 +42,8 @@ BASE_CONFIG="${ARCHIVE}/outputs/${BASELINE_NAME}/config.yaml"
 BASE_CHECKPOINT="${ARCHIVE}/outputs/${BASELINE_NAME}/best_f1_c0_model.pt"
 PYTHON="${PYTHON:-/hpc2ssd/softwares/anaconda3/envs/af3/bin/python}"
 RUN_ID="${SLURM_JOB_ID:-manual_$(date +%Y%m%d_%H%M%S)}"
+BIO_RUN_TAG="biolip_candidate_pretrain_aux005_${RUN_ID}"
+FINETUNE_RUN_TAG="biolip_candidate_finetune_aux002_${RUN_ID}"
 CONFIG_ROOT="${PROJECT}/tmp/slurm_configs"
 OUTPUT_ROOT="${ARCHIVE}/outputs"
 RESULT_ROOT="${ARCHIVE}/results"
@@ -67,19 +69,20 @@ done
 
 BIO_CONFIG="${CONFIG_ROOT}/v11m16_biolip_pretrain_${RUN_ID}.yaml"
 "${PYTHON}" - "${BASE_CONFIG}" "${BIO_CONFIG}" "${BASE_CHECKPOINT}" \
-  "${OUTPUT_ROOT}" "${BIOLIP_DATA}" <<'PY'
+  "${OUTPUT_ROOT}" "${BIOLIP_DATA}" "${BIO_RUN_TAG}" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-base_path, out_path, checkpoint, output_root, data_root = map(Path, sys.argv[1:])
+base_path, out_path, checkpoint, output_root, data_root = map(Path, sys.argv[1:6])
+run_tag = sys.argv[6]
 with base_path.open() as handle:
     cfg = yaml.safe_load(handle)
 
 cfg["experiment"].update(
     {
-        "name": "pocket_gvp_fusion_seed44_biolip_candidate_pretrain_aux005",
+        "name": f"pocket_gvp_fusion_seed44_{run_tag}",
         "version_suffix": "v11m16",
         "seed": 44,
         "output_dir": str(output_root),
@@ -150,7 +153,7 @@ echo "Stage A: BioLip candidate-head pretraining"
   --accumulation-steps 1
 
 BIO_RUN="$(find "${OUTPUT_ROOT}" -maxdepth 1 -type d \
-  -name '*biolip_candidate_pretrain_aux005*v11m16*' \
+  -name "*${BIO_RUN_TAG}*v11m16*" \
   -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
 BIO_CHECKPOINT="${BIO_RUN}/checkpoint_latest.pt"
 if [ -z "${BIO_RUN}" ] || [ ! -f "${BIO_CHECKPOINT}" ]; then
@@ -189,19 +192,20 @@ PY
 
 FINETUNE_CONFIG="${CONFIG_ROOT}/v11m16_biolip_finetune_${RUN_ID}.yaml"
 "${PYTHON}" - "${BASE_CONFIG}" "${FINETUNE_CONFIG}" "${BIO_TRANSFER_CHECKPOINT}" \
-  "${OUTPUT_ROOT}" <<'PY'
+  "${OUTPUT_ROOT}" "${FINETUNE_RUN_TAG}" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-base_path, out_path, checkpoint, output_root = map(Path, sys.argv[1:])
+base_path, out_path, checkpoint, output_root = map(Path, sys.argv[1:5])
+run_tag = sys.argv[5]
 with base_path.open() as handle:
     cfg = yaml.safe_load(handle)
 
 cfg["experiment"].update(
     {
-        "name": "pocket_gvp_fusion_seed44_biolip_candidate_finetune_aux002",
+        "name": f"pocket_gvp_fusion_seed44_{run_tag}",
         "version_suffix": "v11m16",
         "seed": 44,
         "output_dir": str(output_root),
@@ -257,7 +261,7 @@ echo "Stage B: PDBbind candidate-head fine-tuning with real Uni-Mol"
   --accumulation-steps 1
 
 FINETUNE_RUN="$(find "${OUTPUT_ROOT}" -maxdepth 1 -type d \
-  -name '*biolip_candidate_finetune_aux002*v11m16*' \
+  -name "*${FINETUNE_RUN_TAG}*v11m16*" \
   -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
 FINETUNE_CHECKPOINT="${FINETUNE_RUN}/best_f1_c0_model.pt"
 if [ -z "${FINETUNE_RUN}" ] || [ ! -f "${FINETUNE_CHECKPOINT}" ]; then
