@@ -154,6 +154,8 @@ cos(Q, P[k])
 - epoch 2 step 662 的 candidate rank accuracy 为 `0.6522`（四候选随机基线 0.25），rank entropy `0.6953`，best soft-Gaussian coverage `0.3117`，valid fraction `0.9583`。这表明 ligand query 已学到候选区分信号，但 soft coverage 不是二值 proposal recall，不能直接解释成“只覆盖 31% 样本”。
 - gate alpha 已从 `0.020` 降至 `0.01855`，centered membership abs mean `0.07717`，对应平均直接 logit 扰动约 `0.0014`。因此第一轮主要判据是 candidate 可排序性与 val/test 不回归；若排序成立但 F1/LAA 不动，下一步应增强/归一化 gate coupling，而不是否定 candidate decomposition。
 - epoch 2/3 validation 分别为 `F1_c0=0.5990/0.5991`、AUPRC 均约 `0.6098`，仍与同 seed V11m13 的 `0.599105` 持平。当前证据支持“candidate head 可学习且低风险”，尚不支持“已提高 residue F1”。
+- epoch 4--6 validation 仍为 `F1_c0=0.5991`、AUPRC `0.6098`、AUROC `0.9503`，没有出现延迟涨点。训练 batch 统计显示 candidate loss 约从 `1.22` 降至 `0.18`、rank accuracy 升至 `0.91--1.00`、entropy 从约 `1.33` 降至 `0.39`，但 alpha 同时收缩到约 `0.0078`；当前瓶颈明确是 ranking 到 residue logits 的 coupling，而不是 candidate representation 没学会。
+- `scripts/train/train_v11m3.py` 已加入 validation-only auxiliary diagnostics：不把 auxiliary loss 加入 val loss，仅按 validation samples 汇总并写入 `ValAssignment/*`，同时打印 rank accuracy、valid fraction、coverage、alpha 与 entropy。该改动会作用于后续启动的 V11m16 jobs；已运行的 Star 进程不会被中途修改。
 
 第一验收指标不是 PDBbind F1 单点，而是：
 
@@ -278,7 +280,11 @@ Stage B: PDBbind finetune
 - `10175198` 进一步输出 category-specific exclusion/retained manifests。`internal-clean` 只用于 PDBbind val/test；若未来报告 COACH420/HOLO4K，则必须使用 all-evaluation clean 数据或从 38,218 个待补 ligand feature 的候选中扩展，不能复用 internal-clean pilot。
 - PDBbind internal-clean 过滤保留 303 pairs、148 PDB、253 chains；重新按完整 PDB group 划分为 272 train / 31 val。HPC2 job `10175200` 用时 54 s，生产 loader QC 再次全量通过；contact/near/far 标签为 4,916/7,094/94,136。该规模只用于 feasibility，不足以支撑最终 BioLip gain claim。
 - 真实 `1coh_D_BS01_COH` V6 smoke 已通过：75 个含氢 atoms、43 heavy atoms、109D features、164 条双向 edges、原始 heavy coordinates `43x3`，feature completeness `0.8571`，所有张量 finite，并正确路由为 metal-complex。HPC2 AF3 环境补齐了缺失的纯 Python 依赖 `click==8.1.7` 和 `packaging==24.2`。
-- 扩展数据采用“先过滤、后提 ligand”的顺序：job `10175213` 正在对 38,218 个 protein-V4/chain-ESM2-ready、仅缺 ligand V6 的候选做全评估 MMseqs 过滤；V6 extractor 新增 exact `--manifest` allowlist，避免为已知泄漏 pair 浪费 conformer/chemistry 计算。
+- 扩展数据采用“先过滤、后提 ligand”的顺序。首个 job `10175213` 因一条合法 17-aa 短链被旧 QC 的 `<20 aa` 硬阈值误杀；修复后只拒绝空序列/非法字符，并在 summary 中显式统计短链。重跑 job `10175262` 已完成（4:56，MaxRSS 约 580 MB），1 条 `<20 aa` query 被正常保留，8,519 条 evaluation targets 无短链或缺失。
+- 候选 manifest 实际为 36,700 pairs；排除 direct PDBbind 与 COACH420/HOLO4K IDs 后为 23,435 pairs、9,700 PDB、18,986 chains。MMseqs 全评估去同源后保留 **6,999 pairs、2,734 PDB、5,663 chains**；PDBbind-internal-only 可保留 14,289 pairs，external-benchmark-only 可保留 9,721 pairs。最终训练数据使用更严格的 all-evaluation scope。
+- 6,999 个 all-evaluation-clean 候选全部为 regular-organic；metadata heavy atoms 的 min/p50/p90/p95/p99/max 为 `6/17/36/41/48/50`，因此这一批不会触发 128-atom 主线的极端大配体问题。
+- ligand V6 与完整训练数据依赖链已提交：`10175284` 用单个 `a128m512u` 节点（128 CPU、200 GB、96 workers）只处理 6,999 个 allowlisted pairs，并做 exact-manifest tensor QC；`10175287` 在其结束后重建 ready manifest；`10175288` 再用两轮 sequence exclusion 的 7,227 个 PDB-ID 并集物化 `v11_allclean_20260811` 并全量通过生产 loader QC 后才放行训练。
+- 当前 303-pair PDBbind-internal-clean feasibility pilot 为 GPU job `10175201`。完整 all-evaluation-clean 两阶段 run 为依赖 job `10175294`；Stage A/Stage B experiment names 已包含 Slurm job ID，避免并发 run 通过“最新同名目录”串用 checkpoint。
 
 ## 7. 推荐执行顺序
 
