@@ -276,6 +276,9 @@ Stage B: PDBbind finetune
 - PDBbind-only TB 显示 candidate loss 已从约 `1.22` 降到 `0.18`、batch rank accuracy 到 `0.91--1.00`，但 gate alpha 同时从 `0.020` 缩到 `0.0078`。因此 Stage A 结束后只迁移 query/key ranking 表征，并将 alpha 重置为 `0.02` 再进入 Stage B；alpha 被视为 target-domain coupling/calibration 参数，而不是应从 BioLip 迁移的表示。
 - direct PDB ID 排除仍不足以支撑 benchmark claim。HPC2 job `10175189` 使用 MMseqs 对 554 条 BioLip chain 检索 PDBbind val/test、COACH420、HOLO4K，门槛为 query coverage `>=0.8` 且 identity `>=0.3`：485/554 chains 命中至少一个评估集；按完整 PDB group 排除后仅剩 99 pairs、46 PDB、69 chains。分项命中为 PDBbind val 204 chains、test 165、COACH420 186、HOLO4K 413，说明 direct-ID filtering 远远不够。
 - `10175198` 进一步输出 category-specific exclusion/retained manifests。`internal-clean` 只用于 PDBbind val/test；若未来报告 COACH420/HOLO4K，则必须使用 all-evaluation clean 数据或从 38,218 个待补 ligand feature 的候选中扩展，不能复用 internal-clean pilot。
+- PDBbind internal-clean 过滤保留 303 pairs、148 PDB、253 chains；重新按完整 PDB group 划分为 272 train / 31 val。HPC2 job `10175200` 用时 54 s，生产 loader QC 再次全量通过；contact/near/far 标签为 4,916/7,094/94,136。该规模只用于 feasibility，不足以支撑最终 BioLip gain claim。
+- 真实 `1coh_D_BS01_COH` V6 smoke 已通过：75 个含氢 atoms、43 heavy atoms、109D features、164 条双向 edges、原始 heavy coordinates `43x3`，feature completeness `0.8571`，所有张量 finite，并正确路由为 metal-complex。HPC2 AF3 环境补齐了缺失的纯 Python 依赖 `click==8.1.7` 和 `packaging==24.2`。
+- 扩展数据采用“先过滤、后提 ligand”的顺序：job `10175213` 正在对 38,218 个 protein-V4/chain-ESM2-ready、仅缺 ligand V6 的候选做全评估 MMseqs 过滤；V6 extractor 新增 exact `--manifest` allowlist，避免为已知泄漏 pair 浪费 conformer/chemistry 计算。
 
 ## 7. 推荐执行顺序
 

@@ -8,7 +8,7 @@
 #   trunk frozen and trains only assignment_candidate_* parameters.
 #
 # Stage A:
-#   - 632 direct-ID-filtered BioLip pairs (after preprocessing job succeeds)
+#   - PDBbind-val/test sequence-clean BioLip pairs selected by BIOLIP_DATA
 #   - no BioLip Uni-Mol cache: preserve Uni-Mol layers but pass the documented
 #     zero fallback, avoiding checkpoint shape changes
 #   - candidate auxiliary weight 0.05 to establish the ranking representation
@@ -36,7 +36,7 @@ set -euo pipefail
 
 PROJECT="${PROJECT:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
 ARCHIVE="${ARCHIVE:-/hpc2hdd/home/shuang886/PLC}"
-BIOLIP_DATA="${BIOLIP_DATA:-/hpc2hdd/home/shuang886/biolip/v11_pilot_strict_nobench_20260811}"
+BIOLIP_DATA="${BIOLIP_DATA:-/hpc2hdd/home/shuang886/biolip/v11_pilot_strict_internalclean_20260811}"
 BASELINE_NAME="pocket_gvp_fusion_seed44_group_rescompat_lr2e4_v11m13_20260611_205114"
 BASE_CONFIG="${ARCHIVE}/outputs/${BASELINE_NAME}/config.yaml"
 BASE_CHECKPOINT="${ARCHIVE}/outputs/${BASELINE_NAME}/best_f1_c0_model.pt"

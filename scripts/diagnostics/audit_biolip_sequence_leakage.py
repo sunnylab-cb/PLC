@@ -145,7 +145,20 @@ def _read_manifest(path: Path) -> tuple[list[dict[str, str]], list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pilot-root", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--pilot-root", type=Path)
+    source.add_argument("--candidate-manifest", type=Path)
+    parser.add_argument(
+        "--biolip-esm-dir",
+        type=Path,
+        help="Required with --candidate-manifest; contains {pdb}_{chain}_esm2.pt",
+    )
+    parser.add_argument("--exclude-pdb-ids", type=Path, action="append", default=[])
+    parser.add_argument(
+        "--exclude-direct-pdbbind",
+        action="store_true",
+        help="Drop candidate rows whose pdbbind_split field is non-empty",
+    )
     parser.add_argument("--pdbbind-data-root", type=Path, required=True)
     parser.add_argument("--pdbbind-split-file", type=Path, required=True)
     parser.add_argument("--coach-esm-dir", type=Path, required=True)
@@ -159,16 +172,40 @@ def main() -> int:
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    pilot_rows, pilot_fields = _read_manifest(args.pilot_root / "pilot_manifest.tsv")
+    if args.candidate_manifest is not None and args.biolip_esm_dir is None:
+        parser.error("--biolip-esm-dir is required with --candidate-manifest")
+    manifest_path = (
+        args.candidate_manifest
+        if args.candidate_manifest is not None
+        else args.pilot_root / "pilot_manifest.tsv"
+    )
+    pilot_rows_all, pilot_fields = _read_manifest(manifest_path)
+    excluded_direct_ids: set[str] = set()
+    for path in args.exclude_pdb_ids:
+        excluded_direct_ids.update(
+            line.strip().lower() for line in path.read_text().splitlines() if line.strip()
+        )
+    pilot_rows = [
+        row
+        for row in pilot_rows_all
+        if row["pdb_id"].lower() not in excluded_direct_ids
+        and not (args.exclude_direct_pdbbind and row.get("pdbbind_split", "").strip())
+    ]
+    if not pilot_rows:
+        raise RuntimeError("no candidate rows remain after direct-ID filtering")
 
     chain_to_pdb: dict[str, str] = {}
     query_records: list[tuple[str, str]] = []
     query_metadata: list[dict[str, Any]] = []
     selected_chains = sorted({(row["pdb_id"].lower(), row["protein_chain"]) for row in pilot_rows})
     for index, (pdb_id, chain) in enumerate(selected_chains):
-        path = args.pilot_root / "_chain_cache" / f"{pdb_id}_{chain}_protein.pt"
-        data = _load_mapping(path)
-        sequence = sequence_from_residue_names(data["residue_names"])
+        if args.candidate_manifest is not None:
+            path = args.biolip_esm_dir / f"{pdb_id}_{chain}_esm2.pt"
+            sequence = load_cached_sequence(path)
+        else:
+            path = args.pilot_root / "_chain_cache" / f"{pdb_id}_{chain}_protein.pt"
+            data = _load_mapping(path)
+            sequence = sequence_from_residue_names(data["residue_names"])
         query_id = f"q{index:06d}"
         query_records.append((query_id, sequence))
         chain_to_pdb[query_id] = pdb_id
@@ -369,6 +406,11 @@ def main() -> int:
             "min_query_coverage": args.query_coverage,
             "mmseqs_cov_mode": 2,
         },
+        "source_manifest": str(manifest_path.resolve()),
+        "candidate_pairs_before_direct_filter": len(pilot_rows_all),
+        "candidate_pairs_after_direct_filter": len(pilot_rows),
+        "direct_excluded_pdb_ids_supplied": len(excluded_direct_ids),
+        "exclude_direct_pdbbind": args.exclude_direct_pdbbind,
         "pilot_pairs_before": len(pilot_rows),
         "pilot_pdbs_before": len({row["pdb_id"].lower() for row in pilot_rows}),
         "pilot_chains_before": len(query_records),

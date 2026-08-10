@@ -61,6 +61,7 @@ conda run -n AIAA python3 preparation/ligand/biolip_ligand_extract.py ... \\
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import multiprocessing as mp
 import numpy as np
@@ -189,6 +190,26 @@ def _output_stem(pair: dict) -> str:
 def _output_path(pair: dict, output_root: Path) -> Path:
     """Return {output_root}/{pdb_id}/{stem}.pt"""
     return output_root / pair['pdb_id'] / f"{_output_stem(pair)}.pt"
+
+
+def _load_manifest_stems(path: Path) -> set[str]:
+    with path.open(newline='') as handle:
+        reader = csv.DictReader(handle, delimiter='\t')
+        if not reader.fieldnames or 'feature_stem' not in reader.fieldnames:
+            raise ValueError(f'{path}: manifest must contain feature_stem')
+        stems = {row['feature_stem'].strip() for row in reader if row['feature_stem'].strip()}
+    if not stems:
+        raise ValueError(f'{path}: manifest contains no feature stems')
+    return stems
+
+
+def _filter_pairs_by_stems(
+    pairs: List[dict],
+    allowed_stems: set[str],
+) -> Tuple[List[dict], set[str]]:
+    selected = [pair for pair in pairs if _output_stem(pair) in allowed_stems]
+    found = {_output_stem(pair) for pair in selected}
+    return selected, allowed_stems - found
 
 
 class _Timeout:
@@ -1230,6 +1251,8 @@ def main() -> int:
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--pairs-cache', default=None,
                         help='Path to cache file for discovered pairs (pickle).')
+    parser.add_argument('--manifest', default=None,
+                        help='TSV allowlist containing an exact feature_stem column.')
     parser.add_argument('--refresh-cache', action='store_true',
                         help='Force re-discovery even if cache exists.')
     args = parser.parse_args()
@@ -1281,6 +1304,23 @@ def main() -> int:
             f'{before_filter:,} pairs; skipped {before_filter - len(pairs):,}',
             flush=True,
         )
+
+    if args.manifest:
+        manifest_path = Path(args.manifest).resolve()
+        allowed_stems = _load_manifest_stems(manifest_path)
+        before_filter = len(pairs)
+        pairs, missing_stems = _filter_pairs_by_stems(pairs, allowed_stems)
+        print(
+            f'manifest filter {manifest_path}: kept {len(pairs):,} / '
+            f'{before_filter:,} cached pairs',
+            flush=True,
+        )
+        if missing_stems:
+            preview = sorted(missing_stems)[:10]
+            raise RuntimeError(
+                f'{len(missing_stems):,} manifest feature stems are absent from '
+                f'the BioLip pair cache, examples={preview}'
+            )
 
     if args.max:
         pairs = pairs[:args.max]
