@@ -153,6 +153,7 @@ cos(Q, P[k])
 - epoch 1 validation：`F1_c0=0.599056`、`AUPRC=0.609788`、`AUROC=0.950276`、`F1/MCC@0.5=0.603118/0.5927`、val-selected gate `0.42936`。同 seed V11m13 checkpoint 的 best val F1 是 `0.599105`，因此首轮等价于基线，尚无增益也无回归。
 - epoch 2 step 662 的 candidate rank accuracy 为 `0.6522`（四候选随机基线 0.25），rank entropy `0.6953`，best soft-Gaussian coverage `0.3117`，valid fraction `0.9583`。这表明 ligand query 已学到候选区分信号，但 soft coverage 不是二值 proposal recall，不能直接解释成“只覆盖 31% 样本”。
 - gate alpha 已从 `0.020` 降至 `0.01855`，centered membership abs mean `0.07717`，对应平均直接 logit 扰动约 `0.0014`。因此第一轮主要判据是 candidate 可排序性与 val/test 不回归；若排序成立但 F1/LAA 不动，下一步应增强/归一化 gate coupling，而不是否定 candidate decomposition。
+- epoch 2/3 validation 分别为 `F1_c0=0.5990/0.5991`、AUPRC 均约 `0.6098`，仍与同 seed V11m13 的 `0.599105` 持平。当前证据支持“candidate head 可学习且低风险”，尚不支持“已提高 residue F1”。
 
 第一验收指标不是 PDBbind F1 单点，而是：
 
@@ -250,7 +251,7 @@ Stage B: PDBbind finetune
 
 ### 6.3 最小 pilot
 
-不要先补齐全部 34 万 bundle。建议生成一个 20k~50k drug-like clean subset：
+不要先补齐全部 34 万 bundle。当前先用已有全特征数据做 632-pair feasibility pilot；若方向成立，再生成一个 20k~50k drug-like clean subset：
 
 - 先完成 manifest/QC 与 leakage report。
 - 补齐该 subset 的 ligand V5 和缺失 ESM feature。
@@ -266,7 +267,13 @@ Stage B: PDBbind finetune
 - 当前 ligand V6 仅覆盖 6,674 个 feature keys，导致三路 feature 全齐只有 1,518 对；去掉 direct PDBbind ID 后剩 1,382 对。现阶段首要数据瓶颈是 ligand V6 覆盖，而不是 BioLip 原始 pair 数量。
 - 当前 V4 是 full-receptor/PDB 粒度，ESM2 是 `PDB_chain` 粒度。新增 `scripts/diagnostics/inspect_biolip_feature_alignment.py`，按 `(chain_id, residue_index, insertion_code)` 精确切 V4 并核验 ESM2，而不是仅比较长度。
 - strict-ready 真实 smoke `11ba_A_BS01_UPA` 已通过：V4 全 receptor 248 residues，目标链/ESM2 均为 124 residues；ligand 为 63 个含氢 atoms、39 个 heavy atoms、134 条边，所有张量 finite 且 residue keys 完全一致。
-- 全量 1,382 对 tensor QC 已提交为 HPC2 job `10175117`。只有通过该检查的 pair 才进入标签生成和第一版 BioLip side-path dataset。
+- 全量 1,382 对 tensor QC（HPC2 job `10175117`）已完成：1,382/1,382 通过，0 issue、0 warning；residue 数 p50/p90/max 为 264/537/1231，ligand atoms p50/p90/max 为 34/71.9/123，均在当前 `max_seq_len=1800`、`max_atoms=128` 内。
+- 进一步排除 COACH420/HOLO4K direct PDB ID 后，第一版物化集为 632 pairs、314 PDB、554 PDB-chain；按完整 PDB group 划分为 546 train / 86 val。HPC2 job `10175166` 用时 1:59、MaxRSS 约 541 MB，生产 `PocketDatasetV8` 全量重载 QC 通过。
+- 物化数据标签沿用主线定义：protein residue heavy atoms 到 ligand heavy atoms 的最小距离，`contact<5 A`、`near=5--8 A`。标签计数为 contact 9,989、near 14,213、far 191,682；每个 pair 至少 3 个 contact，最大 39 个。
+- 每条 chain sidecar 由 full-receptor V4 按 `(chain_id,residue_index,insertion_code)` 精确切片，并从 fixed CIF 补回 `all_atom_coords/all_atom_names`；源 V4、ESM2 和 ligand V6 文件保持只读，pair 目录只使用 symlink。
+- 新增 `allow_zero_unimol_fallback`：BioLip 预训练仍保留 V11m13 的全部 UniMol 层和 checkpoint shape，但在没有匹配缓存时显式传入 zero embedding；默认值为 false，因此不改变任何现有训练的严格行为。
+- 两阶段 pilot 已提交为 HPC2 job `10175174`（依赖预处理成功后已释放，当前排队）：Stage A 从 V11m13 seed44 初始化、冻结主干、只训 133,889 个 `assignment_candidate_*` 参数；Stage B 恢复 PDBbind 与真实 UniMol，并以较低 LR 微调同一 head，最后自动跑 test ligand-dependency。
+- direct PDB ID 排除仍不足以支撑 benchmark claim。HPC2 job `10175189` 使用 MMseqs 对 554 条 BioLip chain 检索 PDBbind val/test、COACH420、HOLO4K，门槛为 query coverage `>=0.8` 且 identity `>=0.3`，并按整个 BioLip PDB group 输出排除表。
 
 ## 7. 推荐执行顺序
 

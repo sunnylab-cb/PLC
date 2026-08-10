@@ -224,6 +224,12 @@ def config_needs_unimol(model_cfg: Dict) -> bool:
     also load it for pure late-branch UniMol variants that explicitly disable
     direct atom-level UniMol input.
     """
+    # BioLip side-path pretraining has no matching Uni-Mol cache. Keep every
+    # Uni-Mol layer in the model/checkpoint, but let the model's existing None
+    # handling supply an all-zero embedding instead of changing tensor shapes.
+    if bool(model_cfg.get("allow_zero_unimol_fallback", False)):
+        return False
+
     if bool(model_cfg.get("use_unimol_ligand_input", True)):
         return True
 
