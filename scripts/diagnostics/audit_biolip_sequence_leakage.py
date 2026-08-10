@@ -57,6 +57,7 @@ AA3_TO_1 = {
 }
 YEAR_BUCKETS = ("1981-2000", "2001-2010", "2011-2019")
 EVAL_CATEGORIES = ("pdbbind_val", "pdbbind_test", "coach420", "holo4k")
+VALID_SEQUENCE_SYMBOLS = frozenset("ACDEFGHIKLMNPQRSTVWYBXZUOJ")
 
 
 def _load_mapping(path: Path) -> Mapping[str, Any]:
@@ -110,8 +111,11 @@ def load_cached_sequence(path: Path) -> str:
         sequence = sequence_from_residue_names(data["residue_names"])
     else:
         raise KeyError(f"{path}: no sequence or residue-name metadata")
-    if len(sequence) < 20:
-        raise ValueError(f"{path}: sequence is unexpectedly short ({len(sequence)})")
+    if not sequence:
+        raise ValueError(f"{path}: sequence is empty")
+    invalid = sorted(set(sequence) - VALID_SEQUENCE_SYMBOLS)
+    if invalid:
+        raise ValueError(f"{path}: invalid sequence symbols {invalid}")
     return sequence
 
 
@@ -414,7 +418,15 @@ def main() -> int:
         "pilot_pairs_before": len(pilot_rows),
         "pilot_pdbs_before": len({row["pdb_id"].lower() for row in pilot_rows}),
         "pilot_chains_before": len(query_records),
+        "pilot_chain_lengths": {
+            "min": min((row["length"] for row in query_metadata), default=None),
+            "below_20": sum(row["length"] < 20 for row in query_metadata),
+        },
         "evaluation_targets": len(target_records),
+        "evaluation_target_lengths": {
+            "min": min((row["length"] for row in target_metadata.values()), default=None),
+            "below_20": sum(row["length"] < 20 for row in target_metadata.values()),
+        },
         "missing_evaluation_targets": len(missing_targets),
         "raw_hits": hit_count,
         "excluded_chains": all_scope["excluded_chains"],
