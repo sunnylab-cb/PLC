@@ -287,8 +287,9 @@ Stage B: PDBbind finetune
 - 6,999 个 all-evaluation-clean 候选全部为 regular-organic；metadata heavy atoms 的 min/p50/p90/p95/p99/max 为 `6/17/36/41/48/50`，因此这一批不会触发 128-atom 主线的极端大配体问题。
 - ligand V6 与完整训练数据依赖链已提交：`10175284` 用单个 `a128m512u` 节点（128 CPU、200 GB、96 workers）只处理 6,999 个 allowlisted pairs，并做 exact-manifest tensor QC；`10175287` 在其结束后重建 ready manifest；`10175288` 再用两轮 sequence exclusion 的 7,227 个 PDB-ID 并集物化 `v11_allclean_20260811` 并全量通过生产 loader QC 后才放行训练。
 - `10175284` 已在 53:14 内完成，6,999/6,999 tensors 有效、0 failure；含氢 atom 数 min/p50/p90/p99/max 为 `6/32/64/94/130`。tensor-derived route 实际为 inorganic 811、metal-complex 186、no-conformer biological 208、regular-organic 5,794，说明 pair-cache metadata 会把约 17% 非 regular chemistry 错标成 regular-organic。
-- 因此 full-clean 主线在物化前新增真实 tensor 过滤：`ligand_route==5` 且 feature completeness `>=0.8`，loader `max_atoms=256`、兜底 crop 为 `alternating_ends`。首个物化 job `10175288` 仅因 regenerated QC 目录没有复制 direct-ID exclusion 文件而在 6 秒内失败；路径假设已修复，重投 `10179954` 正在物化 5,794 pairs，后续 full-clean GPU job 为 `10179955`。
-- 当前 303-pair PDBbind-internal-clean feasibility pilot 为 GPU job `10175201`。完整 all-evaluation-clean 两阶段 run 为依赖 job `10175294`；Stage A/Stage B experiment names 已包含 Slurm job ID，避免并发 run 通过“最新同名目录”串用 checkpoint。
+- 因此 full-clean 主线在物化前新增真实 tensor 过滤：`ligand_route==5` 且 feature completeness `>=0.8`，loader `max_atoms=256`、兜底 crop 为 `alternating_ends`。首个物化 job `10175288` 仅因 regenerated QC 目录没有复制 direct-ID exclusion 文件而在 6 秒内失败；`10179954` 随后发现少数 BioLip pair 在指定 protein chain 上没有 5 A 内接触。装配器现将这种几何异常明确写入 `geometry_qc_failures.tsv` 并跳过，而不是让整个数据集失败，也不会为失败 pair 建立 symlink。
+- 修复后的 full-clean job `10180936` 已完成（19:46，exit `0:0`）：从 5,794 个 route-5 regular-organic tensors 中只剔除 8 个零接触 pair，最终保留 **5,786 pairs / 2,374 PDB / 4,884 chains**，按完整 PDB group 分为 5,023 train / 763 val。接触残基数 min/mean/max 为 `3/15.19/38`；production `PocketDatasetV8` 全量重载 QC 通过，标签 contact/near/far 为 `87,865/128,582/1,905,146`，最大 1,491 residues、117 ligand atoms。
+- 303-pair feasibility job `10175201` 的首轮失败不是 BioLip 数据问题，而是 HPC2 的基础 `pocket_gvp_fusion_v11.py` 落后于 V11m16 接口，缺少 pre-cross `h_ligand_context` 输出；该文件现已与 Star 上成功训练版本按 SHA-256 对齐。完整 all-evaluation-clean 两阶段训练为 job `10180940`，依赖 QC 成功后已进入 `i64m1tga800u` 正常 priority 队列；Stage A/Stage B experiment names 均包含 Slurm job ID，避免并发 run 通过“最新同名目录”串用 checkpoint。
 
 ## 7. 推荐执行顺序
 
