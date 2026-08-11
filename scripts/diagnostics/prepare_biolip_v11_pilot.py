@@ -224,6 +224,38 @@ def _select_rows(
     return rows[:max_pairs] if max_pairs > 0 else rows
 
 
+def filter_rows_by_ligand_qc(
+    rows: Sequence[Mapping[str, str]],
+    source_root: Path,
+    required_route: int | None,
+    min_completeness: float,
+) -> tuple[list[Mapping[str, str]], Counter]:
+    """Filter using tensor-derived V6 metadata rather than stale pair metadata."""
+    if required_route is None and min_completeness <= 0.0:
+        return list(rows), Counter()
+
+    retained = []
+    dropped = Counter()
+    for row in rows:
+        pdb_id = str(row["pdb_id"]).lower()
+        stem = str(row["feature_stem"])
+        path = source_root / "ligand_features" / pdb_id / f"{stem}.pt"
+        if not path.is_file():
+            dropped["missing_ligand_tensor"] += 1
+            continue
+        ligand = _load_mapping(path)
+        route = int(ligand.get("ligand_route", -1))
+        completeness = float(ligand.get("feature_completeness_ratio", 0.0))
+        if required_route is not None and route != required_route:
+            dropped[f"ligand_route_{route}"] += 1
+            continue
+        if completeness < min_completeness:
+            dropped["feature_completeness"] += 1
+            continue
+        retained.append(row)
+    return retained, dropped
+
+
 def _receptor_path(root: Path, pdb_id: str, protein: Mapping[str, Any]) -> Path:
     fixed = root / "fixed_receptors" / pdb_id / "receptor_fixed.cif"
     original = root / "shared_receptors" / pdb_id / "receptor_full.cif"
@@ -245,6 +277,8 @@ def main() -> int:
     parser.add_argument("--val-fraction", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=20260811)
     parser.add_argument("--max-pairs", type=int, default=0)
+    parser.add_argument("--required-ligand-route", type=int)
+    parser.add_argument("--min-feature-completeness", type=float, default=0.0)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -256,6 +290,12 @@ def main() -> int:
     for path in args.exclude_pdb_ids:
         excluded_ids.update(line.strip().lower() for line in path.read_text().splitlines() if line.strip())
     rows = _select_rows(args.manifest, excluded_ids, args.max_pairs)
+    rows, ligand_filter_counts = filter_rows_by_ligand_qc(
+        rows,
+        source_root=source_root,
+        required_route=args.required_ligand_route,
+        min_completeness=args.min_feature_completeness,
+    )
     if not rows:
         raise RuntimeError("no BioLip rows remain after filtering")
     split_by_pdb = stable_group_split(rows, args.val_fraction, args.seed)
@@ -357,6 +397,11 @@ def main() -> int:
         "output_root": str(output_root),
         "year_bucket": YEAR_BUCKET,
         "excluded_direct_pdb_ids": len(excluded_ids),
+        "ligand_tensor_filter": {
+            "required_route": args.required_ligand_route,
+            "min_feature_completeness": args.min_feature_completeness,
+            "dropped": dict(sorted(ligand_filter_counts.items())),
+        },
         "pairs": len(output_rows),
         "unique_pdbs": len({row["pdb_id"] for row in output_rows}),
         "unique_pdb_chains": len({(row["pdb_id"], row["protein_chain"]) for row in output_rows}),

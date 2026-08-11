@@ -7,6 +7,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.diagnostics.prepare_biolip_v11_pilot import (
+    filter_rows_by_ligand_qc,
     ligand_heavy_coords,
     min_heavy_atom_distances,
     slice_protein_chain,
@@ -81,3 +82,40 @@ def test_stable_group_split_never_splits_same_pdb():
     assert first == second
     assert set(first) == {"1abc", "2def", "3ghi"}
     assert set(first.values()) == {"train", "val"}
+
+
+def test_ligand_tensor_filter_uses_v6_route_and_completeness(tmp_path):
+    feature_root = tmp_path / "ligand_features" / "1abc"
+    feature_root.mkdir(parents=True)
+    torch.save(
+        {"ligand_route": 5, "feature_completeness_ratio": 1.0},
+        feature_root / "keep.pt",
+    )
+    torch.save(
+        {"ligand_route": 3, "feature_completeness_ratio": 1.0},
+        feature_root / "metal.pt",
+    )
+    torch.save(
+        {"ligand_route": 5, "feature_completeness_ratio": 0.5},
+        feature_root / "partial.pt",
+    )
+    rows = [
+        {"pdb_id": "1abc", "feature_stem": "keep"},
+        {"pdb_id": "1abc", "feature_stem": "metal"},
+        {"pdb_id": "1abc", "feature_stem": "partial"},
+        {"pdb_id": "1abc", "feature_stem": "missing"},
+    ]
+
+    retained, dropped = filter_rows_by_ligand_qc(
+        rows,
+        source_root=tmp_path,
+        required_route=5,
+        min_completeness=0.8,
+    )
+
+    assert [row["feature_stem"] for row in retained] == ["keep"]
+    assert dropped == {
+        "ligand_route_3": 1,
+        "feature_completeness": 1,
+        "missing_ligand_tensor": 1,
+    }

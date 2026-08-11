@@ -100,7 +100,8 @@ cfg["data"].update(
         "nma_n_confs": 1,
         "nma_max_conf": 0,
         "max_seq_len": 1800,
-        "max_atoms": 128,
+        "max_atoms": 256,
+        "atom_truncation_policy": "alternating_ends",
     }
 )
 cfg["model"].update(

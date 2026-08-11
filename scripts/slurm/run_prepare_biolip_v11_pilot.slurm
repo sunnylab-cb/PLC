@@ -28,6 +28,10 @@ BIOLIP="${BIOLIP:-/hpc2hdd/home/shuang886/biolip}"
 QC_DIR="${QC_DIR:-${BIOLIP}/qc_training_manifest_20260811}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${BIOLIP}/v11_pilot_strict_nobench_20260811}"
 EXTRA_EXCLUDE="${EXTRA_EXCLUDE:-}"
+DIRECT_EXCLUDE="${DIRECT_EXCLUDE:-${BIOLIP}/qc_training_manifest_20260811/exclude_coach420_holo4k_pdb_ids.txt}"
+MAX_ATOMS="${MAX_ATOMS:-256}"
+REQUIRED_LIGAND_ROUTE="${REQUIRED_LIGAND_ROUTE:-5}"
+MIN_FEATURE_COMPLETENESS="${MIN_FEATURE_COMPLETENESS:-0.8}"
 PYTHON="${PYTHON:-/hpc2ssd/softwares/anaconda3/envs/af3/bin/python}"
 
 mkdir -p "${PROJECT}/logs"
@@ -38,13 +42,20 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 echo "BioLip V11 pilot materialization"
 echo "  source=${BIOLIP}"
 echo "  manifest=${QC_DIR}/biolip_current_feature_ready.tsv"
-echo "  exclusions=${QC_DIR}/exclude_coach420_holo4k_pdb_ids.txt"
+echo "  exclusions=${DIRECT_EXCLUDE}"
 echo "  extra_exclusions=${EXTRA_EXCLUDE:-none}"
+echo "  loader_max_atoms=${MAX_ATOMS}"
+echo "  required_ligand_route=${REQUIRED_LIGAND_ROUTE}"
+echo "  min_feature_completeness=${MIN_FEATURE_COMPLETENESS}"
 echo "  output=${OUTPUT_ROOT}"
 
 EXCLUDE_ARGS=(
-  --exclude-pdb-ids "${QC_DIR}/exclude_coach420_holo4k_pdb_ids.txt"
+  --exclude-pdb-ids "${DIRECT_EXCLUDE}"
 )
+if [ ! -f "${DIRECT_EXCLUDE}" ]; then
+  echo "ERROR: DIRECT_EXCLUDE does not exist: ${DIRECT_EXCLUDE}" >&2
+  exit 2
+fi
 if [ -n "${EXTRA_EXCLUDE}" ]; then
   if [ ! -f "${EXTRA_EXCLUDE}" ]; then
     echo "ERROR: EXTRA_EXCLUDE does not exist: ${EXTRA_EXCLUDE}" >&2
@@ -53,13 +64,21 @@ if [ -n "${EXTRA_EXCLUDE}" ]; then
   EXCLUDE_ARGS+=(--exclude-pdb-ids "${EXTRA_EXCLUDE}")
 fi
 
+LIGAND_FILTER_ARGS=(
+  --min-feature-completeness "${MIN_FEATURE_COMPLETENESS}"
+)
+if [ -n "${REQUIRED_LIGAND_ROUTE}" ]; then
+  LIGAND_FILTER_ARGS+=(--required-ligand-route "${REQUIRED_LIGAND_ROUTE}")
+fi
+
 "${PYTHON}" -u scripts/diagnostics/prepare_biolip_v11_pilot.py \
   --biolip-root "${BIOLIP}" \
   --manifest "${QC_DIR}/biolip_current_feature_ready.tsv" \
   "${EXCLUDE_ARGS[@]}" \
+  "${LIGAND_FILTER_ARGS[@]}" \
   --output-root "${OUTPUT_ROOT}"
 
-"${PYTHON}" - "${OUTPUT_ROOT}" <<'PY'
+"${PYTHON}" - "${OUTPUT_ROOT}" "${MAX_ATOMS}" <<'PY'
 import json
 import sys
 from collections import Counter
@@ -71,11 +90,13 @@ from src.data.pocket_dataset import load_splits
 from src.data.pocket_dataset_v8 import PocketDatasetV8
 
 root = sys.argv[1]
+max_atoms_limit = int(sys.argv[2])
 train_ids, val_ids, test_ids = load_splits(f"{root}/splits.txt")
 common = dict(
     data_root=root,
     max_seq_len=1800,
-    max_atoms=128,
+    max_atoms=max_atoms_limit,
+    atom_truncation_policy="alternating_ends",
     distances_file=f"{root}/residue_ligand_distances_dcenter.pt",
     esm_features_dir="esm2_latents",
     ligand_features_dir="ligand_features_v5",
