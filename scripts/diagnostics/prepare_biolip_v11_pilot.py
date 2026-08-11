@@ -153,6 +153,17 @@ def min_heavy_atom_distances(
     return result
 
 
+def contact_geometry_stats(d_min: torch.Tensor) -> dict[str, int | float]:
+    """Summarize whether a ligand has a usable contact label on this chain."""
+    if d_min.ndim != 1 or not d_min.numel() or not bool(torch.isfinite(d_min).all()):
+        raise ValueError("residue-ligand distances must be a finite non-empty vector")
+    return {
+        "n_contact_lt5": int((d_min < 5.0).sum()),
+        "n_near_5to8": int(((d_min >= 5.0) & (d_min < 8.0)).sum()),
+        "min_distance": float(d_min.min()),
+    }
+
+
 def stable_group_split(
     rows: Sequence[Mapping[str, str]],
     val_fraction: float,
@@ -303,6 +314,7 @@ def main() -> int:
     chain_cache_root = output_root / "_chain_cache"
     distances: dict[str, dict[str, Any]] = {}
     output_rows = []
+    geometry_failures = []
     current_pdb = None
     current_protein: Mapping[str, Any] | None = None
     current_parsed: Mapping[str, Any] | None = None
@@ -335,6 +347,32 @@ def main() -> int:
                 _atomic_torch_save(chain_data, sidecar)
             chain_sidecars[chain_key] = sidecar
 
+        chain_data = _load_mapping(sidecar)
+        ligand = _load_mapping(ligand_source)
+        d_min = min_heavy_atom_distances(chain_data["all_atom_coords"], ligand_heavy_coords(ligand))
+        geometry = contact_geometry_stats(d_min)
+        n_contact = int(geometry["n_contact_lt5"])
+        n_near = int(geometry["n_near_5to8"])
+        if n_contact < 1:
+            geometry_failures.append(
+                {
+                    "sample_id": sample_id,
+                    "pdb_id": pdb_id,
+                    "protein_chain": chain,
+                    "pair_id": row.get("pair_id", ""),
+                    "min_distance": f"{float(geometry['min_distance']):.6f}",
+                    "n_contact_lt5": n_contact,
+                    "n_near_5to8": n_near,
+                    "reason": "no_residue_within_5A",
+                }
+            )
+            print(
+                f"[{index:,}/{len(rows):,}] skipped {sample_id}: "
+                f"no residue within 5 A (min={float(geometry['min_distance']):.3f} A)",
+                flush=True,
+            )
+            continue
+
         pair_dir = output_root / "complete_features_v4" / YEAR_BUCKET / sample_id
         _ensure_symlink(sidecar, pair_dir / f"{sample_id}_protein.pt", args.overwrite)
         _ensure_symlink(
@@ -347,14 +385,6 @@ def main() -> int:
             output_root / "ligand_features_v5" / YEAR_BUCKET / sample_id / f"{sample_id}_ligand.pt",
             args.overwrite,
         )
-
-        chain_data = _load_mapping(sidecar)
-        ligand = _load_mapping(ligand_source)
-        d_min = min_heavy_atom_distances(chain_data["all_atom_coords"], ligand_heavy_coords(ligand))
-        n_contact = int((d_min < 5.0).sum())
-        n_near = int(((d_min >= 5.0) & (d_min < 8.0)).sum())
-        if n_contact < 1:
-            raise ValueError(f"{sample_id}: no residue within 5 A")
         distances[sample_id] = {
             "distances": d_min,
             "n_residues": len(d_min),
@@ -377,6 +407,9 @@ def main() -> int:
         if index % 100 == 0:
             print(f"[{index:,}/{len(rows):,}] materialized", flush=True)
 
+    if not output_rows:
+        raise RuntimeError("no BioLip rows passed geometry QC")
+
     _atomic_torch_save(distances, output_root / "residue_ligand_distances_dcenter.pt")
     split_lines = [f"{row['split']}\t{row['sample_id']}" for row in output_rows]
     _atomic_text("\n".join(split_lines) + "\n", output_root / "splits.txt")
@@ -389,6 +422,24 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(output_rows)
     os.replace(tmp_manifest, manifest_path)
+
+    geometry_failure_path = output_root / "geometry_qc_failures.tsv"
+    geometry_failure_fields = [
+        "sample_id",
+        "pdb_id",
+        "protein_chain",
+        "pair_id",
+        "min_distance",
+        "n_contact_lt5",
+        "n_near_5to8",
+        "reason",
+    ]
+    tmp_geometry = geometry_failure_path.with_suffix(f".tsv.{os.getpid()}.tmp")
+    with tmp_geometry.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=geometry_failure_fields, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(geometry_failures)
+    os.replace(tmp_geometry, geometry_failure_path)
 
     split_counts = Counter(row["split"] for row in output_rows)
     summary = {
@@ -403,6 +454,10 @@ def main() -> int:
             "dropped": dict(sorted(ligand_filter_counts.items())),
         },
         "pairs": len(output_rows),
+        "geometry_qc": {
+            "dropped": len(geometry_failures),
+            "failure_manifest": str(geometry_failure_path),
+        },
         "unique_pdbs": len({row["pdb_id"] for row in output_rows}),
         "unique_pdb_chains": len({(row["pdb_id"], row["protein_chain"]) for row in output_rows}),
         "split_counts": dict(split_counts),

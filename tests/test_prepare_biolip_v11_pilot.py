@@ -2,11 +2,13 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.diagnostics.prepare_biolip_v11_pilot import (
+    contact_geometry_stats,
     filter_rows_by_ligand_qc,
     ligand_heavy_coords,
     min_heavy_atom_distances,
@@ -66,6 +68,22 @@ def test_ligand_heavy_coords_prefers_original_and_distance_is_dmin():
 
     assert coords.shape == (2, 3)
     assert torch.allclose(distances, torch.tensor([1.0, 3.0]))
+
+
+def test_contact_geometry_stats_distinguishes_valid_and_zero_contact_pairs():
+    valid = contact_geometry_stats(torch.tensor([4.9, 5.0, 7.9, 8.0]))
+    invalid = contact_geometry_stats(torch.tensor([5.1, 7.9, 8.0]))
+
+    assert valid == {
+        "n_contact_lt5": 1,
+        "n_near_5to8": 2,
+        "min_distance": pytest.approx(4.9),
+    }
+    assert invalid == {
+        "n_contact_lt5": 0,
+        "n_near_5to8": 2,
+        "min_distance": pytest.approx(5.1),
+    }
 
 
 def test_stable_group_split_never_splits_same_pdb():
