@@ -156,6 +156,8 @@ cos(Q, P[k])
 - epoch 2/3 validation 分别为 `F1_c0=0.5990/0.5991`、AUPRC 均约 `0.6098`，仍与同 seed V11m13 的 `0.599105` 持平。当前证据支持“candidate head 可学习且低风险”，尚不支持“已提高 residue F1”。
 - epoch 4--6 validation 仍为 `F1_c0=0.5991`、AUPRC `0.6098`、AUROC `0.9503`，没有出现延迟涨点。训练 batch 统计显示 candidate loss 约从 `1.22` 降至 `0.18`、rank accuracy 升至 `0.91--1.00`、entropy 从约 `1.33` 降至 `0.39`，但 alpha 同时收缩到约 `0.0078`；当前瓶颈明确是 ranking 到 residue logits 的 coupling，而不是 candidate representation 没学会。
 - `scripts/train/train_v11m3.py` 已加入 validation-only auxiliary diagnostics：不把 auxiliary loss 加入 val loss，仅按 validation samples 汇总并写入 `ValAssignment/*`，同时打印 rank accuracy、valid fraction、coverage、alpha 与 entropy。该改动会作用于后续启动的 V11m16 jobs；已运行的 Star 进程不会被中途修改。
+- Star PDBbind-only V11m16 在 epoch 22 early-stop；best checkpoint 来自 epoch 21，val F1 `0.5991707`，仅比同 seed V11m13 的 `0.599105` 高约 `0.000066`。test real global F1 与 V11m13 **完全相同**为 `0.6157781`；V11m16 real/shuffle/zero 为 `0.6157781/0.5355871/0.4473152`，V11m13 为 `0.6157781/0.5355479/0.4473729`。real-shuffle gap 从 `0.0802302` 轻微降至 `0.0801911`，没有可报告增益。
+- best checkpoint 的 bounded candidate gate alpha 为 `0.0078204`。结合高 train rank accuracy，可判定 deterministic candidate ranking 表征可学习，但当前 centered scalar gate 被主 residue objective 压到近乎无效；该 PDBbind-only probe 判为 no effect，而不是架构性能提升。
 
 第一验收指标不是 PDBbind F1 单点，而是：
 
@@ -284,6 +286,8 @@ Stage B: PDBbind finetune
 - 候选 manifest 实际为 36,700 pairs；排除 direct PDBbind 与 COACH420/HOLO4K IDs 后为 23,435 pairs、9,700 PDB、18,986 chains。MMseqs 全评估去同源后保留 **6,999 pairs、2,734 PDB、5,663 chains**；PDBbind-internal-only 可保留 14,289 pairs，external-benchmark-only 可保留 9,721 pairs。最终训练数据使用更严格的 all-evaluation scope。
 - 6,999 个 all-evaluation-clean 候选全部为 regular-organic；metadata heavy atoms 的 min/p50/p90/p95/p99/max 为 `6/17/36/41/48/50`，因此这一批不会触发 128-atom 主线的极端大配体问题。
 - ligand V6 与完整训练数据依赖链已提交：`10175284` 用单个 `a128m512u` 节点（128 CPU、200 GB、96 workers）只处理 6,999 个 allowlisted pairs，并做 exact-manifest tensor QC；`10175287` 在其结束后重建 ready manifest；`10175288` 再用两轮 sequence exclusion 的 7,227 个 PDB-ID 并集物化 `v11_allclean_20260811` 并全量通过生产 loader QC 后才放行训练。
+- `10175284` 已在 53:14 内完成，6,999/6,999 tensors 有效、0 failure；含氢 atom 数 min/p50/p90/p99/max 为 `6/32/64/94/130`。tensor-derived route 实际为 inorganic 811、metal-complex 186、no-conformer biological 208、regular-organic 5,794，说明 pair-cache metadata 会把约 17% 非 regular chemistry 错标成 regular-organic。
+- 因此 full-clean 主线在物化前新增真实 tensor 过滤：`ligand_route==5` 且 feature completeness `>=0.8`，loader `max_atoms=256`、兜底 crop 为 `alternating_ends`。首个物化 job `10175288` 仅因 regenerated QC 目录没有复制 direct-ID exclusion 文件而在 6 秒内失败；路径假设已修复，重投 `10179954` 正在物化 5,794 pairs，后续 full-clean GPU job 为 `10179955`。
 - 当前 303-pair PDBbind-internal-clean feasibility pilot 为 GPU job `10175201`。完整 all-evaluation-clean 两阶段 run 为依赖 job `10175294`；Stage A/Stage B experiment names 已包含 Slurm job ID，避免并发 run 通过“最新同名目录”串用 checkpoint。
 
 ## 7. 推荐执行顺序
