@@ -180,6 +180,16 @@ def create_v11_model(ckpt: Dict, config: Dict, device: torch.device):
     model_cfg = dict(config["model"])
     model_cfg["use_gradient_checkpointing"] = False
 
+    # Some V11m16 training checkpoints retain the base V11 config inside the
+    # checkpoint even when the run-specific YAML enabled the candidate head.
+    # The candidate projection keys are unambiguous, so let the state dict
+    # restore the architecture before loading rather than silently dropping it.
+    if version == "v11m16" and any(
+        key.startswith("assignment_candidate_lig_proj.")
+        for key in ckpt["model_state_dict"]
+    ):
+        model_cfg["use_candidate_rank_gate"] = True
+
     if version == "v13m0":
         from src.models.pocket_gvp_fusion_v13m0 import PocketGVPFusionV13m0 as ModelClass
     elif version == "v11m16":
