@@ -171,6 +171,16 @@ def main() -> int:
     parser.add_argument("--mmseqs", default="mmseqs")
     parser.add_argument("--min-seq-id", type=float, default=0.30)
     parser.add_argument("--query-coverage", type=float, default=0.80)
+    parser.add_argument(
+        "--cov-mode",
+        type=int,
+        default=2,
+        choices=(0, 1, 2, 3, 4, 5),
+        help=(
+            "MMseqs coverage mode. Mode 2 enforces BioLip-query coverage; "
+            "mode 0 enforces coverage of both query and target."
+        ),
+    )
     parser.add_argument("--threads", type=int, default=16)
     args = parser.parse_args()
 
@@ -272,7 +282,7 @@ def main() -> int:
         "-c",
         str(args.query_coverage),
         "--cov-mode",
-        "2",
+        str(args.cov_mode),
         "--threads",
         str(args.threads),
         "--max-seqs",
@@ -408,7 +418,7 @@ def main() -> int:
         "thresholds": {
             "min_sequence_identity": args.min_seq_id,
             "min_query_coverage": args.query_coverage,
-            "mmseqs_cov_mode": 2,
+            "mmseqs_cov_mode": args.cov_mode,
         },
         "source_manifest": str(manifest_path.resolve()),
         "candidate_pairs_before_direct_filter": len(pilot_rows_all),
