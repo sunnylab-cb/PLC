@@ -290,6 +290,24 @@ def main() -> int:
 
     assignment, components = assign_components(eligible_ids, union_find, args.seed)
     split_ids = {name: sorted(pid for pid, split in assignment.items() if split == name) for name in ("train", "val", "test")}
+    crossing_internal_pairs = set()
+    for hit in internal_hits:
+        left = {
+            row["sample_id"] for row in pdb_meta[hit["query"]]["members"]
+            if row["sample_id"] in assignment
+        }
+        right = {
+            row["sample_id"] for row in pdb_meta[hit["target"]]["members"]
+            if row["sample_id"] in assignment
+        }
+        for left_id in left:
+            for right_id in right:
+                if assignment[left_id] != assignment[right_id]:
+                    crossing_internal_pairs.add((left_id, right_id))
+    if crossing_internal_pairs:
+        raise RuntimeError(
+            f"component assignment left {len(crossing_internal_pairs)} cross-split homolog pairs"
+        )
     split_path = out / "pdbbind_chain_si30_splits.txt"
     with split_path.open("w") as handle:
         handle.write("# Chain-level connected-component split\n")
@@ -326,6 +344,10 @@ def main() -> int:
         for member in bio_meta[hit["query"]]["members"]:
             bio_excluded.add(member["sample_id"])
     retained_bio = sorted(set(biolip_ids) - bio_excluded)
+    retained_external_violations = external_excluded & set(eligible_ids)
+    retained_biolip_violations = bio_excluded & set(retained_bio)
+    if retained_external_violations or retained_biolip_violations:
+        raise RuntimeError("homolog filtering invariant failed")
     (out / "biolip_train_ids.txt").write_text("\n".join(retained_bio) + "\n")
     (out / "pdbbind_external_excluded_ids.txt").write_text("\n".join(sorted(external_excluded)) + "\n")
     (out / "biolip_excluded_ids.txt").write_text("\n".join(sorted(bio_excluded)) + "\n")
@@ -358,6 +380,16 @@ def main() -> int:
             "pdbbind_external_violating_alignments": len(ext_hits),
             "pdbbind_internal_violating_alignments": len(internal_hits),
             "biolip_evaluation_violating_alignments": len(bio_hits),
+        },
+        "final_audit": {
+            "cross_split_internal_violating_pairs": len(crossing_internal_pairs),
+            "retained_pdbbind_external_violating_complexes": len(retained_external_violations),
+            "retained_biolip_evaluation_violating_samples": len(retained_biolip_violations),
+            "passed": not (
+                crossing_internal_pairs
+                or retained_external_violations
+                or retained_biolip_violations
+            ),
         },
         "commands": commands,
         "mmseqs_version": subprocess.run([args.mmseqs, "version"], capture_output=True, text=True, check=True).stdout.strip(),
