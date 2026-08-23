@@ -167,7 +167,19 @@ def parse_violations(
     for line in path.read_text().splitlines():
         values = dict(zip(fields, line.split("\t")))
         nident, alnlen = int(values["nident"]), int(values["alnlen"])
-        identity = nident / alnlen if alnlen else 0.0
+        # Some deployed MMseqs builds expose the nident token but emit zero for
+        # it. fident remains populated and is the authoritative alignment
+        # identity used by --min-seq-id in those builds.
+        identity = float(values["fident"])
+        if identity > 1.0:
+            identity /= 100.0
+        if nident > 0 and alnlen > 0:
+            derived_identity = nident / alnlen
+            if abs(derived_identity - identity) > 0.02:
+                raise RuntimeError(
+                    f"inconsistent MMseqs identity: nident/alnlen={derived_identity} "
+                    f"fident={identity}"
+                )
         qcov, tcov = float(values["qcov"]), float(values["tcov"])
         if identity >= min_identity and (qcov >= min_coverage or tcov >= min_coverage):
             values.update(identity=identity, qcov=qcov, tcov=tcov)
