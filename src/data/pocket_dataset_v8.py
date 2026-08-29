@@ -36,6 +36,10 @@ def _atom_crop_bounds(n_atoms: int, max_atoms: int, policy: str) -> tuple[int, i
     """Return [start, end) atom bounds for deterministic ligand truncation."""
     n_atoms = int(n_atoms)
     max_atoms = int(max_atoms)
+    if max_atoms < 0:
+        return 0, n_atoms
+    if max_atoms == 0:
+        raise ValueError("max_atoms=0 is ambiguous; use a positive cap or -1 to disable atom truncation")
     if n_atoms <= max_atoms:
         return 0, n_atoms
     policy = str(policy or "head").lower()

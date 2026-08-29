@@ -71,7 +71,15 @@ def model_needs_unimol(model) -> bool:
 def detect_v11_version(ckpt: Dict, config: Dict = None) -> str:
     state = ckpt["model_state_dict"]
     cfg = config or ckpt.get("config", {})
-    exp_name = cfg.get("experiment", {}).get("name", "").lower()
+    experiment_cfg = cfg.get("experiment", {})
+    exp_name = " ".join(
+        str(value)
+        for value in (
+            experiment_cfg.get("name", ""),
+            experiment_cfg.get("version_suffix", ""),
+        )
+        if value
+    ).lower()
 
     has_global_gate = any(k.startswith("global_delta_gate.") for k in state)
     has_pair_bias = any(".pair_bias." in k for k in state)
