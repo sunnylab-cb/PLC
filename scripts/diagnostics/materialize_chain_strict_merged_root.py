@@ -58,6 +58,11 @@ def main() -> int:
     parser.add_argument("--pdbbind-root", type=Path, required=True)
     parser.add_argument("--biolip-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--include-esm3",
+        action="store_true",
+        help="Require and link normalized ESM3 features for both data sources.",
+    )
     args = parser.parse_args()
 
     output = args.output_root.resolve()
@@ -69,6 +74,10 @@ def main() -> int:
     if collision:
         raise RuntimeError(f"sample ID collision: {sorted(collision)[:20]}")
 
+    feature_layout = list(FEATURE_LAYOUT)
+    if args.include_esm3:
+        feature_layout.append(("esm3_latents_norm", "esm3_latents_norm"))
+
     provenance = []
     missing_features = []
     for source_name, root, sample_ids in (
@@ -76,7 +85,7 @@ def main() -> int:
         ("biolip", args.biolip_root, bio_ids),
     ):
         for sample_id in sample_ids:
-            for output_feature, pdb_feature in FEATURE_LAYOUT:
+            for output_feature, pdb_feature in feature_layout:
                 source_feature = pdb_feature
                 if source_name == "biolip" and output_feature == "complete_features_v4_nma":
                     source_feature = "complete_features_v4"
@@ -125,6 +134,7 @@ def main() -> int:
         "merged_train": len(splits.get("train", [])) + len(bio_ids),
         "labels": len(labels),
         "feature_links": len(provenance),
+        "include_esm3": args.include_esm3,
         "source_split_root": str(args.split_root.resolve()),
     }
     (output / "provenance.jsonl").write_text(
