@@ -17,7 +17,8 @@
 
 set -euo pipefail
 PROJECT="${PROJECT:-/hpc2hdd/home/shuang886/jhspoolers/PLC}"
-PYTHON="${PYTHON:-/hpc2ssd/softwares/anaconda3/envs/af3/bin/python}"
+PYTHON="${PYTHON:-/hpc2hdd/home/shuang886/.conda/envs/AIAA/bin/python}"
+ESM3_SITE="${ESM3_SITE:-/hpc2hdd/home/shuang886/python/esm3_3.2.1}"
 BIOLIP="${BIOLIP:-/hpc2hdd/home/shuang886/biolip/v11_allclean_route5_20260811}"
 SPLIT_ROOT="${SPLIT_ROOT:-/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646_final}"
 OUTPUT="${OUTPUT:-/hpc2hdd/home/shuang886/biolip/esm3_chain_si30}"
@@ -26,7 +27,7 @@ HF_CACHE="${HF_CACHE:-/hpc2hdd/home/shuang886/.cache/huggingface/hub}"
 
 mkdir -p "${PROJECT}/logs" "${OUTPUT}"
 cd "${PROJECT}"
-export PYTHONPATH="${PROJECT}/preparation/protein:${PROJECT}:${PYTHONPATH:-}"
+export PYTHONPATH="${ESM3_SITE}:${PROJECT}/preparation/protein:${PROJECT}:${PYTHONPATH:-}"
 export HF_HUB_CACHE="${HF_CACHE}"
 export HF_HUB_OFFLINE=1
 export PYTHONUNBUFFERED=1
@@ -36,6 +37,7 @@ test -f "${SPLIT_ROOT}/biolip_train_ids.txt"
 test -f "${BIOLIP}/pilot_manifest.tsv"
 test -f "${STATS}"
 test -d "${HF_CACHE}/models--EvolutionaryScale--esm3-sm-open-v1"
+"${PYTHON}" -c "import esm.sdk.api, torch; print('ESM3 extraction environment:', torch.__version__)"
 
 "${PYTHON}" preparation/protein/esm3_extract_biolip_chains.py \
   --biolip-root "${BIOLIP}" \
