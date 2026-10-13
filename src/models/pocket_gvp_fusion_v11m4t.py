@@ -130,6 +130,8 @@ class PocketGVPFusionV11m4t(PocketGVPFusionV11m4):
         ligand_to_protein: Optional[torch.Tensor] = None,
         unimol_embed: Optional[torch.Tensor] = None,
         esm3_embeddings: Optional[torch.Tensor] = None,
+        esm_valid_mask: Optional[torch.Tensor] = None,
+        esm3_valid_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         outputs = super().forward(
             esm_embeddings=esm_embeddings,
@@ -149,6 +151,8 @@ class PocketGVPFusionV11m4t(PocketGVPFusionV11m4):
             ligand_to_protein=ligand_to_protein,
             unimol_embed=unimol_embed,
             esm3_embeddings=esm3_embeddings,
+            esm_valid_mask=esm_valid_mask,
+            esm3_valid_mask=esm3_valid_mask,
         )
 
         # The parent already applies the delta with a differentiable scale.

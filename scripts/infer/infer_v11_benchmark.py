@@ -12,19 +12,20 @@ This runner targets the benchmark assets prepared under ``benchmark/``:
   - atom+H no-missing-residue tags:
       benchmark/residue_ligand_tags/atom_h/{dataset}_aggregate_pdb_dmin.pt
 
-The primary benchmark mode is aggregate-by-PDB.  Per-ligand mode is supported
-for diagnostics, but aggregate mode should be treated as the main external
-benchmark number because COACH420/HOLO4K are pocket-level datasets.
+Per-ligand and aggregate modes answer different questions and are reported
+separately. Audited mode aligns inputs on the protein residue-key axis.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import json
 import math
 import sys
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -41,12 +42,16 @@ from scripts.infer.infer_v11_internal_ligdep import (  # noqa: E402
     model_needs_unimol,
 )
 from scripts.infer.internal_ligand_dependency import (  # noqa: E402
-    load_checkpoint,
     load_config_from_checkpoint_or_yaml,
     resolve_contact_threshold,
 )
 from src.data.collate import pocket_collate_fn_v10, prepare_model_inputs_v11  # noqa: E402
 from src.metrics.metrics import contact_gate_predictions  # noqa: E402
+from scripts.infer.benchmark_integrity import (  # noqa: E402
+    align_distances, align_embedding, checked_ligand_features, require_finite,
+    residue_keys, safe_tensor_load, sha256_file,
+    legacy_tag_axis, verify_tag_distances,
+)
 
 
 CLASS_NAMES = {0: "Contact", 1: "Near", 2: "Far"}
@@ -97,7 +102,7 @@ def _load_ligand_norm(stats_path: Optional[Path], enabled: bool) -> Optional[Dic
             "Ligand feature normalization is enabled, but feature stats were not found. "
             "Pass --feature-stats /path/to/data/stats_output.pt or disable with --no-ligand-normalization."
         )
-    stats = torch.load(stats_path, map_location="cpu", weights_only=False)
+    stats = safe_tensor_load(stats_path)
     if "ligand" not in stats:
         raise KeyError(f"{stats_path} does not contain ligand stats")
     ligand_stats = stats["ligand"]
@@ -141,11 +146,6 @@ def _atom_crop_bounds(n_atoms: int, max_atoms: int, policy: str) -> tuple[int, i
         drop_front = (excess + 1) // 2
         return drop_front, drop_front + max_atoms
     raise ValueError(f"unknown atom_truncation_policy={policy!r}")
-
-
-def _load_keys(path: Path) -> list[str]:
-    data = torch.load(path, map_location="cpu", weights_only=False)
-    return sorted(data.keys())
 
 
 def _distances_to_labels(distances: torch.Tensor, contact: float, near: float) -> torch.Tensor:
@@ -201,6 +201,10 @@ class BenchmarkV11Dataset(Dataset):
         spatial_clamp_dims: Optional[List[int]] = None,
         spatial_clamp_range: Optional[List[float]] = None,
         atom_truncation_policy: str = "head",
+        residue_alignment: str = "legacy",
+        residue_coverage: str = "protein",
+        tag_protein_root: Optional[Path] = None,
+        nonfinite_policy: str = "error",
     ) -> None:
         if tag_mode not in ("aggregate", "per_ligand"):
             raise ValueError(f"unknown tag_mode: {tag_mode}")
@@ -215,6 +219,10 @@ class BenchmarkV11Dataset(Dataset):
         self.max_seq_len = int(max_seq_len)
         self.max_atoms = int(max_atoms)
         self.atom_truncation_policy = str(atom_truncation_policy or "head").lower()
+        self.residue_alignment = residue_alignment
+        self.residue_coverage = residue_coverage
+        self.tag_protein_root = tag_protein_root
+        self.nonfinite_policy = nonfinite_policy
         self.ligand_norm = ligand_norm
         self.spatial_clamp_dims = [int(d) for d in (spatial_clamp_dims or [])]
         clamp_range = spatial_clamp_range or [-5.0, 5.0]
@@ -226,7 +234,7 @@ class BenchmarkV11Dataset(Dataset):
         self.esm_root = esm_root / dataset
         self.esm3_root = (esm3_root / dataset) if esm3_root is not None else None
         self.ligand_root = ligand_feature_root / dataset
-        self.dist_dict = torch.load(tag_file, map_location="cpu", weights_only=False)
+        self.dist_dict = safe_tensor_load(tag_file)
         self.keys = sorted(self.dist_dict.keys())
         if max_samples and max_samples > 0:
             self.keys = self.keys[: int(max_samples)]
@@ -263,6 +271,13 @@ class BenchmarkV11Dataset(Dataset):
         if not path.exists():
             raise FileNotFoundError(f"ESM feature not found for {protein_key}: {path}")
         return path
+
+    @lru_cache(maxsize=64)
+    def _tag_metadata(self, protein_key: str) -> Dict:
+        if self.tag_protein_root is None:
+            raise ValueError("Key alignment requires --tag-protein-root for legacy tags without residue keys")
+        path = self.tag_protein_root / self.dataset / f"{protein_key}.pdb"
+        return legacy_tag_axis(path)
 
     def _esm3_path(self, protein_key: str) -> Path:
         if self.esm3_root is None:
@@ -331,16 +346,24 @@ class BenchmarkV11Dataset(Dataset):
         if not ligand_files:
             raise FileNotFoundError("no ligand feature files")
         feat_blocks, coord_blocks, ei_blocks, ea_blocks = [], [], [], []
+        repairs = []
         offset = 0
         for path in ligand_files:
-            lig = torch.load(path, map_location="cpu", weights_only=False)
-            feats = _normalize_ligand_features(lig["atom_features"], self.ligand_norm)
+            lig = safe_tensor_load(path)
+            checked, positions = checked_ligand_features(
+                lig["atom_features"], self.nonfinite_policy, str(path))
+            if positions:
+                repairs.append({"path": str(path), "sha256": sha256_file(path), "positions": positions})
+            feats = _normalize_ligand_features(checked, self.ligand_norm)
+            require_finite(feats, f"{path}: normalized atom features")
             coords = lig["coords"].float()
+            require_finite(coords, f"{path}: coords")
             feat_blocks.append(feats)
             coord_blocks.append(coords)
             edge_index = lig.get("edge_index")
             edge_attr = lig.get("edge_attr")
             if edge_index is not None and edge_attr is not None and edge_index.numel() > 0:
+                require_finite(edge_attr, f"{path}: edge attributes")
                 ei_blocks.append(edge_index.long() + offset)
                 ea_blocks.append(edge_attr.float())
             offset += feats.shape[0]
@@ -357,6 +380,7 @@ class BenchmarkV11Dataset(Dataset):
             "coords": coords,
             "edge_index": edge_index,
             "edge_attr": edge_attr,
+            "repairs": repairs,
         }
 
     def _apply_ligand_mode(self, lig: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -393,14 +417,18 @@ class BenchmarkV11Dataset(Dataset):
             ligand_key = self.keys[self._shuffle_idx[idx]]
         ligand_protein_key = self._protein_key(ligand_key)
 
-        prot = torch.load(self._protein_path(protein_key), map_location="cpu", weights_only=False)
-        esm_data = torch.load(self._esm_path(protein_key), map_location="cpu", weights_only=False)
+        prot = safe_tensor_load(self._protein_path(protein_key))
+        esm_data = safe_tensor_load(self._esm_path(protein_key))
         esm = esm_data["embeddings"].float()
+        esm_raw_length = len(esm)
         esm3 = None
+        esm3_data = None
         if self.esm3_root is not None:
-            esm3_data = torch.load(self._esm3_path(protein_key), map_location="cpu", weights_only=False)
-            esm3 = self._align_aux_esm_to_reference(esm3_data, esm_data)
+            esm3_data = safe_tensor_load(self._esm3_path(protein_key))
+            if self.residue_alignment == "legacy":
+                esm3 = self._align_aux_esm_to_reference(esm3_data, esm_data)
         lig = self._merge_ligands(self._ligand_files(ligand_key, ligand_protein_key))
+        repairs = lig.pop("repairs")
         lig = self._apply_ligand_mode(lig)
 
         phys = prot["physchem_features"].float()
@@ -412,20 +440,62 @@ class BenchmarkV11Dataset(Dataset):
 
         dist_data = self.dist_dict[sample_key]
         distances = dist_data["distances"].float() if isinstance(dist_data, dict) else dist_data.float()
+        raw_label_length = len(distances)
+        qc = {"ligand_repairs": repairs, "residue_alignment": self.residue_alignment}
+        esm_valid = esm3_valid = None
+        keys = None
+        if self.residue_alignment == "keys":
+            keys = residue_keys(prot, len(phys))
+            esm, esm_valid, qc["esm2"] = align_embedding(esm_data, prot, "ESM2")
+            if esm3_data is not None:
+                esm3, esm3_valid, qc["esm3"] = align_embedding(esm3_data, prot, "ESM3")
+            if isinstance(dist_data, dict) and ("chain_ids" in dist_data or "chain_id" in dist_data):
+                tag_metadata = dist_data
+                distance_check = {"distance_verified": False, "axis_source": "stored_keys"}
+            else:
+                tag_metadata = self._tag_metadata(protein_key)
+                source_files = [self.benchmark_root / "ligands_sdf" / self.dataset / f"{p.stem}.sdf"
+                                for p in self._ligand_files(sample_key, protein_key)]
+                try:
+                    distance_check = verify_tag_distances(distances, tag_metadata, source_files)
+                except Exception as exc:
+                    raise ValueError(f"{sample_key}: tag axis verification failed: {exc}") from exc
+            tag_keys = residue_keys(tag_metadata, len(distances))
+            distances = align_distances(distances, tag_metadata, prot)
+            qc["tag_axis"] = {
+                "verified": True, "source_pdb": tag_metadata.get("source_pdb"),
+                "source_sha256": tag_metadata.get("source_sha256"),
+                "raw_length": len(tag_keys), "extra_tag_residues": len(set(tag_keys) - set(keys)),
+                "positional_mismatches": sum(a != b for a, b in zip(tag_keys, keys)),
+                **distance_check,
+            }
+        for name, value in (("protein_physchem", phys), ("spatial_scalar", scalar),
+                            ("spatial_vector", vector), ("ca_coords", ca),
+                            ("gvp_vectors", gvp_vectors), ("esm2", esm), ("distances", distances)):
+            require_finite(value, f"{sample_key}: {name}")
+        if esm3 is not None:
+            require_finite(esm3, f"{sample_key}: esm3")
         labels = _distances_to_labels(distances, self.contact_thresh, self.near_thresh)
 
         lengths = {
             "protein": int(phys.shape[0]),
-            "esm": int(esm.shape[0]),
-            "labels": int(labels.shape[0]),
+            "esm": esm_raw_length,
+            "labels": raw_label_length,
             "ligand_atoms_raw": int(lig["atom_features"].shape[0]),
         }
         if esm3 is not None:
             lengths["esm3"] = int(esm3.shape[0])
-        residue_lengths = [lengths["protein"], lengths["esm"], lengths["labels"]]
-        if esm3 is not None:
-            residue_lengths.append(lengths["esm3"])
+        residue_lengths = [len(phys), len(esm), len(labels)]
+        if self.residue_coverage == "legacy_budget":
+            residue_lengths.extend([esm_raw_length, raw_label_length])
         n_res = min(*residue_lengths, self.max_seq_len)
+        qc["n_residues_full"] = len(phys)
+        qc["n_residues_evaluated"] = n_res
+        qc["n_true_contact_full"] = int((labels == 0).sum())
+        qc["n_true_contact_truncated"] = int((labels[n_res:] == 0).sum())
+        for name, valid in (("esm2", esm_valid), ("esm3", esm3_valid)):
+            if valid is not None:
+                qc[name]["missing_evaluated"] = int((~valid[:n_res]).sum())
 
         phys = phys[:n_res]
         scalar = scalar[:n_res]
@@ -493,6 +563,10 @@ class BenchmarkV11Dataset(Dataset):
             "n_atoms": n_atoms,
             "ligand_center": ligand_center.float(),
             "length_info": lengths,
+            "input_qc": qc,
+            **({"esm_valid_mask": esm_valid[:n_res]} if esm_valid is not None else {}),
+            **({"esm3_valid_mask": esm3_valid[:n_res]} if esm3_valid is not None else {}),
+            **({"residue_keys": keys[:n_res]} if keys is not None else {}),
         }
 
 
@@ -502,6 +576,14 @@ def benchmark_collate(batch: List[Dict]) -> Dict:
     result["ligand_keys"] = [sample["ligand_key"] for sample in batch]
     result["ligand_centers"] = torch.stack([sample["ligand_center"] for sample in batch], dim=0)
     result["length_info"] = [sample["length_info"] for sample in batch]
+    result["input_qc"] = [sample["input_qc"] for sample in batch]
+    result["residue_keys"] = [sample.get("residue_keys") for sample in batch]
+    for key in ("esm_valid_mask", "esm3_valid_mask"):
+        if key in batch[0]:
+            valid = torch.zeros_like(result["protein_mask"], dtype=torch.bool)
+            for i, sample in enumerate(batch):
+                valid[i, :sample["n_residues"]] = sample[key]
+            result[key] = valid
     return result
 
 
@@ -586,7 +668,7 @@ def compute_sample_metrics(
 
 
 def _is_finite_number(value) -> bool:
-    return isinstance(value, (int, float, np.integer, np.floating)) and not math.isnan(float(value))
+    return isinstance(value, (int, float, np.integer, np.floating)) and math.isfinite(float(value))
 
 
 def _mean_numeric(rows: Sequence[Dict], key: str) -> float:
@@ -827,6 +909,14 @@ def aggregate_metrics(rows: List[Dict], tag_mode: str = "aggregate") -> Dict:
         "protein_mean_of_ligand_max": _metric_block(rows, "max"),
         "key_alignment": _key_alignment_summary(rows, tag_mode),
         "contact_count_distribution": _contact_count_summary(rows),
+        "metric_coverage": {
+            "total_rows": len(rows),
+            "current_pocket_evaluable": sum(_is_finite_number(r["dcc_contact_success"]) for r in rows),
+            "bp_rows": sum(_is_finite_number(r.get("bp_f1_c0")) for r in rows),
+            "laa_rows": sum(_is_finite_number(r.get("laa_success")) for r in rows),
+            "pdr_rows": sum(_is_finite_number(r.get("pdr_union_success")) for r in rows),
+            "ap_rows": sum(_is_finite_number(r["ap_c0"]) for r in rows),
+        },
         "metric_definitions": {
             "sample_mean": "Mean over every row in the benchmark CSV.",
             "protein_mean_of_ligand_mean": "Mean over proteins after averaging ligand rows within each protein.",
@@ -899,6 +989,57 @@ def save_csv(rows: List[Dict], path: Path) -> None:
         writer.writerows(rows)
 
 
+def identity_collate(samples):
+    return samples
+
+
+class InputAuditDataset(Dataset):
+    """Collect every input failure; failed audits must still block GPU evaluation."""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        key = self.dataset.keys[index]
+        row = {"sample_key": key, "protein_key": self.dataset._protein_key(key)}
+        try:
+            sample = self.dataset[index]
+            return {**row, "status": "passed", "n_residues": sample["n_residues"],
+                    "qc": sample["input_qc"]}
+        except Exception as exc:
+            return {**row, "status": "failed", "error_type": type(exc).__name__,
+                    "error": str(exc)}
+
+
+def preflight_dataset(ds, args, out_dir):
+    loader = DataLoader(InputAuditDataset(ds), batch_size=args.batch_size, num_workers=args.num_workers,
+                        collate_fn=identity_collate)
+    rows = []
+    path = out_dir / f"{ds.dataset}_input_qc.jsonl"
+    with path.open("w") as handle:
+        for samples in tqdm(loader, desc=f"{ds.dataset} input preflight"):
+            for row in samples:
+                handle.write(json.dumps(row, allow_nan=False) + "\n")
+                rows.append(row)
+    errors = [r for r in rows if r["status"] == "failed"]
+    passed = [r for r in rows if r["status"] == "passed"]
+    summary = {
+        "status": "failed" if errors else "passed", "n_requested": len(ds), "n_checked": len(rows),
+        "n_passed": len(passed), "n_failed": len(errors), "errors": errors,
+        "sample_keys": [r["sample_key"] for r in rows],
+        "rows_with_repairs": sum(bool(r["qc"]["ligand_repairs"]) for r in passed),
+        "rows_with_esm2_missing": sum(r["qc"].get("esm2", {}).get("missing_evaluated", 0) > 0 for r in passed),
+        "rows_with_esm2_positional_mismatch": sum(r["qc"].get("esm2", {}).get("positional_mismatches", 0) > 0 for r in passed),
+        "rows_with_tag_positional_mismatch": sum(r["qc"].get("tag_axis", {}).get("positional_mismatches", 0) > 0 for r in passed),
+    }
+    (out_dir / f"{ds.dataset}_preflight.json").write_text(json.dumps(summary, indent=2))
+    print(f"[{ds.dataset}] audited={len(rows)} passed={len(passed)} failed={len(errors)}", flush=True)
+    return summary
+
+
 @torch.no_grad()
 def run_dataset(
     args,
@@ -939,7 +1080,13 @@ def run_dataset(
         spatial_clamp_dims=spatial_clamp_dims,
         spatial_clamp_range=spatial_clamp_range,
         atom_truncation_policy=atom_truncation_policy,
+        residue_alignment=args.residue_alignment,
+        residue_coverage=args.residue_coverage,
+        tag_protein_root=_as_path(args.benchmark_root, args.tag_protein_root),
+        nonfinite_policy=args.nonfinite_policy,
     )
+    if args.preflight_only:
+        return preflight_dataset(ds, args, out_dir)
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -951,16 +1098,30 @@ def run_dataset(
     needs_unimol = model_needs_unimol(model)
     d_unimol = int(getattr(model, "d_unimol", config.get("model", {}).get("d_unimol", 512)))
     rows: List[Dict] = []
-    amp_enabled = bool(args.amp and device.type != "cpu")
+    precision = args.precision
+    if precision == "auto":
+        precision = "bf16" if config.get("training", {}).get("use_bf16", False) else ("fp16" if args.amp else "fp32")
+    amp_enabled = precision != "fp32" and device.type == "cuda"
+    amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+    if amp_enabled and precision == "bf16" and not torch.cuda.is_bf16_supported():
+        raise RuntimeError("BF16 requested but not supported on the allocated GPU")
+    qc_rows = []
+    cache_dir = out_dir / "predictions" / dataset_name
+    if args.save_predictions:
+        cache_dir.mkdir(parents=True, exist_ok=True)
     for batch in tqdm(loader, desc=f"{dataset_name} {args.tag_mode}/{args.ligand_mode}", unit="batch"):
         inputs = prepare_model_inputs_v11(batch, device, non_blocking=True)
+        for key in ("esm_valid_mask", "esm3_valid_mask"):
+            if key in batch:
+                inputs[key] = batch[key].to(device)
         if needs_unimol:
             inputs["unimol_embed"] = torch.zeros(
                 batch["protein_mask"].shape[0], d_unimol, device=device, dtype=torch.float32
             )
-        with torch.amp.autocast(device.type, enabled=amp_enabled):
+        with torch.amp.autocast(device.type, enabled=amp_enabled, dtype=amp_dtype):
             outputs = model(**inputs)
         logits = outputs["logits"] if isinstance(outputs, dict) else outputs
+        require_finite(logits[inputs["protein_mask"].bool()], f"logits for {batch['pdb_ids']}")
         if args.class0_logit_bias:
             logits[..., 0] = logits[..., 0] + float(args.class0_logit_bias)
         probs = F.softmax(logits.float(), dim=-1).cpu()
@@ -1003,9 +1164,33 @@ def run_dataset(
                 "ligand_atoms_raw": length_info["ligand_atoms_raw"],
             }
             row.update(metrics)
+            if (labels_np == 0).any() and not math.isfinite(metrics["ap_c0"]):
+                raise RuntimeError(f"{sample_key}: AP failed on finite logits and positive labels")
             rows.append(row)
+            qc_rows.append({"sample_key": sample_key, "protein_key": row["protein_key"],
+                            "qc": batch["input_qc"][b]})
+            if args.save_predictions:
+                if Path(sample_key).name != sample_key:
+                    raise ValueError(f"Unsafe sample key: {sample_key}")
+                np.savez_compressed(
+                    cache_dir / f"{sample_key}.npz", probs=probs_np,
+                    labels=labels_np, preds=preds_np, ca_coords=ca_np,
+                    protein_key=np.asarray(row["protein_key"]),
+                    ligand_key=np.asarray(row["ligand_key"]),
+                    residue_keys=np.asarray(batch["residue_keys"][b] or [], dtype=str),
+                )
     enrich_rows_with_interpretability_metrics(rows, dcc_thresh=args.dcc_thresh)
     summary = aggregate_metrics(rows, tag_mode=args.tag_mode)
+    summary["input_integrity"] = {
+        "residue_alignment": args.residue_alignment, "residue_coverage": args.residue_coverage,
+        "precision": precision if device.type == "cuda" else "fp32",
+        "nonfinite_policy": args.nonfinite_policy, "all_evaluated_logits_finite": True,
+        "n_requested": len(ds), "n_evaluated": len(rows), "n_skipped": len(ds) - len(rows),
+        "rows_with_repairs": sum(bool(r["qc"]["ligand_repairs"]) for r in qc_rows),
+    }
+    with (out_dir / f"{dataset_name}_input_qc.jsonl").open("w") as handle:
+        for row in qc_rows:
+            handle.write(json.dumps(row, allow_nan=False) + "\n")
     save_csv(rows, out_dir / f"{dataset_name}_all_results.csv")
     with (out_dir / f"{dataset_name}_summary.json").open("w") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
@@ -1055,14 +1240,28 @@ def main() -> None:
     parser.add_argument("--no-ligand-normalization", action="store_true")
     parser.add_argument("--no-spatial-clamp", action="store_true")
     parser.add_argument("--amp", action="store_true")
+    parser.add_argument("--precision", choices=["auto", "fp32", "bf16", "fp16"], default="auto")
+    parser.add_argument("--residue-alignment", choices=["legacy", "keys"], default="keys")
+    parser.add_argument("--residue-coverage", choices=["protein", "legacy_budget"], default="protein")
+    parser.add_argument("--tag-protein-root", default="p2rank-datasets-fixed_atom_h")
+    parser.add_argument("--nonfinite-policy", choices=["error", "sasa_zero"], default="error")
+    parser.add_argument("--preflight-only", action="store_true", help="Audit all inputs on CPU without loading a checkpoint")
+    parser.add_argument("--save-predictions", action="store_true", help="Export finite per-residue arrays for later site-candidate diagnostics")
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--no-pin-memory", action="store_true")
     args = parser.parse_args()
 
     device = torch.device("cpu" if args.cpu else ("cuda" if torch.cuda.is_available() else "cpu"))
-    ckpt = load_checkpoint(args.checkpoint, device)
-    resolve_contact_threshold(args, ckpt)
-    config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
+    if args.preflight_only:
+        if not args.config:
+            parser.error("--preflight-only requires --config")
+        import yaml
+        config = yaml.safe_load(Path(args.config).read_text())
+        ckpt = None
+    else:
+        ckpt = safe_tensor_load(args.checkpoint)
+        resolve_contact_threshold(args, ckpt)
+        config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
     stats_path = _resolve_feature_stats_path(args, config)
     ligand_norm = _load_ligand_norm(stats_path, enabled=not args.no_ligand_normalization)
     data_cfg = config.get("data", {})
@@ -1073,12 +1272,14 @@ def main() -> None:
     else:
         print("Ligand normalization: disabled")
     print(f"Spatial clamp: dims={spatial_clamp_dims} range={spatial_clamp_range}")
-    model, version = create_v11_model(ckpt, config, device)
+    model, version = (None, "preflight") if args.preflight_only else create_v11_model(ckpt, config, device)
     if config.get("model", {}).get("use_esm3", False) and not args.esm3_root:
         raise ValueError("checkpoint config has model.use_esm3=true; provide --esm3-root for benchmark inference")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.output) if args.output else Path("results") / f"benchmark_{version}_{args.tag_mode}_{args.ligand_mode}_{ts}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    if (out_dir / "benchmark_summary_all.json").exists():
+        raise FileExistsError(f"Refusing to overwrite completed benchmark: {out_dir}")
 
     datasets = [part.strip() for part in args.datasets.split(",") if part.strip()]
     all_summaries = {}
@@ -1120,11 +1321,27 @@ def main() -> None:
         "max_atoms": args.max_atoms,
         "atom_truncation_policy": args.atom_truncation_policy,
         "timestamp": ts,
+        "residue_alignment": args.residue_alignment,
+        "residue_coverage": args.residue_coverage,
+        "nonfinite_policy": args.nonfinite_policy,
+        "precision_requested": args.precision,
+        "preflight_only": args.preflight_only,
+        "tag_protein_root": args.tag_protein_root,
+        "checkpoint_sha256": None if args.preflight_only else sha256_file(args.checkpoint),
+        "feature_stats_sha256": sha256_file(stats_path) if stats_path else None,
+        "config_sha256": sha256_file(args.config) if args.config else None,
+        "runner_sha256": sha256_file(__file__),
+        "integrity_helper_sha256": sha256_file(Path(__file__).with_name("benchmark_integrity.py")),
         "summaries": all_summaries,
     }
     with (out_dir / "benchmark_summary_all.json").open("w") as handle:
         json.dump(meta, handle, indent=2, sort_keys=True)
     print(f"\nSaved benchmark outputs to: {out_dir}")
+    if args.preflight_only:
+        failed = sum(s["n_failed"] for s in all_summaries.values())
+        if failed:
+            raise RuntimeError(f"Input audit failed for {failed} rows; GPU evaluation remains blocked. "
+                               f"See {out_dir} for the complete failure ledger.")
 
 
 if __name__ == "__main__":

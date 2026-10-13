@@ -1,0 +1,18 @@
+{
+  "current_model_use": {
+    "effective_sources": "source ablations show local54 and ligand graph dominate global55/UniMol in the current heads",
+    "latest_options": "local54 group adapter/KV interaction, residue-chem compatibility, edge-conditioned KV residual, weak ESM3 global prior",
+    "mainline": "V11m13-style stable protein trunk + protected late local ligand delta"
+  },
+  "ligand_v5": {
+    "atom_features": "109D per atom = 54D local atom chemistry + 45D global molecular tag + 10D shape",
+    "coordinates": "current coordinates, heavy-atom coordinates, and descriptor/geometry side channels",
+    "graph": "edge_index plus 6D edge_attr for single/double/triple/aromatic/conjugated/ring bonds"
+  },
+  "protein_v4_complete": {
+    "metadata": "residue names/indices, chain IDs, CA coordinates, all-atom metadata, sequence, feature_version",
+    "physchem_features": "62D per residue",
+    "spatial_scalar_features": "89D per residue, train-stat normalized when stats are supplied",
+    "spatial_vector_features": "8 x 3 directional vectors per residue"
+  }
+}

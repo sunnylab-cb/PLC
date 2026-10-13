@@ -1,0 +1,2 @@
+# Store reviewed CSV result tables consistently across Linux and Windows.
+*.csv text eol=lf

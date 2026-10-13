@@ -63,13 +63,17 @@ if command -v module &> /dev/null; then
 fi
 
 if command -v conda &> /dev/null; then
+  # Conda activation scripts may reference optional unset variables; keep the
+  # rest of the job strict, but do not let `set -u` kill activation.
+  set +u
   CONDA_BASE="$(conda info --base)"
   source "${CONDA_BASE}/etc/profile.d/conda.sh"
+  conda activate af3
+  set -u
 else
   echo "ERROR: conda command not found in PATH"
   exit 1
 fi
-conda activate af3
 
 if [[ ! -f "${CKPT}" ]]; then
   echo "ERROR: checkpoint not found: ${CKPT}" >&2

@@ -356,6 +356,10 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         )
         return lig_read + alpha * compat_read * mask
 
+    def _classify_local_delta(self, delta_in, protein_mask, ligand_mask):
+        """Readout hook; the center auxiliary head retains its original input."""
+        return self.local_delta_head(delta_in)
+
     def _compute_pair_delta(
         self,
         h_prot: torch.Tensor,
@@ -455,7 +459,7 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
 
         stats = torch.stack([pair_max, pair_lse, entropy, pair_exp], dim=-1).to(dtype=h_prot.dtype)
         delta_in = torch.cat([hp_src.to(dtype=h_prot.dtype), lig_read.to(dtype=h_prot.dtype), stats], dim=-1)
-        delta_logits = self.local_delta_head(delta_in)
+        delta_logits = self._classify_local_delta(delta_in, protein_mask, ligand_mask)
 
         if self.center_aux_head is not None:
             center_aux_logits = self.center_aux_head(delta_in).squeeze(-1)
@@ -512,6 +516,8 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
         ligand_to_protein: Optional[torch.Tensor] = None,
         unimol_embed: Optional[torch.Tensor] = None,
         esm3_embeddings: Optional[torch.Tensor] = None,
+        esm_valid_mask: Optional[torch.Tensor] = None,
+        esm3_valid_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         self._cached_v11m10_global55 = self._mean_ligand_global55(
             ligand_x, ligand_batch, ligand_mask
@@ -541,6 +547,8 @@ class PocketGVPFusionV11m10(PocketGVPFusionV11m8x):
             ligand_to_protein=ligand_to_protein,
             unimol_embed=unimol_embed,
             esm3_embeddings=esm3_embeddings,
+            esm_valid_mask=esm_valid_mask,
+            esm3_valid_mask=esm3_valid_mask,
         )
 
         outputs["local54_interaction_kv_alpha"] = self._bounded_scale(

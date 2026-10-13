@@ -1,0 +1,48 @@
+{
+  "by_known_chain": {
+    "known_chain": {
+      "expanded_route_gate": 11,
+      "old_route_gate": 1,
+      "over_model_atom_cap_256": 0,
+      "rows": 104
+    },
+    "new_chain": {
+      "expanded_route_gate": 1020,
+      "old_route_gate": 636,
+      "over_model_atom_cap_256": 0,
+      "rows": 3229
+    }
+  },
+  "elapsed_seconds": 186.61274481751025,
+  "existing_candidates": 3333,
+  "gate_counts": {
+    "expanded_route_gate": 1031,
+    "old_route_gate": 637,
+    "over_model_atom_cap_256": 0
+  },
+  "known_chain_sequence_checks": 1023,
+  "known_chain_sequence_failures": 0,
+  "limitations": [
+    "Tensor gates are not training approval",
+    "No new homology search, receptor geometry or residue-axis QC",
+    "Feature validity and normalization handling must be fixed before broadening routes",
+    "No original data, model, split or features modified"
+  ],
+  "missing_known_chain_candidates": 1390,
+  "missing_rows_sequence_verified": 1390,
+  "provenance": {
+    "/hpc2hdd/home/shuang886/PLC/experiments/training_coverage_audit_20261013/scripts/diagnostics/audit_biolip_expansion_tensors.py": "55460487cc29b9c8d392a6e5c57633c73b8ff7985ff81513648c3c5a5159ef8f",
+    "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646_final/biolip_train_ids.txt": "663c0ba1a3fc43fe079a180066260acdc36f0aac5140409c6d8a240887911cbc",
+    "/hpc2hdd/home/shuang886/biolip/qc_training_manifest_allclean_20260811/biolip_pairs_metadata.tsv.gz": "96d40774b89c6b0915dae7f2745990522a9bde1929a491031d014156ebb23f12"
+  },
+  "qc_failures": {
+    "missing_group_mask": 1491
+  },
+  "tensor_routes": {
+    "2": 811,
+    "3": 186,
+    "4": 208,
+    "5": 637,
+    "-1": 1491
+  }
+}

@@ -1,0 +1,9 @@
+variant,scale,best_f1,best_epoch
+grad035_no_gate,0.35,0.5825,73.0
+grad05_no_gate,0.5,0.5849,99.0
+grad055_no_gate,0.55,0.5846,94.0
+grad0575_no_gate,0.575,0.5863,73.0
+grad060_no_gate,0.6,0.5882,91.0
+grad0625_no_gate,0.625,0.5854,90.0
+grad065_no_gate,0.65,0.5853,90.0
+grad070_no_gate,0.7,0.5846,73.0

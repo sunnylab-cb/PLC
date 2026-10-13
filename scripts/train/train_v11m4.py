@@ -88,6 +88,18 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
             if gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
 """
+    probe_grad_anchor = "            # Gradient clipping\n"
+    probe_grad_block = """            if writer is not None and is_main_process() and (batch_idx + 1) % log_every == 0:
+                _probe_model = model.module if isinstance(model, DDP) else model
+                for module_name in ('conditional_readout', 'local_delta_head'):
+                    module = getattr(_probe_model, module_name, None)
+                    if module is not None:
+                        grads = [p.grad.detach().float().square().sum() for p in module.parameters() if p.grad is not None]
+                        if grads:
+                            writer.add_scalar(f'Gradients/{module_name}_norm', torch.stack(grads).sum().sqrt().item(), global_step)
+
+"""
+    new_grad_block = new_grad_block.replace(probe_grad_anchor, probe_grad_block + probe_grad_anchor, 1)
     if old_grad_block not in source:
         raise RuntimeError("Could not patch V11m3 grad logging block for V11m4")
     source = source.replace(old_grad_block, new_grad_block, 1)
@@ -227,6 +239,7 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     'local_delta_logits_abs_mean',
                     'local_delta_scale',
                     'local_delta_qk_scale',
+                    'conditional_readout_abs_mean',
                     'local_ligand_film_alpha',
                     'pocket_virtual_alpha',
                     'pocket_virtual_attn_entropy',
@@ -351,6 +364,15 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                 if torch.is_tensor(assignment_aux_loss):
                     loss = loss + assignment_aux_loss
 
+            # Independent residue-class mass objective, training only.
+            classmass_stats = {}
+            if hasattr(_assignment_model, 'compute_residue_classmass_loss'):
+                classmass_loss, classmass_stats = _assignment_model.compute_residue_classmass_loss(
+                    outputs, labels, mask, epoch=epoch, step=batch_idx,
+                )
+                if classmass_loss is not None:
+                    loss = loss + classmass_loss
+
             # 防御式处理：确保所有损失为标量
 """
     if assignment_loss_anchor not in source:
@@ -372,6 +394,11 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                     if torch.is_tensor(value):
                         value = value.detach().float().mean().item()
                     writer.add_scalar(f'Assignment/{key}', float(value), global_step)
+
+                for key, value in classmass_stats.items():
+                    if torch.is_tensor(value):
+                        value = value.detach().float().mean().item()
+                    writer.add_scalar(f'ResidueContrast/{key}', float(value), global_step)
 
                 # 健康诊断（GVP范数、门控开放度、注意力熵）
 """

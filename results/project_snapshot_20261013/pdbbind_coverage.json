@@ -1,0 +1,246 @@
+{
+  "all_three_files": 19037,
+  "chain_split_summary": {
+    "biolip": {
+      "excluded_samples": 628,
+      "input_samples": 5786,
+      "retained_train_samples": 5158
+    },
+    "commands": [
+      [
+        "/hpc2ssd/softwares/mmseqs/bin/mmseqs",
+        "easy-search",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/pdbbind_chains.fasta",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/external_chains.fasta",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/pdbbind_vs_external.tsv",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/pdbbind_vs_external_tmp",
+        "--min-seq-id",
+        "0.28",
+        "-c",
+        "0.0",
+        "--cov-mode",
+        "0",
+        "--alignment-mode",
+        "3",
+        "--seq-id-mode",
+        "0",
+        "-e",
+        "1000",
+        "-s",
+        "7.5",
+        "--max-seqs",
+        "100000",
+        "--threads",
+        "64",
+        "--format-output",
+        "query,target,nident,alnlen,fident,qlen,tlen,qcov,tcov,evalue,bits"
+      ],
+      [
+        "/hpc2ssd/softwares/mmseqs/bin/mmseqs",
+        "easy-search",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/eligible_pdbbind_chains.fasta",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/eligible_pdbbind_chains.fasta",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/pdbbind_all_vs_all.tsv",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/pdbbind_all_vs_all_tmp",
+        "--min-seq-id",
+        "0.28",
+        "-c",
+        "0.0",
+        "--cov-mode",
+        "0",
+        "--alignment-mode",
+        "3",
+        "--seq-id-mode",
+        "0",
+        "-e",
+        "1000",
+        "-s",
+        "7.5",
+        "--max-seqs",
+        "100000",
+        "--threads",
+        "64",
+        "--format-output",
+        "query,target,nident,alnlen,fident,qlen,tlen,qcov,tcov,evalue,bits"
+      ],
+      [
+        "/hpc2ssd/softwares/mmseqs/bin/mmseqs",
+        "easy-search",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/biolip_chains.fasta",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/biolip_filter_targets.fasta",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/biolip_vs_evaluation.tsv",
+        "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/biolip_vs_evaluation_tmp",
+        "--min-seq-id",
+        "0.28",
+        "-c",
+        "0.0",
+        "--cov-mode",
+        "0",
+        "--alignment-mode",
+        "3",
+        "--seq-id-mode",
+        "0",
+        "-e",
+        "1000",
+        "-s",
+        "7.5",
+        "--max-seqs",
+        "100000",
+        "--threads",
+        "64",
+        "--format-output",
+        "query,target,nident,alnlen,fident,qlen,tlen,qcov,tcov,evalue,bits"
+      ]
+    ],
+    "hits": {
+      "biolip_evaluation_violating_alignments": 883,
+      "pdbbind_external_violating_alignments": 86386,
+      "pdbbind_internal_violating_alignments": 33023
+    },
+    "mmseqs_version": "df77d9e6cf640fe8990f247441ab44d4f4ad9cdc",
+    "pdbbind": {
+      "components": 1245,
+      "eligible_complexes": 6471,
+      "external_homolog_complexes_excluded": 11306,
+      "input_complexes": 17777,
+      "largest_component": 720,
+      "movement_from_old_split": {
+        "test->test": 192,
+        "test->train": 707,
+        "test->val": 217,
+        "train->test": 260,
+        "train->train": 3781,
+        "train->val": 225,
+        "val->test": 195,
+        "val->train": 689,
+        "val->val": 205
+      },
+      "split_counts": {
+        "test": 647,
+        "train": 5177,
+        "val": 647
+      },
+      "unique_chains": 8977
+    },
+    "predicate": {
+      "coverage_rule": "qcov_or_tcov",
+      "minimum_alignment_identity": 0.3,
+      "minimum_coverage": 0.8,
+      "search_identity_floor": 0.28
+    }
+  },
+  "external_homology": {
+    "all_qualifying_hits_have_shorter_chain_below": {
+      "20": 5,
+      "30": 6,
+      "50": 13,
+      "100": 533
+    },
+    "both": 7365,
+    "by_source": {
+      "coach": 7721,
+      "holo": 10950
+    },
+    "caveat": "Sensitivity counts only; no changed leakage policy or recovery approval",
+    "coach_only": 356,
+    "excluded_complexes": 11306,
+    "excluded_even_with_both_coverage": 10474,
+    "excluded_only_by_asymmetric_coverage": 832,
+    "holo_only": 3585,
+    "maximum_hit_identity_bins": {
+      "1.0": 3928,
+      "[.3,.4)": 1720,
+      "[.4,.5)": 1066,
+      "[.5,.9)": 1727,
+      "[.9,1)": 2865
+    },
+    "qualifying_alignments": 86386
+  },
+  "feature_counts": {
+    "esm2": 19037,
+    "ligand_v5": 19037,
+    "protein_v4_conf0": 19037
+  },
+  "final_counts": {
+    "test": 647,
+    "train": 5160,
+    "val": 647
+  },
+  "final_repair": {
+    "biolip_train_after": 5157,
+    "biolip_train_before": 5158,
+    "biolip_train_removed": 1,
+    "offending_train_sequences": 7,
+    "pdbbind_train_after": 5160,
+    "pdbbind_train_before": 5177,
+    "pdbbind_train_removed": 17,
+    "removed_biolip_ids": [
+      "2hfu_A_BS01_MEV"
+    ],
+    "removed_pdbbind_ids": [
+      "2wap",
+      "2wj1",
+      "2wj2",
+      "3k7f",
+      "3k83",
+      "3k84",
+      "3lj7",
+      "3oj8",
+      "3ppm",
+      "3pr0",
+      "3qj9",
+      "3qk5",
+      "3qkv",
+      "4do3",
+      "4hbp",
+      "4j5p",
+      "6mrg"
+    ],
+    "source_audit": "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646/final_allowlist_audit",
+    "source_root": "/hpc2hdd/home/shuang886/biolip/pdbbind_chain_si30_split_11283646"
+  },
+  "full_minus_legacy": 1260,
+  "full_missing_each_file": {
+    "esm2": 0,
+    "ligand_v5": 0,
+    "protein_v4_conf0": 0
+  },
+  "full_not_in_raw": null,
+  "full_split": {
+    "counts": {
+      "test": 1905,
+      "train": 15229,
+      "val": 1903
+    },
+    "total": 19037
+  },
+  "legacy_exclusion_list": 5240,
+  "legacy_minus_full": [],
+  "legacy_split": {
+    "counts": {
+      "test": 1778,
+      "train": 14221,
+      "val": 1778
+    },
+    "total": 17777
+  },
+  "outside_legacy_all_three_files": 1260,
+  "outside_legacy_all_three_files_not_current_direct_external": 104,
+  "outside_legacy_in_full_all_three_files": 1260,
+  "provenance": {
+    "/hpc2hdd/home/shuang886/PLC/experiments/training_coverage_audit_20261013/configs/splits/excluded_samples.txt": "c98aab07de7f9531e395a8cdb413bf592149c8cb9eb4f9afec48d57955130e38",
+    "/hpc2hdd/home/shuang886/PLC/experiments/training_coverage_audit_20261013/configs/splits/splits.txt": "3b507f5557d9fd01ff5572c43b1c7d77202739de9b433f6019a5c5af6bb0d231",
+    "/hpc2hdd/home/shuang886/PLC/experiments/training_coverage_audit_20261013/preparation/dataset_split/mmseqs_splits_strict.txt": "f91fd5e0706b26af6151e58f2ff0d7483497bb6d1b0ce9ca65c463129584fb57",
+    "/hpc2hdd/home/shuang886/PLC/experiments/training_coverage_audit_20261013/scripts/diagnostics/audit_pdbbind_coverage.py": "dea66d555815240d2e51c9b713dbbe4befd88cc62d57624f70bbeeb494ef9ec4"
+  },
+  "raw_directory_count": null,
+  "raw_not_in_full": null,
+  "raw_pair_files_missing": {},
+  "removed_by_legacy_not_current_direct_external": 104,
+  "removed_in_legacy_exclusion_list": 1260,
+  "removed_not_in_legacy_exclusion_list": [],
+  "warnings": [
+    "File presence is not tensor/geometry QC; no new homology search",
+    "No approved training expansion"
+  ]
+}

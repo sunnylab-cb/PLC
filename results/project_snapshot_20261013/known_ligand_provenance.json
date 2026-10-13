@@ -1,0 +1,26 @@
+{
+  "command": [
+    "/hpc2ssd/softwares/anaconda3/envs/af3/bin/python",
+    "-u",
+    "/hpc2hdd/home/shuang886/PLC/experiments/biolip_known_chain_expansion_20261013/preparation/ligand/biolip_ligand_extract.py",
+    "--biolip_root",
+    "/hpc2hdd/home/shuang886/biolip",
+    "--output",
+    "/hpc2hdd/home/shuang886/PLC/experiments/biolip_known_chain_expansion_20261013/prepared/ligand_features",
+    "--pairs-cache",
+    "/hpc2hdd/home/shuang886/biolip/pairs_cache_v6.pkl",
+    "--manifest",
+    "/hpc2hdd/home/shuang886/PLC/experiments/training_coverage_audit_20261013/biolip_tensor_qc/missing_ligand_known_chain_candidates.tsv",
+    "--workers",
+    "8",
+    "--num_conformers",
+    "50",
+    "--rdkit-threads",
+    "1",
+    "--per-pair-timeout",
+    "600"
+  ],
+  "manifest_sha256": "5016f15c7396de788ccc317b3dfeac0d4d8d0accc537d00715ae634fd8af0f6f",
+  "expected_pairs": 1390,
+  "approved_for_training": false
+}

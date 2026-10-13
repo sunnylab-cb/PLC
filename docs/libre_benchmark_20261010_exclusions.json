@@ -1,0 +1,35 @@
+{
+  "policy_id": "libre_12960610_matched_input_qc_exclusions_v1",
+  "approval": {
+    "date": "2026-10-10",
+    "authority": "user",
+    "decision": "Explicitly exclude these ten input-QC failures from both models and finalize the matched-subset report.",
+    "timing": "Approved after inference; exclusions are the recorded chemistry failures, not score-based filtering."
+  },
+  "failure_signature": {
+    "stage": "label_ligand_qc",
+    "error": "RDKit cannot sanitize ligand; no silent repair"
+  },
+  "datasets": {
+    "coach420": {
+      "requested_count": 494,
+      "excluded_sample_keys": [
+        "1bs1A_DAA_A850",
+        "1xnyA_191_A5601",
+        "1xnyA_191_B9601"
+      ]
+    },
+    "holo4k": {
+      "requested_count": 7245,
+      "excluded_sample_keys": [
+        "1chw_HXC_B391",
+        "1d0y_ONP_A999",
+        "1d0z_PNQ_A999",
+        "1d1a_DAE_A999",
+        "1d1b_DAQ_A999",
+        "1d1c_NMQ_A999",
+        "1d4o_NAP_A201"
+      ]
+    }
+  }
+}

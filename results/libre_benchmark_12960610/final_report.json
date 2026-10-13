@@ -1,0 +1,570 @@
+{
+  "coach420": {
+    "all_reference_rows_accounted": true,
+    "all_rows_have_predictions": false,
+    "n_expected": 494,
+    "n_successful": 491,
+    "n_rejected": 3,
+    "coverage_fraction": 0.9939271255060729,
+    "n_successful_proteins": 299,
+    "elapsed_seconds": 110.61824631690979,
+    "libre": {
+      "n_samples": 491,
+      "n_proteins": 299,
+      "sample_mean": {
+        "f1_c0": 0.44939347836163956,
+        "precision_c0": 0.35726920964215714,
+        "recall_c0": 0.6813780428048143,
+        "mcc_c0": 0.4429698081458326,
+        "ap_c0": 0.5357289819270693,
+        "auroc_c0": 0.905552498639219,
+        "bp_f1_c0": 0.6804312200191173,
+        "pdr_union_success": 0.6028513238289206,
+        "laa_success": 0.20701754385964913,
+        "n_pred_contact": 29.602851323828922,
+        "n_true_contact": 14.472505091649694
+      },
+      "protein_mean_of_ligand_mean": {
+        "f1_c0": 0.5493672248981785,
+        "precision_c0": 0.4450950223691856,
+        "recall_c0": 0.7795042301533622,
+        "mcc_c0": 0.542193185397525,
+        "ap_c0": 0.6551331892101915,
+        "auroc_c0": 0.9341946533156339,
+        "bp_f1_c0": 0.6820065308089791,
+        "pdr_union_success": 0.6869724478420132,
+        "laa_success": 0.2695578231292517,
+        "n_pred_contact": 31.800714020279237,
+        "n_true_contact": 17.489886924669534
+      },
+      "protein_mean_of_ligand_max": {
+        "f1_c0": 0.6042783729164863,
+        "precision_c0": 0.49009208392147535,
+        "recall_c0": 0.8570419748940615,
+        "mcc_c0": 0.5998586327364444,
+        "ap_c0": 0.7235077020747263,
+        "auroc_c0": 0.9604449578729277,
+        "bp_f1_c0": 0.6850231037816423,
+        "pdr_union_success": 0.705685618729097,
+        "laa_success": 0.5306122448979592,
+        "n_pred_contact": 33.324414715719065,
+        "n_true_contact": 18.94983277591973
+      },
+      "metric_n_samples": {
+        "f1_c0": 491,
+        "precision_c0": 491,
+        "recall_c0": 491,
+        "mcc_c0": 491,
+        "ap_c0": 486,
+        "auroc_c0": 486,
+        "bp_f1_c0": 219,
+        "pdr_union_success": 491,
+        "laa_success": 285,
+        "n_pred_contact": 491,
+        "n_true_contact": 491
+      },
+      "contact_count_quantiles": {
+        "n_true_contact": {
+          "min": 0.0,
+          "p50": 14.0,
+          "p90": 25.0,
+          "max": 42.0
+        },
+        "n_pred_contact": {
+          "min": 3.0,
+          "p50": 29.0,
+          "p90": 46.0,
+          "max": 77.0
+        }
+      }
+    },
+    "plc_matched": {
+      "n_samples": 491,
+      "n_proteins": 299,
+      "sample_mean": {
+        "f1_c0": 0.44388649522472656,
+        "precision_c0": 0.43122043408593475,
+        "recall_c0": 0.4923492380367717,
+        "mcc_c0": 0.41696038697126514,
+        "ap_c0": 0.49664889265929935,
+        "auroc_c0": null,
+        "bp_f1_c0": 0.7210411502953837,
+        "pdr_union_success": 0.4969450101832994,
+        "laa_success": 0.17543859649122806,
+        "n_pred_contact": 17.859470468431773,
+        "n_true_contact": 14.472505091649694
+      },
+      "protein_mean_of_ligand_mean": {
+        "f1_c0": 0.5358150839755682,
+        "precision_c0": 0.5293234486647215,
+        "recall_c0": 0.5688010906515755,
+        "mcc_c0": 0.5068620733117094,
+        "ap_c0": 0.5918769873753179,
+        "auroc_c0": null,
+        "bp_f1_c0": 0.7229033192544252,
+        "pdr_union_success": 0.4794871794871795,
+        "laa_success": 0.20699708454810495,
+        "n_pred_contact": 19.780084408345278,
+        "n_true_contact": 17.489886924669534
+      },
+      "protein_mean_of_ligand_max": {
+        "f1_c0": 0.6076682653969376,
+        "precision_c0": 0.6007389213523164,
+        "recall_c0": 0.6493029038383429,
+        "mcc_c0": 0.58166729476153,
+        "ap_c0": 0.6702446338218897,
+        "auroc_c0": null,
+        "bp_f1_c0": 0.7253516282124558,
+        "pdr_union_success": 0.5083612040133779,
+        "laa_success": 0.5,
+        "n_pred_contact": 20.74247491638796,
+        "n_true_contact": 18.94983277591973
+      },
+      "metric_n_samples": {
+        "f1_c0": 491,
+        "precision_c0": 491,
+        "recall_c0": 491,
+        "mcc_c0": 491,
+        "ap_c0": 486,
+        "auroc_c0": 0,
+        "bp_f1_c0": 150,
+        "pdr_union_success": 491,
+        "laa_success": 285,
+        "n_pred_contact": 491,
+        "n_true_contact": 491
+      },
+      "contact_count_quantiles": {
+        "n_true_contact": {
+          "min": 0.0,
+          "p50": 14.0,
+          "p90": 25.0,
+          "max": 42.0
+        },
+        "n_pred_contact": {
+          "min": 2.0,
+          "p50": 17.0,
+          "p90": 28.0,
+          "max": 45.0
+        }
+      }
+    },
+    "pooled_contact_metrics": {
+      "f1_c0": 0.5167968208493138,
+      "precision_c0": 0.3847265221878225,
+      "recall_c0": 0.7869406135660005,
+      "iou_c0": 0.3484329241697302,
+      "mcc_c0": 0.516964486924362,
+      "ap_c0": 0.590314313189306,
+      "auroc_c0": 0.9453279267286007,
+      "n_pred_contact": 14535,
+      "n_true_contact": 7106
+    },
+    "paired_difference_LiBRe_minus_PLC": {
+      "bootstrap_unit": "protein",
+      "replicates": 5000,
+      "seed": 20261010,
+      "sample_mean_f1": 0.0055069831369129844,
+      "sample_mean_f1_ci95": [
+        -0.012236196560635567,
+        0.023938418063822305
+      ],
+      "protein_mean_f1": 0.013552140922610253,
+      "protein_mean_f1_ci95": [
+        -0.005643361136600787,
+        0.033011351945211556
+      ],
+      "caveat": "sampling uncertainty within this matched dataset, not seed variance or leakage control"
+    },
+    "unmeasured_full_population_sample_f1_bounds": [
+      0.44666436816915994,
+      0.452737242663087
+    ],
+    "plc_full_population_sample_f1": 0.4435251463520162,
+    "ligand_row_multiplicity_buckets": {
+      "1": {
+        "n_samples": 200,
+        "n_proteins": 200,
+        "libre_sample_f1": 0.6382323691312598,
+        "plc_sample_f1": 0.6183588880183558
+      },
+      "2-3": {
+        "n_samples": 159,
+        "n_proteins": 75,
+        "libre_sample_f1": 0.41474770138033784,
+        "plc_sample_f1": 0.4082148658807667
+      },
+      "4+": {
+        "n_samples": 132,
+        "n_proteins": 24,
+        "libre_sample_f1": 0.20500636007454026,
+        "plc_sample_f1": 0.222502483913846
+      }
+    },
+    "historical_extraction_methods": {
+      "source": "tmp/libre_benchmark_12960610/historical_qc/coach420_sdf_qc.tsv",
+      "source_sha256": "61b70f7805db53a8a92e5beb1ddf399ebf4e8f55c986d2a898a333c90e21f01b",
+      "reference_keyset_match": true,
+      "caveat": "Historical method metadata; matching keys do not verify unchanged current SDF chemistry. Groups are descriptive, not a causal chemistry ablation.",
+      "methods": {
+        "ccd_template": {
+          "n_requested": 159,
+          "n_successful": 159,
+          "n_rejected": 0,
+          "libre_sample_f1": 0.5414432328221069,
+          "plc_sample_f1": 0.5125691899591669,
+          "difference": 0.02887404286294004
+        },
+        "connectivity_only": {
+          "n_requested": 267,
+          "n_successful": 264,
+          "n_rejected": 3,
+          "libre_sample_f1": 0.44470887422952554,
+          "plc_sample_f1": 0.44026786959217407,
+          "difference": 0.0044410046373514755
+        },
+        "determine_bond_orders": {
+          "n_requested": 68,
+          "n_successful": 68,
+          "n_rejected": 0,
+          "libre_sample_f1": 0.2523467802978714,
+          "plc_sample_f1": 0.2973389761691068,
+          "difference": -0.04499219587123543
+        }
+      }
+    },
+    "report_acceptance": {
+      "complete_under_approved_exclusion_policy": true,
+      "all_original_rows_have_predictions": false,
+      "policy_id": "libre_12960610_matched_input_qc_exclusions_v1",
+      "approval": {
+        "date": "2026-10-10",
+        "authority": "user",
+        "decision": "Explicitly exclude these ten input-QC failures from both models and finalize the matched-subset report.",
+        "timing": "Approved after inference; exclusions are the recorded chemistry failures, not score-based filtering."
+      },
+      "n_matched_pairs_per_model": 491,
+      "excluded_from_both_models": [
+        {
+          "sample_key": "1bs1A_DAA_A850",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1xnyA_191_A5601",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1xnyA_191_B9601",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        }
+      ],
+      "matched_sample_keys_sha256": "ccd56c7f90f6414241794042063059400d6be1905a7d788350090c794d253e8c",
+      "policy_sha256": "022b40975265d6cf852e85416ac16fc28aba6c34e89d63309bebfd6ad4d43af8"
+    },
+    "input_sha256": {
+      "summary.json": "212916907ad10d1ba8a90d1a2578a48776834a0ccb86ee8bac74cd3e71cf5e8e",
+      "samples.csv": "b30bdc03d1f444d5f955844bd5cce8cff45a4f997255c853fe77181429187dbb",
+      "reference.csv": "7f8f592088d9b6fd06321a4ba0d7b8e34ac243e06a47de2ff2ef03b3a9cc9e0e",
+      "failures.json": "34e873075e0b47e95d279b8ebeb7df5525d6eb47b26e45873c83265f8cbb7aa1",
+      "protocol.json": "a02249ee8d2343d44cf85736109dfe1f3566eb3723307503b92f6a04f1382a5c",
+      "progress.json": "77d1dcb0f18ac7a7525bed1e82c9f2e5c72a13a11936d935f42222585d5a5565",
+      "qc.json": "54ab4ec2d94c22fac17a34310b75b2e49fe5f005f7b017deacd2101a9c6055ee"
+    }
+  },
+  "holo4k": {
+    "all_reference_rows_accounted": true,
+    "all_rows_have_predictions": false,
+    "n_expected": 7245,
+    "n_successful": 7238,
+    "n_rejected": 7,
+    "coverage_fraction": 0.9990338164251208,
+    "n_successful_proteins": 3424,
+    "elapsed_seconds": 1509.3635091781616,
+    "libre": {
+      "n_samples": 7238,
+      "n_proteins": 3424,
+      "sample_mean": {
+        "f1_c0": 0.3863156852261272,
+        "precision_c0": 0.2720606696802388,
+        "recall_c0": 0.8456444263399812,
+        "mcc_c0": 0.4260716106924878,
+        "ap_c0": 0.44028144422432974,
+        "auroc_c0": 0.9288697587251792,
+        "bp_f1_c0": 0.6835759895238058,
+        "pdr_union_success": 0.2865432439900525,
+        "laa_success": 0.09734828261256451,
+        "n_pred_contact": 87.94155844155844,
+        "n_true_contact": 20.155982315556784
+      },
+      "protein_mean_of_ligand_mean": {
+        "f1_c0": 0.49115099213832925,
+        "precision_c0": 0.3633348086778693,
+        "recall_c0": 0.8881303267772228,
+        "mcc_c0": 0.5167899994302451,
+        "ap_c0": 0.5859292946485674,
+        "auroc_c0": 0.949293706147733,
+        "bp_f1_c0": 0.6837251888272035,
+        "pdr_union_success": 0.4649873442367601,
+        "laa_success": 0.14202781564660016,
+        "n_pred_contact": 65.8330412561867,
+        "n_true_contact": 20.965638675641596
+      },
+      "protein_mean_of_ligand_max": {
+        "f1_c0": 0.5231169639241037,
+        "precision_c0": 0.3890563302002356,
+        "recall_c0": 0.9296794981114643,
+        "mcc_c0": 0.5501940816837667,
+        "ap_c0": 0.6295371046542949,
+        "auroc_c0": 0.9640093774774713,
+        "bp_f1_c0": 0.690415571082273,
+        "pdr_union_success": 0.4804322429906542,
+        "laa_success": 0.2138121546961326,
+        "n_pred_contact": 68.43983644859813,
+        "n_true_contact": 22.49678738317757
+      },
+      "metric_n_samples": {
+        "f1_c0": 7238,
+        "precision_c0": 7238,
+        "recall_c0": 7238,
+        "mcc_c0": 7238,
+        "ap_c0": 7233,
+        "auroc_c0": 7233,
+        "bp_f1_c0": 1804,
+        "pdr_union_success": 7238,
+        "laa_success": 5619,
+        "n_pred_contact": 7238,
+        "n_true_contact": 7238
+      },
+      "contact_count_quantiles": {
+        "n_true_contact": {
+          "min": 0.0,
+          "p50": 19.0,
+          "p90": 32.0,
+          "max": 54.0
+        },
+        "n_pred_contact": {
+          "min": 4.0,
+          "p50": 66.0,
+          "p90": 176.0,
+          "max": 498.0
+        }
+      }
+    },
+    "plc_matched": {
+      "n_samples": 7238,
+      "n_proteins": 3424,
+      "sample_mean": {
+        "f1_c0": 0.3299774047117928,
+        "precision_c0": 0.3181841692101074,
+        "recall_c0": 0.35963443629177705,
+        "mcc_c0": 0.3066232249911762,
+        "ap_c0": 0.3695755833612389,
+        "auroc_c0": null,
+        "bp_f1_c0": 0.7128955771003439,
+        "pdr_union_success": 0.44390715667311414,
+        "laa_success": 0.14611140772379427,
+        "n_pred_contact": 23.807819839734734,
+        "n_true_contact": 20.155982315556784
+      },
+      "protein_mean_of_ligand_mean": {
+        "f1_c0": 0.44703234212096266,
+        "precision_c0": 0.4352179459464726,
+        "recall_c0": 0.4797660936705263,
+        "mcc_c0": 0.4212966418922698,
+        "ap_c0": 0.4979343549970504,
+        "auroc_c0": null,
+        "bp_f1_c0": 0.71377699431579,
+        "pdr_union_success": 0.4827057604583889,
+        "laa_success": 0.18260819697040043,
+        "n_pred_contact": 23.881499806981694,
+        "n_true_contact": 20.965638675641596
+      },
+      "protein_mean_of_ligand_max": {
+        "f1_c0": 0.600457829070427,
+        "precision_c0": 0.5843284058111379,
+        "recall_c0": 0.6483810041366733,
+        "mcc_c0": 0.5821959457579435,
+        "ap_c0": 0.6613423789292054,
+        "auroc_c0": null,
+        "bp_f1_c0": 0.7147202963883256,
+        "pdr_union_success": 0.5143107476635514,
+        "laa_success": 0.4486187845303867,
+        "n_pred_contact": 25.19392523364486,
+        "n_true_contact": 22.49678738317757
+      },
+      "metric_n_samples": {
+        "f1_c0": 7238,
+        "precision_c0": 7238,
+        "recall_c0": 7238,
+        "mcc_c0": 7238,
+        "ap_c0": 7233,
+        "auroc_c0": 0,
+        "bp_f1_c0": 1714,
+        "pdr_union_success": 7238,
+        "laa_success": 5619,
+        "n_pred_contact": 7238,
+        "n_true_contact": 7238
+      },
+      "contact_count_quantiles": {
+        "n_true_contact": {
+          "min": 0.0,
+          "p50": 19.0,
+          "p90": 32.0,
+          "max": 54.0
+        },
+        "n_pred_contact": {
+          "min": 0.0,
+          "p50": 23.0,
+          "p90": 35.0,
+          "max": 62.0
+        }
+      }
+    },
+    "pooled_contact_metrics": {
+      "f1_c0": 0.33122020424074333,
+      "precision_c0": 0.20356751780381166,
+      "recall_c0": 0.88817525653065,
+      "iou_c0": 0.1984804736265672,
+      "mcc_c0": 0.39507197542101796,
+      "ap_c0": 0.33448943832311806,
+      "auroc_c0": 0.9438137074515838,
+      "n_pred_contact": 636521,
+      "n_true_contact": 145889
+    },
+    "paired_difference_LiBRe_minus_PLC": {
+      "bootstrap_unit": "protein",
+      "replicates": 5000,
+      "seed": 20261010,
+      "sample_mean_f1": 0.056338280514334406,
+      "sample_mean_f1_ci95": [
+        0.052178318959156075,
+        0.06039699256692485
+      ],
+      "protein_mean_f1": 0.044118650017366666,
+      "protein_mean_f1_ci95": [
+        0.03876549423116823,
+        0.049312892848991874
+      ],
+      "caveat": "sampling uncertainty within this matched dataset, not seed variance or leakage control"
+    },
+    "unmeasured_full_population_sample_f1_bounds": [
+      0.3859424333563435,
+      0.3869086169312227
+    ],
+    "plc_full_population_sample_f1": 0.3301565210428428,
+    "ligand_row_multiplicity_buckets": {
+      "1": {
+        "n_samples": 1613,
+        "n_proteins": 1613,
+        "libre_sample_f1": 0.6273935977521443,
+        "plc_sample_f1": 0.6164569619788728
+      },
+      "2-3": {
+        "n_samples": 2638,
+        "n_proteins": 1235,
+        "libre_sample_f1": 0.42081003527829375,
+        "plc_sample_f1": 0.34727702978881914
+      },
+      "4+": {
+        "n_samples": 2987,
+        "n_proteins": 576,
+        "libre_sample_f1": 0.22566795561712777,
+        "plc_sample_f1": 0.15999818247376274
+      }
+    },
+    "historical_extraction_methods": {
+      "source": "tmp/libre_benchmark_12960610/historical_qc/holo4k_sdf_qc.tsv",
+      "source_sha256": "1f4a8ba7ba5b9422d0c9e84fededaaa38d124eae2eee5d8e1d0efd2bf430943e",
+      "reference_keyset_match": true,
+      "caveat": "Historical method metadata; matching keys do not verify unchanged current SDF chemistry. Groups are descriptive, not a causal chemistry ablation.",
+      "methods": {
+        "ccd_template": {
+          "n_requested": 6116,
+          "n_successful": 6116,
+          "n_rejected": 0,
+          "libre_sample_f1": 0.4021897047010128,
+          "plc_sample_f1": 0.3390303849818459,
+          "difference": 0.06315931971916688
+        },
+        "connectivity_only": {
+          "n_requested": 840,
+          "n_successful": 833,
+          "n_rejected": 7,
+          "libre_sample_f1": 0.33970900870700865,
+          "plc_sample_f1": 0.3028238687157014,
+          "difference": 0.03688513999130727
+        },
+        "determine_bond_orders": {
+          "n_requested": 289,
+          "n_successful": 289,
+          "n_rejected": 0,
+          "libre_sample_f1": 0.18471657945458755,
+          "plc_sample_f1": 0.2166586093937973,
+          "difference": -0.03194202993920975
+        }
+      }
+    },
+    "report_acceptance": {
+      "complete_under_approved_exclusion_policy": true,
+      "all_original_rows_have_predictions": false,
+      "policy_id": "libre_12960610_matched_input_qc_exclusions_v1",
+      "approval": {
+        "date": "2026-10-10",
+        "authority": "user",
+        "decision": "Explicitly exclude these ten input-QC failures from both models and finalize the matched-subset report.",
+        "timing": "Approved after inference; exclusions are the recorded chemistry failures, not score-based filtering."
+      },
+      "n_matched_pairs_per_model": 7238,
+      "excluded_from_both_models": [
+        {
+          "sample_key": "1chw_HXC_B391",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1d0y_ONP_A999",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1d0z_PNQ_A999",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1d1a_DAE_A999",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1d1b_DAQ_A999",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1d1c_NMQ_A999",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        },
+        {
+          "sample_key": "1d4o_NAP_A201",
+          "stage": "label_ligand_qc",
+          "error": "RDKit cannot sanitize ligand; no silent repair"
+        }
+      ],
+      "matched_sample_keys_sha256": "25ab7bcd22d4683fa8cdcabc4389d99451256140b6321b513192a22d4af9014a",
+      "policy_sha256": "022b40975265d6cf852e85416ac16fc28aba6c34e89d63309bebfd6ad4d43af8"
+    },
+    "input_sha256": {
+      "summary.json": "09280295d5fafb21c219948b892adf25188bf3dd21707e83dfff95f51f999458",
+      "samples.csv": "73d8209113a3e790f33f10f1e81671751c0d72823691b70cba986661b7e9e98d",
+      "reference.csv": "4c5804670c4c7b37cdbc2a9c1d065510a94e666481ce32a0c5db6bc64f612528",
+      "failures.json": "071e16d64beb12b674189fa0a79ba0dd69ac4c1dbe2a49433bfc02754a9f7645",
+      "protocol.json": "2217f77544aab1ca92ceb18dd90ee2379814b73b706c23462e9f027fac9d3eeb",
+      "progress.json": "a677032786f6dbf7bf66fc46c09338806e4270b55355bac66eac3f7c203f87d4",
+      "qc.json": "fcdd876799f836eb0b47a70d18a59e2ca62a4c93834b783d1fc9edcc332c5007"
+    }
+  }
+}

@@ -410,9 +410,11 @@ class RoPEGatedTransformerBlock(nn.Module):
         mask: Optional[torch.Tensor] = None,
         attn_bias: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,   # [B, L] chain-gap positions
+        chain_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        extra = {"chain_ids": chain_ids} if getattr(self.attn, "requires_chain_ids", False) else {}
         attn_out = self.attn(self.norm1(x), mask=mask, attn_bias=attn_bias,
-                             position_ids=position_ids)
+                             position_ids=position_ids, **extra)
         x = x + drop_path(attn_out, self.drop_path_prob, self.training)
         ffn_out = self.ffn(self.norm2(x))
         x = x + drop_path(ffn_out, self.drop_path_prob, self.training)
@@ -427,7 +429,8 @@ class RoPEProteinContextEncoder(nn.Module):
                  use_dist_bias: bool = False,        # V10m4
                  dist_bias_n_rbf: int = 16,          # V10m4
                  dist_bias_max_dist: float = 20.0,    # V10m4
-                 use_sdpa: bool = False):
+                 use_sdpa: bool = False, hybrid_pattern: Optional[str] = None,
+                 gdn_backend: str = "fla"):
         super().__init__()
         drop_path_probs = [stochastic_depth_prob * i / max(n_layers - 1, 1) for i in range(n_layers)]
         self.layers = nn.ModuleList([
@@ -450,18 +453,33 @@ class RoPEProteinContextEncoder(nn.Module):
         else:
             self.dist_bias_modules = None
 
+        self.hybrid_pattern = hybrid_pattern or "F" * n_layers
+        if len(self.hybrid_pattern) != n_layers or set(self.hybrid_pattern) - {"F", "G"}:
+            raise ValueError("protein_hybrid_pattern must contain one F/G per front layer")
+        if "G" in self.hybrid_pattern:
+            from .protein_bidirectional_gdn import BidirectionalProteinGDN
+            # Preserve initialization of every unchanged module in matched runs.
+            with torch.random.fork_rng(devices=[]):
+                for i, kind in enumerate(self.hybrid_pattern):
+                    if kind == "G":
+                        self.layers[i].attn = BidirectionalProteinGDN(
+                            d_model, n_heads, dropout=dropout, backend=gdn_backend)
+                        if self.dist_bias_modules is not None:
+                            self.dist_bias_modules[i] = nn.Identity()
+
     def forward(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         coords: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,   # [B, L] chain-gap positions
+        chain_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         for i, layer in enumerate(self.layers):
             attn_bias = None
-            if self.dist_bias_modules is not None and coords is not None:
+            if self.hybrid_pattern[i] == "F" and self.dist_bias_modules is not None and coords is not None:
                 attn_bias = self.dist_bias_modules[i](coords, mask=mask)
-            x = layer(x, mask=mask, attn_bias=attn_bias, position_ids=position_ids)
+            x = layer(x, mask=mask, attn_bias=attn_bias, position_ids=position_ids, chain_ids=chain_ids)
         return self.norm(x)
 
 
@@ -821,6 +839,8 @@ class PocketGVPFusionV11(nn.Module):
             dist_bias_n_rbf=c.get('dist_bias_n_rbf', 16),
             dist_bias_max_dist=c.get('dist_bias_max_dist', 20.0),
             use_sdpa=c.get('use_sdpa_protein_self_attn', False),
+            hybrid_pattern=c.get('protein_hybrid_pattern'),
+            gdn_backend=c.get('protein_gdn_backend', 'fla'),
         )
 
         # Module 5: 3D Ligand Encoder
@@ -930,6 +950,7 @@ class PocketGVPFusionV11(nn.Module):
         h_esm_proj: torch.Tensor,
         esm3_embeddings: Optional[torch.Tensor],
         protein_mask: torch.Tensor,
+        esm3_valid_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Inject optional ESM3 prior into the ESM-side half-width stream."""
         self._cached_esm3_alpha = None
@@ -947,6 +968,11 @@ class PocketGVPFusionV11(nn.Module):
                 "ESM3 shape mismatch: "
                 f"esm3={tuple(esm3_embeddings.shape)}, h_esm={tuple(h_esm_proj.shape)}"
             )
+        valid_esm3 = protein_mask.bool()
+        if esm3_valid_mask is not None:
+            if esm3_valid_mask.shape != protein_mask.shape:
+                raise ValueError("ESM3 validity mask shape must match protein mask")
+            valid_esm3 = valid_esm3 & esm3_valid_mask.bool()
         x3 = self.esm3_input_norm(esm3_embeddings.float()).to(dtype=h_esm_proj.dtype)
         if self.training and float(self.config.get('esm3_dropout_prob', 0.0)) > 0:
             keep = 1.0 - float(self.config.get('esm3_dropout_prob', 0.0))
@@ -957,7 +983,7 @@ class PocketGVPFusionV11(nn.Module):
         self._cached_esm3_alpha = alpha.detach()
 
         if self.esm3_fusion == "global_prior":
-            valid = protein_mask.to(dtype=h3.dtype).unsqueeze(-1)
+            valid = valid_esm3.to(dtype=h3.dtype).unsqueeze(-1)
             pooled = (h3 * valid).sum(dim=1, keepdim=True) / valid.sum(dim=1, keepdim=True).clamp(min=1.0)
             delta = alpha * pooled
             self._cached_esm3_prior_abs_mean = pooled.detach().float().abs().mean()
@@ -966,6 +992,8 @@ class PocketGVPFusionV11(nn.Module):
         if self.esm3_fusion == "residue_gate":
             gate = torch.sigmoid(self.esm3_gate(torch.cat([h_esm_proj, h3], dim=-1)))
             delta = alpha * gate * (h3 - h_esm_proj)
+            if esm3_valid_mask is not None:
+                delta = delta.masked_fill(~valid_esm3.unsqueeze(-1), 0.0)
             self._cached_esm3_prior_abs_mean = h3.detach().float().abs().mean()
             self._cached_esm3_delta_abs_mean = delta.detach().float().abs().mean()
             self._cached_esm3_gate_mean = gate.detach().float().mean()
@@ -973,6 +1001,8 @@ class PocketGVPFusionV11(nn.Module):
         delta = self.esm3_concat_proj(torch.cat([h_esm_proj, h3], dim=-1))
         self._cached_esm3_prior_abs_mean = delta.detach().float().abs().mean()
         delta = alpha * delta
+        if esm3_valid_mask is not None:
+            delta = delta.masked_fill(~valid_esm3.unsqueeze(-1), 0.0)
         self._cached_esm3_delta_abs_mean = delta.detach().float().abs().mean()
         return h_esm_proj + delta
 
@@ -1026,6 +1056,8 @@ class PocketGVPFusionV11(nn.Module):
         chain_ids: Optional[torch.Tensor] = None,   # [B, L] integer chain indices
         ligand_to_protein: Optional[torch.Tensor] = None,  # legacy placeholder, ignored
         esm3_embeddings: Optional[torch.Tensor] = None,
+        esm_valid_mask: Optional[torch.Tensor] = None,
+        esm3_valid_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
 
         raw_esm_embeddings = esm_embeddings
@@ -1176,7 +1208,12 @@ class PocketGVPFusionV11(nn.Module):
         self._cached_current_esm = current_esm  # always cached (post-fusion/dropout ESM)
         h_gvp_proj = self.gvp_proj(h_geo)
         h_esm_proj = self.esm_proj(current_esm)
-        h_esm_proj = self._apply_esm3_fusion(h_esm_proj, esm3_embeddings, protein_mask)
+        if esm_valid_mask is not None:
+            if esm_valid_mask.shape != protein_mask.shape:
+                raise ValueError("ESM2 validity mask shape must match protein mask")
+            h_esm_proj = h_esm_proj.masked_fill(~esm_valid_mask.bool().unsqueeze(-1), 0.0)
+        h_esm_proj = self._apply_esm3_fusion(
+            h_esm_proj, esm3_embeddings, protein_mask, esm3_valid_mask)
         h_concat = torch.cat([h_gvp_proj, h_esm_proj], dim=-1)
         gate = self.modality_gate(h_concat)
         h_seq = torch.cat([gate * h_gvp_proj, (1 - gate) * h_esm_proj], dim=-1)
@@ -1187,6 +1224,11 @@ class PocketGVPFusionV11(nn.Module):
         # b0: block before Transformer
         b0 = h_seq
 
+        # Optional training-only context augmentation, outside checkpoint replay.
+        context_noise = getattr(self, '_protein_context_noise', None)
+        if self.training and context_noise is not None:
+            h_seq = context_noise(h_seq, protein_spatial_scalar, protein_coords, protein_mask)
+
         # Module 4: RoPE Protein Context Encoder
         # V10m4: pass protein_coords for 3D Distance-Biased Attention
         # protein_coords = CA positions (PROTEIN-ONLY) → no leakage.
@@ -1196,7 +1238,7 @@ class PocketGVPFusionV11(nn.Module):
             def _run_encoder(_h_seq, _mask):
                 return self.protein_context_encoder(
                     _h_seq, mask=_mask, coords=protein_coords,
-                    position_ids=position_ids
+                    position_ids=position_ids, chain_ids=chain_ids
                 )
             h_prot_global = checkpoint(
                 _run_encoder, h_seq, protein_mask, use_reentrant=False
@@ -1204,7 +1246,7 @@ class PocketGVPFusionV11(nn.Module):
         else:
             h_prot_global = self.protein_context_encoder(
                 h_seq, mask=protein_mask, coords=protein_coords,
-                position_ids=position_ids
+                position_ids=position_ids, chain_ids=chain_ids
             )
 
         # b1: block after Transformer

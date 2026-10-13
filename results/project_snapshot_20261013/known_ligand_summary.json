@@ -1,0 +1,22 @@
+{
+  "approved_training_rows": 0,
+  "counts": {
+    "expanded_route_gate": 1390,
+    "old_route_gate": 0,
+    "over_model_atom_cap_256": 0,
+    "tensor_qc_pass": 1390
+  },
+  "expected": 1390,
+  "extraction_returncode": 0,
+  "failures": {},
+  "remaining": [
+    "Protein/ESM residue-axis check",
+    "Receptor-ligand geometry and labels",
+    "Canonical chemical/site deduplication",
+    "Mask-aware normalization and model compatibility"
+  ],
+  "routes": {
+    "3": 391,
+    "4": 999
+  }
+}

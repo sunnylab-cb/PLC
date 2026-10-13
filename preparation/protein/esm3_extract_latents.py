@@ -7,6 +7,7 @@ Extract per-residue embeddings from ESM3 and align them to PDB residue indices.
 from __future__ import annotations
 
 import argparse
+import builtins
 import os
 import multiprocessing as mp
 from pathlib import Path
@@ -14,8 +15,12 @@ from pathlib import Path
 import torch
 
 from esm.models.esm3 import ESM3
+from esm.models.function_decoder import FunctionTokenDecoder
+from esm.models.vqvae import StructureTokenDecoder, StructureTokenEncoder
 from esm.sdk.api import ESMProtein, LogitsConfig
+from esm.tokenization import get_esm3_model_tokenizers
 from esm.utils import residue_constants
+from esm.utils.constants.models import ESM3_OPEN_SMALL, normalize_model_name
 from esm.utils.structure.protein_chain import ProteinChain
 from esm.utils.structure.protein_complex import ProteinComplex
 
@@ -44,8 +49,96 @@ def _resolve_device(device_str: str) -> torch.device:
 
 
 def _load_model(device: torch.device, model_name: str) -> ESM3:
-    model = ESM3.from_pretrained(model_name, device=device)
+    try:
+        model = ESM3.from_pretrained(model_name, device=device)
+    except ImportError as exc:
+        # Some local installs contain new ESM3 model code but an old
+        # esm.pretrained module without load_local_model(). Reconstruct the
+        # open ESM3 small model from the already cached HuggingFace snapshot.
+        if "load_local_model" not in str(exc):
+            raise
+        model = _load_cached_esm3_open_small(device, model_name)
     model.eval()
+    return model
+
+
+def _find_esm3_snapshot_root() -> Path:
+    roots = []
+    for env_name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if os.environ.get(env_name):
+            roots.append(Path(os.environ[env_name]))
+    roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+
+    rel = Path("models--EvolutionaryScale--esm3-sm-open-v1") / "snapshots"
+    for root in roots:
+        snap_root = root / rel
+        if not snap_root.exists():
+            continue
+        for snapshot in sorted(snap_root.iterdir(), reverse=True):
+            if (snapshot / "data" / "weights" / "esm3_sm_open_v1.pth").exists():
+                return snapshot
+    raise FileNotFoundError(
+        "Could not find cached EvolutionaryScale/esm3-sm-open-v1 snapshot. "
+        "Expected data/weights/esm3_sm_open_v1.pth under HuggingFace hub cache."
+    )
+
+
+def _load_weights(module: torch.nn.Module, weight_path: Path, device: torch.device):
+    state = torch.load(weight_path, map_location="cpu")
+    module.load_state_dict(state, strict=True)
+    module.to(device)
+    module.eval()
+    return module
+
+
+def _load_cached_esm3_open_small(device: torch.device, model_name: str) -> ESM3:
+    normalized = normalize_model_name(model_name)
+    if normalized != ESM3_OPEN_SMALL:
+        raise ValueError(f"Fallback loader only supports ESM3 open small, got {model_name}")
+
+    snapshot = _find_esm3_snapshot_root()
+    weights = snapshot / "data" / "weights"
+    from esm.utils.constants import esm3 as esm3_constants
+
+    # Tokenizers and FunctionTokenDecoder call C.data_root("esm3") internally.
+    # Point that helper at the verified local snapshot to avoid network access.
+    esm3_constants.data_root = lambda _model: snapshot
+
+    def structure_encoder_fn(dev):
+        dev = torch.device(dev)
+        enc = StructureTokenEncoder(
+            d_model=1024,
+            n_heads=1,
+            v_heads=128,
+            n_layers=2,
+            d_out=128,
+            n_codes=4096,
+        )
+        return _load_weights(enc, weights / "esm3_structure_encoder_v0.pth", dev)
+
+    def structure_decoder_fn(dev):
+        dev = torch.device(dev)
+        dec = StructureTokenDecoder(d_model=1280, n_heads=20, n_layers=30)
+        return _load_weights(dec, weights / "esm3_structure_decoder_v0.pth", dev)
+
+    def function_decoder_fn(dev):
+        dev = torch.device(dev)
+        dec = FunctionTokenDecoder()
+        return _load_weights(dec, weights / "esm3_function_decoder_v0.pth", dev)
+
+    model = ESM3(
+        d_model=1536,
+        n_heads=24,
+        v_heads=256,
+        n_layers=48,
+        structure_encoder_fn=structure_encoder_fn,
+        structure_decoder_fn=structure_decoder_fn,
+        function_decoder_fn=function_decoder_fn,
+        tokenizers=get_esm3_model_tokenizers(ESM3_OPEN_SMALL),
+    )
+    _load_weights(model, weights / "esm3_sm_open_v1.pth", device)
+    if device.type != "cpu":
+        model = model.to(torch.bfloat16)
     return model
 
 
@@ -304,7 +397,28 @@ def main() -> int:
         action="store_true",
         help="Overwrite existing output files.",
     )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Optional progress log written from Python without shell redirection.",
+    )
     args = parser.parse_args()
+
+    log_handle = None
+    original_print = builtins.print
+    if args.log_file:
+        log_path = Path(args.log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = log_path.open("a", buffering=1)
+
+        def tee_print(*values, **kwargs):
+            original_print(*values, **kwargs)
+            file_kwargs = dict(kwargs)
+            file_kwargs.pop("file", None)
+            original_print(*values, file=log_handle, **file_kwargs)
+
+        builtins.print = tee_print
 
     input_root = Path(args.input).resolve()
     output_root = Path(args.output).resolve()
@@ -366,16 +480,21 @@ def main() -> int:
         return rc
 
     tag = args.device
-    return _process_files(
-        pdb_files,
-        input_root,
-        output_root,
-        args.model,
-        args.device,
-        args.chain,
-        args.overwrite,
-        tag,
-    )
+    try:
+        return _process_files(
+            pdb_files,
+            input_root,
+            output_root,
+            args.model,
+            args.device,
+            args.chain,
+            args.overwrite,
+            tag,
+        )
+    finally:
+        if log_handle is not None:
+            log_handle.close()
+            builtins.print = original_print
 
 
 if __name__ == "__main__":

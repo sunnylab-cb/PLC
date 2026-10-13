@@ -1,0 +1,23 @@
+{
+  "esm3_norm": {
+    "coach420": 420,
+    "holo4k": 4009
+  },
+  "esm3_raw": {
+    "coach420": 420,
+    "holo4k": 4009
+  },
+  "fixed_pdb": {
+    "coach420": 420,
+    "holo4k": 4009
+  },
+  "notes": [
+    "COACH420/HOLO4K PDBs were processed with conservative fixed-heavy-residue structures for feature extraction.",
+    "ESM3 benchmark features were extracted locally and normalized with the training-set ESM3 statistics.",
+    "Benchmark inference uses per-ligand tags and max_atoms=-1 for the current no-atom-cap evaluation."
+  ],
+  "stats_files": {
+    "esm3_stats": "/home/husrcf/Code/ProtBind/PLC/data/stats/esm3_stats_output.pt",
+    "protein_ligand_stats": "/home/husrcf/Code/ProtBind/PLC/data/stats/stats_output.pt"
+  }
+}

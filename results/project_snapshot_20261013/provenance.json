@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-13",
+  "scope": "Previously collected local evidence; no new inference, training or remote collection performed for this export.",
+  "files": [
+    {
+      "source": "tmp/pdbbind_coverage_20261013/pdbbind_coverage.json",
+      "source_sha256": "90fdcd199b0b8435adc329a804dbe2072e8b86ad614307b3c75e831d222b2a7e",
+      "export": "pdbbind_coverage.json",
+      "jq_filter": ".",
+      "export_scope": "complete JSON, formatting normalized"
+    },
+    {
+      "source": "tmp/pdbbind_coverage_20261013/biolip_tensor_qc_summary.json",
+      "source_sha256": "21fc9bda80c24f554a5a2cdb968602ca1f5cebdd9cc6e1bd7650d580d27bb1ad",
+      "export": "biolip_tensor_qc_summary.json",
+      "jq_filter": ".",
+      "export_scope": "complete JSON, formatting normalized"
+    },
+    {
+      "source": "tmp/pdbbind_coverage_20261013/known_ligand_summary.json",
+      "source_sha256": "39246c5417f33b3cc64ffe4ad6016521e319bd77aec7ee5cbdf1c652469bb23b",
+      "export": "known_ligand_summary.json",
+      "jq_filter": ".",
+      "export_scope": "complete JSON, formatting normalized"
+    },
+    {
+      "source": "tmp/pdbbind_coverage_20261013/known_ligand_provenance.json",
+      "source_sha256": "6333f9a2eff712e1d626fb1befe964c5971590684d8c99aa428058df6070cf21",
+      "export": "known_ligand_provenance.json",
+      "jq_filter": ".",
+      "export_scope": "complete JSON, formatting normalized"
+    },
+    {
+      "source": "tmp/context_noise_20261013/tb_analysis.json",
+      "source_sha256": "69523fb2444c5e04b694140e932acb3e440ca02d15c52d5a73118fb800175585",
+      "export": "context_noise_summary.json",
+      "jq_filter": "{scope, epoch_numbering, runs: (.runs | with_entries(.value |= {path, config_differences, best_f1, best_auprc, best_auroc, min_val_loss, last, tail5_f1, best_f1_difference_vs_baseline})), paired_comparisons}",
+      "export_scope": "selected summary fields; raw scalar series omitted"
+    },
+    {
+      "source": "tmp/self_distill_gfgf_20261012_r2/tb_analysis.json",
+      "source_sha256": "2b136b67b144599a64dcf7e2aea6dc07a7c3267e5ac02dc91965dd33a94c0b41",
+      "export": "self_distillation_summary.json",
+      "jq_filter": "{scope, runs: (.runs | with_entries(.value |= {run, epochs, best_f1, best_f1_epoch, best_auprc, best_auprc_epoch, at_best_f1, last_f1, tail5_f1_mean, min_val_loss, nonfinite_scalars}))}",
+      "export_scope": "selected summary fields; raw scalar series omitted"
+    },
+    {
+      "source": "tmp/libre_transfer_12964718/final_20261011/analysis.json",
+      "source_sha256": "952135e28c3eff54ef0e0ac0807ef66c1be32d03d140759323f634c8177c5745",
+      "export": "libre_transfer_summary.json",
+      "jq_filter": "{scope, collected_utc, runs: (.runs | with_entries(.value |= {best_epoch_1indexed, config_sha256, nonfinite, at_f1_best, at_auprc_best})), comparison_to_baseline}",
+      "export_scope": "selected summary fields; raw scalar series omitted"
+    }
+  ]
+}

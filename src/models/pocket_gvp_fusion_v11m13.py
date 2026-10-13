@@ -20,6 +20,8 @@ import torch.nn as nn
 
 from .pocket_gvp_fusion_v11m8 import _atanh_ratio
 from .pocket_gvp_fusion_v11m10 import PocketGVPFusionV11m10
+from .conditional_local_readout import ConditionalLocalReadout, widen_local_head
+from ..losses.residue_classmass import residue_classmass_loss
 
 
 class PocketGVPFusionV11m13(PocketGVPFusionV11m10):
@@ -29,6 +31,12 @@ class PocketGVPFusionV11m13(PocketGVPFusionV11m10):
         "local54_edge_context_hidden": 96,
         "local54_edge_context_alpha_init": 0.03,
         "local54_edge_context_alpha_max": 0.20,
+        "conditional_readout_mode": "none",
+        "conditional_readout_dim": 64,
+        "residue_classmass_weight": 0.0,
+        "residue_classmass_temperature": 0.2,
+        "residue_classmass_max_per_class": 32,
+        "residue_classmass_seed": 44,
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -75,6 +83,53 @@ class PocketGVPFusionV11m13(PocketGVPFusionV11m10):
         self.config["use_local54_edge_context_kv"] = self.use_local54_edge_context_kv
         self._cached_v11m13_edge_context = None
         self._cached_v11m13_stats = {}
+        self._cached_classmass_hidden = None
+        self.conditional_readout = None
+        mode = str(cfg["conditional_readout_mode"])
+        if mode not in ("none", "product", "additive"):
+            raise ValueError(f"Unknown conditional_readout_mode: {mode}")
+        self.residue_classmass_weight = float(cfg["residue_classmass_weight"])
+        if self.residue_classmass_weight < 0:
+            raise ValueError("residue_classmass_weight must be non-negative")
+        if (mode != "none" or self.residue_classmass_weight > 0) and not self.use_local_delta_only:
+            raise ValueError("Readout/classmass probes require the existing local-delta path")
+        if mode != "none":
+            # Extra modules must not advance the shared initialization/training RNG.
+            with torch.random.fork_rng(devices=[]):
+                width = int(cfg["conditional_readout_dim"])
+                self.conditional_readout = ConditionalLocalReadout(d_model, width, mode)
+                widen_local_head(self.local_delta_head, width)
+
+    def _classify_local_delta(self, delta_in, protein_mask, ligand_mask):
+        if self.conditional_readout is not None:
+            d = int(self.config["d_model"])
+            valid = protein_mask.bool() & ligand_mask.bool().any(dim=1, keepdim=True)
+            z = self.conditional_readout(delta_in[..., :d], delta_in[..., d:2*d], valid)
+            self._cached_v11m13_stats["conditional_readout_abs_mean"] = (
+                z.detach()[valid].float().abs().mean() if valid.any() else z.new_zeros(())
+            )
+            delta_in = torch.cat((delta_in, z.to(delta_in.dtype)), dim=-1)
+        if self.training and self.residue_classmass_weight > 0:
+            hidden = delta_in
+            for layer in list(self.local_delta_head.children())[:-1]:
+                hidden = layer(hidden)
+            self._cached_classmass_hidden = hidden
+            return self.local_delta_head[-1](hidden)
+        return self.local_delta_head(delta_in)
+
+    def compute_residue_classmass_loss(self, outputs, labels, mask, *, epoch=0, step=0):
+        if not self.training or self.residue_classmass_weight == 0:
+            return None, {}
+        hidden = outputs["residue_classmass_hidden"]
+        raw, stats = residue_classmass_loss(
+            hidden, labels, mask,
+            temperature=float(self.config["residue_classmass_temperature"]),
+            max_per_class=int(self.config["residue_classmass_max_per_class"]),
+            seed=int(self.config["residue_classmass_seed"]) + int(epoch) * 1000003 + int(step),
+        )
+        weighted = self.residue_classmass_weight * raw
+        stats.update(raw_loss=raw.detach(), weighted_loss=weighted.detach())
+        return weighted, stats
 
     def _pad_edge_context(
         self,
@@ -166,7 +221,13 @@ class PocketGVPFusionV11m13(PocketGVPFusionV11m10):
             self._cached_v11m13_edge_context = None
         self._cached_v11m13_stats = {}
 
-        outputs = super().forward(*args, **kwargs)
+        self._cached_classmass_hidden = None
+        try:
+            outputs = super().forward(*args, **kwargs)
+            if self._cached_classmass_hidden is not None:
+                outputs["residue_classmass_hidden"] = self._cached_classmass_hidden
+        finally:
+            self._cached_classmass_hidden = None
         outputs["local54_edge_context_alpha"] = self._bounded_scale(
             self.local54_edge_context_raw_alpha.detach(),
             self.local54_edge_context_alpha_max,

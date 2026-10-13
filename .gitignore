@@ -1,14 +1,102 @@
+# Local datasets, feature caches and run artifacts (not source code).
 /data/
-database/
-venv/
-__pycache__
-*.csv
-*.joblib
-.DS_Store
-*.pth
-*.pt
+/database/
+/datasets/
+/benchmark/
+/backup/
+/predictions/
+/external_baselines/
+/experiments/
+/memory/
+/output/
 outputs/
 logs/
+runs/
+wandb/
+events.out.tfevents.*
+slurm-*.out
+slurm-*.err
+*.log
+
+# Keep temporary artifacts local. Explicitly retain the small, dated
+# collection helpers needed to reproduce the published October summaries.
+/tmp/*
+!/tmp/analyze_context_noise_results.py
+!/tmp/collect_context_noise_results.py
+!/tmp/collect_biolip_expansion_audit.py
+!/tmp/collect_training_coverage_audit.py
+!/tmp/deploy_training_coverage_audit.py
+
+# Weights, numerical feature stores and archives.
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.joblib
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.lmdb
 *.tar
 *.tar.gz
-/memory/
+*.tgz
+*.zip
+*.7z
+
+# Raw row-level exports are not result summaries. Keep curated JSON/Markdown
+# in results/, docs/ and report/data/; allow explicitly named summary tables.
+*.csv
+*.jsonl
+!/results/**/summary*.csv
+!/report/data/*.csv
+/results/**/predictions/
+
+# Python, build and tool caches.
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.mplconfig/
+*.egg-info/
+/build/
+/dist/
+.coverage
+htmlcov/
+
+# Local credentials, editor/agent settings and generated prompt bundles.
+.env
+.env.*
+!.env.example
+/.aws/
+/.ssh/
+/.agents/
+/.codex/
+/.claude/
+/.codegraph/
+/.vscode/
+/.idea/
+.DS_Store
+*.pem
+*.key
+*.bak
+*.swp
+/codebase_prompt.md
+
+# LaTeX intermediates only: retain the final report and figure assets.
+/report/*.aux
+/report/*.out
+/report/*.toc
+/report/*.lof
+/report/*.lot
+/report/*.fls
+/report/*.fdb_latexmk
+/report/*.synctex.gz
+
+# These rules do not remove files already recorded in Git history.

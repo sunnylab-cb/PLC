@@ -129,8 +129,11 @@ language-model representation:
 All probes use seed 44.  The scratch and warm-start arms prevent initialization
 regime from being confounded with the protein representation.  Promotion
 requires a gain in test real F1 while preserving the real-shuffle
-ligand-dependency gap.  The default batch size remains 24, matching the
-promoted V11m13 configuration; batch 16 is reserved only as an OOM fallback.
+ligand-dependency gap.  Batch 24 was initially selected to match the promoted
+V11m13 configuration, but the full-train ESM-C+ESM3 and warm full-finetune arms
+both reached about 79 GiB and OOMed on 80-GB HPC GPUs.  Their batch-16 Star
+replacements completed successfully, so batch 16 is the operational default
+for future full-train ESM-C runs.
 
 Warm-start preflight loaded 674 checkpoint tensors and skipped exactly one
 expected shape mismatch, `esm_proj.0.weight: [256,1280] -> [256,1152]`.
@@ -143,3 +146,75 @@ Submitted jobs:
   (`real/shuffle/zero`) on `i64m1tga800ue`;
 - `10001643_[0-5]`: six ESM-C scratch/warm-start probes on
   `i64m1tga800u`.
+
+## ESM-C probe results (2026-07-21)
+
+All six seed-44 probes are complete.  The table reports independently selected
+validation maxima; `F1@gate` uses the threshold selected on that epoch's
+validation predictions and is not a test-set result.  Delta is the raw
+`F1_c0` difference from the scratch block-36-initialized weighted-sum control.
+
+| task | variant | initialization / trainable scope | best val F1_c0 (epoch) | best val AUPRC (epoch) | best val F1@gate (epoch) | delta F1 | decision |
+|---:|---|---|---:|---:|---:|---:|---|
+| 0 | `scratch_lastinit_wsum` | scratch; full downstream model | 0.6006 (47) | 0.6186 (47) | 0.6024 (47) | reference | scratch control |
+| 1 | `scratch_uniform_wsum` | scratch; full downstream model | 0.5996 (41) | 0.6165 (40) | 0.6036 (41) | -0.0010 | effectively tied |
+| 2 | `scratch_concat` | scratch; full downstream model | 0.5806 (15) | 0.5961 (15) | 0.5914 (29) | -0.0200 | reject; unstable |
+| 3 | `scratch_lastinit_wsum_esm3` | scratch ESM-C weighted sum plus weak ESM3 prior | 0.5991 (26) | 0.6228 (44) | 0.6007 (26) | -0.0015 | ranking-only signal; no F1 gain |
+| 4 | `warm_fullfinetune` | shape-compatible V11m13 warm-start; full model unfrozen | **0.6101 (43)** | **0.6239 (43)** | **0.6146 (43)** | **+0.0095** | promote to test dependency |
+| 5 | `warm_frozen_adapter` | V11m13 base frozen; new ESM-C fusion/projection only | 0.5621 (38) | 0.5833 (31) | 0.5723 (39) | -0.0385 | reject |
+
+### Findings
+
+1. **Warm-start plus full adaptation is the only clear validation winner.**
+   Relative to scratch weighted-sum ESM-C, it improves raw validation F1 by
+   0.0095, best gated F1 by 0.0122, and AUPRC by 0.0053.  The result supports
+   retaining the trained V11m13 decision geometry while allowing the whole
+   network to adapt to the changed 1280D-to-1152D protein representation.
+2. **Weighted-sum initialization is not important after scratch training.**
+   Block-36 initialization and uniform layer weights differ by only 0.0010 raw
+   F1.  The model can learn a viable layer mixture from either initialization.
+3. **Raw multi-layer concat is harmful.**  It loses 0.0200 raw F1, and its
+   validation loss becomes non-finite through much of the later run.  A larger
+   concat projection does not provide a useful multi-resolution basis under
+   the current optimizer and normalization.
+4. **ESM3 on top of scratch ESM-C mainly sharpens ranking.**  It raises the
+   best AUPRC to 0.6228 but does not improve raw or gated F1 over ESM-C alone.
+   This is not evidence for promoting the combined scratch model.
+5. **A frozen-base adapter cannot bridge the representation change.**  The
+   expected `esm_proj.0.weight` shape mismatch leaves the new 1152D projection
+   outside the old checkpoint.  Training only the small adapter/fusion surface
+   underfits badly; full-model adaptation is necessary.
+
+### Metric-integrity warning
+
+The scratch concat run has extensive non-finite validation-loss epochs, and
+the scratch ESM-C+ESM3 run reports non-finite validation loss from epoch 31
+onward while valid-residue ranking metrics remain finite.  The scratch
+last-initialized weighted-sum run also contains sporadic non-finite validation
+losses, although its winning epoch 47 is finite.  Therefore:
+
+- do not use affected validation loss or DICE values for model claims;
+- use the saved finite best-F1/AUPRC metadata only as a screening result;
+- verify the valid-only loss path in the exact deployed revision before a
+  confirmatory rerun.
+
+### Required confirmation
+
+The current result is validation-only and single-seed.  Promotion requires the
+same checkpoint-gated test protocol used by the selector controls:
+
+1. run `real`, `shuffle`, and `zero` on task 4 `best_f1_c0_model.pt`;
+2. run the same evaluation on task 0 as the ESM-C scratch control;
+3. compare test real F1 and real-shuffle gap against V11m13 and the earlier
+   ESM3-global-prior scratch result;
+4. add seeds only if task 4 preserves ligand dependency while improving test
+   real F1.
+
+### Execution notes
+
+- HPC tasks 3 and 4 failed at batch 24 from true capacity OOM (about 79 GiB
+  allocated); the batch-16 Star replacements completed normally.
+- Task 5 completed on HPC because freezing the base substantially reduced
+  activation and optimizer-state memory.
+- Future Star use is limited to one PLC task on one GPU at a time, even if a
+  second GPU appears idle.
