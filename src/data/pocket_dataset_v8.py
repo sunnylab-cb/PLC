@@ -22,6 +22,8 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import random
 
+from src.contact_labels import decode_contact_labels, validate_contact_axis
+
 
 def set_seed(seed: int = 42):
     """Set random seed for reproducibility."""
@@ -585,7 +587,14 @@ class PocketDatasetV8(Dataset):
         if pdb_id in self.distances_dict:
             distance_data = self.distances_dict[pdb_id]
             if isinstance(distance_data, dict):
-                if 'distances_vdw_adjusted' in distance_data:
+                if 'contact_label_protocol' in distance_data:
+                    validate_contact_axis(distance_data, protein_data, esm_reference)
+                    labels, raw_distances = decode_contact_labels(distance_data)
+                    if any(len(x) != len(labels) for x in (
+                        esm, protein_physchem, protein_spatial_scalar, protein_spatial_vector, gvp_coords
+                    )):
+                        raise ValueError(f"New contact-label feature length mismatch: {pdb_id}")
+                elif 'distances_vdw_adjusted' in distance_data:
                     labels = self._vdw_to_labels(
                         distance_data['distances_vdw_adjusted'],
                         distance_data.get('is_binding_vdw', None)

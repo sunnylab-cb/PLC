@@ -17,6 +17,7 @@ import numpy as np
 import torch
 
 from internal_cohort_qc import finite_shape
+from src.contact_labels import decode_contact_labels
 from prepare_internal_codataset_sequences import digest, save_json
 from run_internal_pairwise_split import load_pool
 
@@ -173,7 +174,10 @@ def main():
         else:
             esm_dst.symlink_to(esm_src)
         label = load(row["qc"]["labels_path"])
-        n_contact = int((label["distances"] < 5).sum())
+        decoded, _ = decode_contact_labels(label)
+        n_contact = int((decoded == 0).sum())
+        if label["contact_label_protocol"] != pool["contact_label_protocol"]:
+            raise ValueError("Mixed contact-label protocols in cohort")
         if n_contact < 3 or len(label["distances"]) != len(scalar):
             raise ValueError("label/feature QC changed during preprocessing")
         distances[sid] = label
@@ -181,13 +185,17 @@ def main():
         contact_counts[assignment[key]].append(n_contact)
         if index % 500 == 0:
             print("PREPROCESS",pool["cohort"],index,"/",len(samples),flush=True)
-    atomic_save(distances,out/"residue_ligand_distances_dcenter.pt")
+    label_file = out/"residue_ligand_contacts_vdw.pt"
+    atomic_save(distances,label_file)
     (out/"splits.txt").write_text("".join(f"{s}\t{k}\n" for s,k in output_rows))
     summary = dict(**contract,preprocessing_passed=True,training_smoke_passed=False,
         dataset_root=str(out.resolve()),stats_sha256=stats_hash,training_split_sha256=digest(out/"splits.txt"),
         dataset_counts=dict(Counter(s for s,_ in output_rows)),by_source=report["by_source"],
         actual_contact_counts={s:dict(min=min(v),p50=float(np.median(v)),p90=float(np.quantile(v,.9)))
                                for s,v in contact_counts.items()},
+        contact_label_protocol=pool["contact_label_protocol"], labels_file=str(label_file.resolve()),
+        labels_sha256=digest(label_file),
+        required_loader="PocketDatasetV8 with contact_label_protocol handling; legacy distance-only loaders unsafe",
         next_model="V11m13 group_rescompat + GFGF protein hybrid, seed44, random initialization",
         init_from_checkpoint=None,freeze_v11_base=False,use_compile=False,
         limitations=["No production loader/GPU smoke test yet; do not blindly launch training",

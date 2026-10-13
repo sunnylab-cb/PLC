@@ -9,6 +9,8 @@ import numpy as np
 import torch
 from scipy.spatial import cKDTree
 
+from internal_contact_geometry import count_contacts, ligand_elements, protein_elements
+
 
 @lru_cache(maxsize=3)
 def load_tensor(path):
@@ -83,14 +85,23 @@ def cif_atoms(path, chain):
         if c.name.strip() != chain:
             continue
         for residue in c:
-            ca = residue.find_atom("CA", "*")
-            if ca is None or ca.element.name != "C":
+            heavy = [a for a in residue if a.element.name not in ("H", "D")]
+            alt = lambda a: a.altloc.strip("\x00 .?")
+            alt_ids = sorted({alt(a) for a in heavy if alt(a)})
+            chosen = max(alt_ids, key=lambda k: sum(a.occ for a in heavy if alt(a) == k)) if alt_ids else ""
+            heavy = [a for a in heavy if not alt(a) or alt(a) == chosen]
+            names = [a.name.strip() for a in heavy]
+            if len(names) != len(set(names)):
+                raise ValueError("Duplicate CIF atom after alternate-conformer selection")
+            cas = [a for a in heavy if a.name.strip() == "CA" and a.element.name == "C"]
+            if not cas:
                 continue
             key = (chain, int(residue.seqid.num), residue.seqid.icode.strip())
-            coords = [a.pos.tolist() for a in residue if a.element.name not in ("H", "D")]
             if key in result:
                 raise ValueError(f"ambiguous CIF residue: {key}")
-            result[key] = (residue.name, np.asarray(ca.pos.tolist()), np.asarray(coords))
+            result[key] = (residue.name, np.asarray(cas[0].pos.tolist()),
+                           np.asarray([a.pos.tolist() for a in heavy]),
+                           [a.element.name for a in heavy], names)
     return result
 
 
@@ -131,18 +142,24 @@ def qc_sample(task):
             finite_shape(protein[field], (n_full, *tail), field)
         finite_shape(esm["embeddings"], (n, 1280), "ESM2")
         ligand_xyz, n_heavy = ligand_check(ligand, sample)
+        ligand_symbols, element_method, native_source = ligand_elements(ligand, ligand_xyz)
+        if native_source:
+            st = native_source.stat()
+            provenance[str(native_source)] = dict(size=st.st_size, mtime_ns=st.st_mtime_ns)
         if sample["source"] == "pdbbind":
             atoms = protein["all_atom_coords"]
             names = protein["all_atom_names"]
             if len(atoms) != n_full or len(names) != n_full:
                 raise ValueError("protein atom metadata length mismatch")
-            heavy_atoms = []
+            heavy_atoms, heavy_symbols = [], []
             for i in positions:
                 if len(atoms[i]) != len(names[i]):
                     raise ValueError("protein atom/name length mismatch")
                 keep = [j for j, name in enumerate(names[i])
                         if not str(name).lstrip("0123456789").startswith(("H", "D"))]
                 heavy_atoms.append(np.asarray(atoms[i])[keep])
+                heavy_symbols.append(protein_elements(str(protein["residue_names"][i]).upper(),
+                                                      [names[i][j] for j in keep]))
             protein_path = str(paths[0])
         else:
             root = Path(sample["biolip_root"])
@@ -154,27 +171,38 @@ def qc_sample(task):
                 raise ValueError("declared source CIF missing")
             provenance[str(receptor)] = dict(size=receptor.stat().st_size, mtime_ns=receptor.stat().st_mtime_ns)
             parsed = cif_atoms(str(receptor), sample["selected_chain"])
-            heavy_atoms = []
+            heavy_atoms, heavy_symbols, heavy_names = [], [], []
             for i, key_res, aa_res in zip(positions, selected_keys, aa):
-                name, ca, xyz = parsed[key_res]
+                name, ca, xyz, symbols, names = parsed[key_res]
                 if AA3.get(name, "X") != aa_res or np.linalg.norm(ca-np.asarray(protein["ca_coords"][i])) > .02:
                     raise ValueError("CIF/V4 residue identity or CA geometry mismatch")
                 heavy_atoms.append(xyz)
+                heavy_symbols.append(symbols)
+                heavy_names.append(names)
             sliced = dict(protein)
             for field in (*tails, "spatial_scalar_features"):
                 sliced[field] = torch.as_tensor(protein[field])[positions].clone()
             for field in ("residue_names", "residue_indices", "insertion_codes", "chain_ids"):
                 sliced[field] = [protein[field][i] for i in positions]
             sliced["n_residues"] = n
-            # The training model needs CA geometry, not a duplicated CIF atom cache.
-            sliced.pop("all_atom_coords", None)
-            sliced.pop("all_atom_names", None)
+            # PocketDatasetV8 also constructs GVP vectors from these atom lists.
+            sliced["all_atom_coords"] = heavy_atoms
+            sliced["all_atom_names"] = heavy_names
             protein_path = str(Path(output)/"chain_sidecars"/(sample["sample_id"]+"_protein.pt"))
-        distances = heavy_distances(heavy_atoms, ligand_xyz)
-        n_contact = int((distances < 5.).sum())
+        labels = count_contacts(heavy_atoms, heavy_symbols, ligand_xyz, ligand_symbols,
+                                sample.get("min_atom_contacts", 2))
+        distances = labels["distances"]
+        n_contact = int(labels["contact_mask"].sum())
+        record.update(n_contact=n_contact,
+                      n_contact_casp1=int(labels["contact_mask_casp1"].sum()),
+                      n_contact_biolip2=int(labels["contact_mask_biolip2"].sum()),
+                      n_contact_lt5=int((distances < 5.).sum()),
+                      n_contact_le5p5=int((distances <= 5.5).sum()),
+                      ligand_element_source=element_method,
+                      contact_label_protocol=labels["contact_label_protocol"])
         if n_contact < 3:
             raise ValueError(f"fewer_than_3_actual_contact_tags:{n_contact}")
-        if int((distances[:1800] < 5.).sum()) < 3:
+        if int(labels["contact_mask"][:1800].sum()) < 3:
             raise ValueError("fewer_than_3_contact_tags_after_current_residue_cap_1800")
         if sample["source"] == "biolip":
             dst = Path(protein_path)
@@ -182,11 +210,12 @@ def qc_sample(task):
             torch.save(sliced, dst)
         dst = Path(output)/"labels"/(sample["sample_id"]+".pt")
         dst.parent.mkdir(exist_ok=True, parents=True)
-        labels = dict(distances=distances, n_residues=n, residue_keys=selected_keys,
-                      source="native ligand heavy atoms vs aligned input residue heavy atoms")
+        labels.update(n_residues=n, residue_keys=selected_keys,
+                      source="native ligand heavy atoms vs aligned input residue heavy atoms",
+                      ligand_element_source=element_method)
         torch.save(labels, dst)
         sequences, axis_hash = chain_sequences(esm)
-        record.update(chains=sequences, axis_sha256=axis_hash, n_contact_lt5=n_contact,
+        record.update(chains=sequences, axis_sha256=axis_hash,
                       n_residues=n, n_heavy_atoms=n_heavy, aligned_protein_path=protein_path,
                       labels_path=str(dst), labels_sha256=hashlib.sha256(dst.read_bytes()).hexdigest())
     except Exception as exc:

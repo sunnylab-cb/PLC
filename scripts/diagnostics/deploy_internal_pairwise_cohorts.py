@@ -20,9 +20,10 @@ def main():
     args = ap.parse_args()
     repo = Path(__file__).resolve().parents[2]
     files = ["scripts/diagnostics/"+name for name in (
-        "prepare_internal_codataset_sequences.py","internal_cohort_qc.py",
+        "prepare_internal_codataset_sequences.py","internal_cohort_qc.py","internal_contact_geometry.py",
+        "smoke_internal_contact_labels.py",
         "run_internal_pairwise_split.py","preprocess_internal_cohort.py")]
-    files += ["scripts/slurm/run_internal_pairwise_cohort.slurm",
+    files += ["src/contact_labels.py", "scripts/slurm/run_internal_pairwise_cohort.slurm",
               "preparation/dataset_split/mmseqs_splits_strict.txt"]
     hashes = {name:hashlib.sha256((repo/name).read_bytes()).hexdigest() for name in files}
     if not args.submit:
@@ -48,10 +49,15 @@ with tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read()),mode='r:gz') as ta
         path=code/member.name
         path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(payload)
-import Bio,torch,scipy,gemmi
+import Bio,torch,scipy,gemmi,rdkit
 report=dict(root=str(root),sha256=expected,biopython=Bio.__version__,jobs={})
 (root/'deployment.json').write_text(json.dumps(report,indent=2)+'\\n')
-for cohort,name in [('pdbbind_only','pdb_si30_exact'),('pdbbind_biolip_joint','joint_si30_exact')]:
+sys.path.insert(0,str(code/'scripts/diagnostics'))
+from smoke_internal_contact_labels import run_smoke
+report['contact_smoke']=run_smoke('/hpc2hdd/home/shuang886/jhspoolers/PLC/data',
+                                '/hpc2hdd/home/shuang886/biolip',root/'contact_smoke')
+(root/'deployment.json').write_text(json.dumps(report,indent=2)+'\\n')
+for cohort,name in [('pdbbind_only','pdb_vdw2_si30'),('pdbbind_biolip_joint','joint_vdw2_si30')]:
     out=root/cohort
     out.mkdir()
     cmd=['/opt/slurm/bin/sbatch','--parsable','--job-name='+name,'--chdir='+str(code),

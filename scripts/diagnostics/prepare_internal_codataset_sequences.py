@@ -96,12 +96,14 @@ def bio_eligible(row):
 
 def main():
     from internal_cohort_qc import qc_sample
+    from src.contact_labels import contact_protocol
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pdbbind-root", type=Path, required=True)
     ap.add_argument("--pdbbind-ids", type=Path, required=True)
     ap.add_argument("--biolip-root", type=Path, help="Omit for the independent PDBbind-only pool")
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--min-atom-contacts", type=int, choices=(1, 2), default=2)
     args = ap.parse_args()
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -109,9 +111,18 @@ def main():
     metadata = (args.biolip_root / "qc_training_manifest_allclean_20260811/biolip_pairs_metadata.tsv.gz"
                 if args.biolip_root else None)
     input_hashes = {str(p.resolve()): digest(p) for p in (
-        args.pdbbind_ids, metadata, Path(__file__), Path(__file__).with_name("internal_cohort_qc.py")) if p}
+        args.pdbbind_ids, metadata, Path(__file__), Path(__file__).with_name("internal_cohort_qc.py"),
+        Path(__file__).with_name("internal_contact_geometry.py"),
+        Path(__file__).resolve().parents[2]/"src/contact_labels.py") if p}
     input_hashes["pdbbind_root"] = str(args.pdbbind_root.resolve())
     input_hashes["biolip_root"] = str(args.biolip_root.resolve()) if args.biolip_root else None
+    input_hashes["contact_label_protocol"] = contact_protocol(args.min_atom_contacts)
+    contract_path = out/"pool_input_contract.json"
+    if contract_path.exists() and json.loads(contract_path.read_text()) != input_hashes:
+        raise ValueError("pool extraction contract changed; use a new output directory")
+    if not contract_path.exists() and (out/"sequence_sources.jsonl").exists():
+        raise ValueError("cannot reuse unversioned partial QC results")
+    save_json(contract_path, input_hashes)
     if complete.exists():
         saved = json.loads(complete.read_text())
         if saved["input_sha256"] != input_hashes:
@@ -130,17 +141,17 @@ def main():
         raise ValueError("duplicate or empty PDBbind IDs")
     samples, early_excluded = {}, []
     for sid in sorted(ids):
-        esm = feature_path(args.pdbbind_root, "esm2_latents", sid, "_protein.pt")
-        v4 = feature_path(args.pdbbind_root, "complete_features_v4_nma", sid, "_protein_conf0.pt")
         try:
+            esm = feature_path(args.pdbbind_root, "esm2_latents", sid, "_protein.pt")
+            v4 = feature_path(args.pdbbind_root, "complete_features_v4_nma", sid, "_protein_conf0.pt")
             ligand = feature_path(args.pdbbind_root, "ligand_features_v5_ori", sid, "_ligand.pt")
         except ValueError as exc:
-            early_excluded.append(dict(sample_id=sid, source="pdbbind", reason="missing_raw_ligand", detail=str(exc)))
+            early_excluded.append(dict(sample_id=sid, source="pdbbind", reason="missing_or_ambiguous_raw_features", detail=str(exc)))
             continue
         samples[f"pdbbind:{sid}"] = dict(source="pdbbind", sample_id=sid, pdb_id=sid,
             selected_chain=None, ligand_path=str(ligand),
             esm_path=str(esm), v4_path=str(v4), feature_files_present=True,
-            training_approved=False)
+            min_atom_contacts=args.min_atom_contacts, training_approved=False)
     counts, excluded, aliases, seen_obs, seen_ids = Counter(), early_excluded, [], {}, set()
     counts["raw_pdbbind_rows"] = len(ids)
     with gzip.open(metadata, "rt") if metadata else nullcontext(None) as f:
@@ -172,6 +183,7 @@ def main():
                 continue
             samples[f"biolip:{sid}"] = dict(source="biolip", sample_id=sid, pdb_id=pdb,
                 selected_chain=chain, biolip_root=str(args.biolip_root), ligand_metadata=row,
+                min_atom_contacts=args.min_atom_contacts,
                 ligand_path=str(ligand), esm_path=str(esm), v4_path=str(v4),
                 feature_files_present=ligand.is_file() and esm.is_file(), training_approved=False,
                 ligand_id=row["ligand_id"], ligand_resseq=row["ligand_resseq"],
@@ -215,8 +227,8 @@ def main():
             seq_id = "seq_" + hashlib.sha256(seq.encode()).hexdigest()
             if seq_id in unique and unique[seq_id]["sequence"] != seq:
                 raise ValueError("SHA256 sequence collision")
-            record = unique.setdefault(seq_id, dict(sequence=seq, members=[]))
-            record["members"].append(key)
+            seq_record = unique.setdefault(seq_id, dict(sequence=seq, members=[]))
+            seq_record["members"].append(key)
             seq_ids.append(seq_id)
         accepted[key] = dict(sample, sequence_ids=seq_ids, qc=record)
     with (out / "samples.jsonl").open("w") as f:
@@ -236,12 +248,18 @@ def main():
         excluded_rows=len(excluded), exclusion_counts=dict(Counter(r["reason"] for r in excluded)),
         duplicate_observations=len(aliases),
         external_benchmarks_used=False, old_split_assignments_used=False,
-        policy="actual native-heavy-atom d_min<5A contacts >=3 (also after residue cap1800); finite/axis QC; "
+        contact_label_protocol=contact_protocol(args.min_atom_contacts),
+        contact_counts_by_source={source: {
+            field: sum(extracted[k].get(field, 0) for k, s in accepted.items() if s["source"] == source)
+            for field in ("n_contact", "n_contact_casp1", "n_contact_biolip2", "n_contact_lt5", "n_contact_le5p5")}
+            for source in sorted({s["source"] for s in accepted.values()})},
+        policy="native-heavy-atom d<=vdW_sum+0.5A; minimum atom contacts from versioned protocol; "
+               "binding residues >=3 (also after residue cap1800); finite/axis QC; "
                "BioLiP legacy regular_organic route5, exact complete mapping, 6-128 heavy atoms, completeness>=0.8; "
                "PDBbind existing V5 native-coordinate ligands >=6 heavy atoms, no new upper atom exclusion",
         limitations=["Geometry/QC-passed pool; training still requires SI audit and separate TRAIN-only normalization",
             "Missing/invalid features excluded with ledger, not silently zero-filled",
-            "Cross-source chemical/site deduplication and label-axis QC still required",
+            "Broader cross-source chemical/site deduplication not certified by protein SI",
             "Existing features are not certified train-only normalized for this new split"],
         elapsed_seconds=time.monotonic()-started)
     report["output_sha256"] = {name: digest(out/name) for name in (

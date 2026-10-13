@@ -102,7 +102,9 @@ def test_legacy_biolip_chemistry_metadata_gate():
 
 
 def ligand_fixture():
-    return dict(atom_features=torch.zeros(6,109), coords=torch.zeros(6,3),
+    features = torch.zeros(6,109)
+    features[:, 0] = 1
+    return dict(atom_features=features, coords=torch.zeros(6,3),
         coords_original=torch.zeros(6,3), edge_index=torch.empty(2,0,dtype=torch.long),
         edge_attr=torch.empty(0,6), num_heavy_atoms=6, has_original_coords=True)
 

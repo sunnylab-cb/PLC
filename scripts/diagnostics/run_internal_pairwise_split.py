@@ -287,13 +287,18 @@ def assign_components(samples, uf, seed):
     for key in sorted(samples):
         groups[uf.find(key)].append(key)
     components = list(groups.values())
+    if len(components) < len(SPLITS):
+        raise ValueError("fewer than three separable components; refusing to split a family")
     random.Random(seed).shuffle(components)
     components.sort(key=len, reverse=True)
     counts = Counter()
     targets = dict(zip(SPLITS, (len(samples)*.8, len(samples)*.1, len(samples)*.1)))
     assignment = {}
-    for group in components:
-        label = max(SPLITS, key=lambda s: targets[s]-counts[s])
+    for index, group in enumerate(components):
+        empty = [s for s in SPLITS if counts[s] == 0]
+        # Reserve the last components for empty sets without breaking a family.
+        choices = empty if len(components)-index == len(empty) else SPLITS
+        label = max(choices, key=lambda s: targets[s]-counts[s])
         assignment.update((key, label) for key in group)
         counts[label] += len(group)
     if set(counts) != set(SPLITS):

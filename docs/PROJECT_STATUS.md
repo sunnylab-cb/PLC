@@ -39,9 +39,16 @@ subset of the joint split. The >=3 actual contact-tag filter and legacy ligand
 chemistry/validity gates are retained. These branches do not replace the
 externally clean mainline described above.
 
-CPU jobs **13003680** (solo) and **13003681** (joint) were submitted to
-`i64m512u`, each 64 CPUs/160G. Last checked: both pending `Priority`;
-no new split is certified and no training has started. Latest GFGF/V11m13
+Original CPU jobs **13003680** (solo) and **13003681** (joint) were held before
+starting and replaced because they used the superseded fixed-5 A definition. The
+replacement protocol uses vdW radii sum +0.5 A, >=2 atom pairs per binding
+residue, and retains >=1-pair diagnostic masks; samples still need >=3 binding
+residues. The fixed 5.5 A suggestion is not treated as equivalent to vdW.
+Replacement jobs **13006855** (solo) and **13006856** (joint) are submitted to
+`i64m512u`, 64 CPUs/160G each; latest check: both `PD (Priority)`. The remote
+PDBbind and BioLiP contact preflights passed. V5/V6 caches coexist in BioLiP;
+old/missing-validity tensors are excluded with reasons, not silently accepted.
+No new split is certified and no training has started. Latest GFGF/V11m13
 seed44 scratch training is the next step after preprocessing and loader/smoke
 checks. Independent holdouts mean a cross-cohort score difference is not by
 itself a controlled BioLiP improvement estimate.

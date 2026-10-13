@@ -26,9 +26,9 @@ These models must not be presented as external-benchmark-SI-clean models.
 No relaxation of biological/data validity is implied by removing benchmark
 exclusions. Before constructing the SI graph:
 
-- Require at least three actual class-0 contact residues: native ligand heavy
-  atoms vs input residue heavy atoms, minimum distance <5 A. Also require three
-  within the unchanged model residue limit of 1,800. Record rejection reasons.
+- Require at least three actual class-0 contact residues under the versioned
+  vdW atom-pair protocol below. Also require three within the unchanged model
+  residue limit of 1,800. Record rejection reasons.
 - Require finite features, 109D ligand atoms, 6D edges, 1280D ESM2, 62D protein
   physicochemistry, 89D raw spatial scalars and 8x3 vectors. Require exact
   V4/ESM residue keys and identities; no silent prefix truncation or zero fill.
@@ -48,6 +48,70 @@ presence, sequence availability, geometry QC and training admission are distinct
 Every exclusion is logged. Exact duplicate BioLiP metadata observations have an
 alias ledger; same-PDB and exact-sequence copies cannot cross split boundaries.
 Broader chemical/site deduplication must not be confused with protein SI.
+
+## Revised Contact Labels: vdW Atom Pairs
+
+The initial fixed <5 A jobs were held before starting after the user changed
+the label definition. A 5.5 A fixed threshold is also NOT equivalent to the
+following atom-type-dependent rule:
+
+`contact(a,b) = [d(a,b) <= r_vdW(a) + r_vdW(b) + 0.5 A]`.
+
+- **Primary:** at least two distinct heavy-atom pairs per residue (BioLiP-style).
+- **Diagnostic:** at least one pair per residue (CASP9-style); retain this mask
+  and all per-residue pair counts, not just the active binary labels.
+- **Sample QC:** at least three positive residues under the PRIMARY rule.
+  This is our project filter, stricter than BioLiP's two-residue site criterion.
+- Two pairs do not require two different protein atoms. One protein atom
+  contacting two different ligand atoms also counts as two pairs.
+- Exclude hydrogens/deuterium. Select a single CIF alternate conformer rather
+  than double-counting the same physical atom in multiple positions.
+
+Sources: [CASP9 organizer submission definition](https://predictioncenter.org/CASP9/src/cgi-bin/index.cgi?page=format),
+[CASP9 assessment](https://pmc.ncbi.nlm.nih.gov/articles/PMC3204792/),
+[BioLiP official curation rules](https://www.zhanggroup.org/BioLiP/help.html).
+
+The exact radius table is embedded in every label artifact as
+`PLC_Bondi_extended_v1`, retaining the previous project table (C=1.70, N=1.55,
+O=1.52 A, etc.) without its unsafe unknown-element fallback. This is an explicit
+implementation of the published contact criterion, **not certification of
+bitwise-identical BioLiP annotations or CASP labels**. Native ligand positions
+come from `coords_original`. Where the original SDF exists, its atom elements,
+order and coordinates are checked. Otherwise the raw V5/V6 identity one-hot can
+identify its nine explicit heavy elements because the extractor preserves native
+heavy-atom order. `Other` is never guessed to be carbon. Such rows are excluded
+with a reason if no checked source can identify the element. Protein elements
+come from CIF or a validated canonical amino-acid atom-name map, so CA is carbon,
+not calcium. Geometry is on the exact input protein axis; repaired input receptor
+atoms can differ from BioLiP's original annotation geometry.
+
+For the existing three-class head, class0 is the active vdW mask. Noncontact
+residues retain the PLC auxiliary split: physical heavy-atom d_min <8 A is class1,
+otherwise class2. Raw d_min remains the distance-regression target; it is never
+replaced with a surface gap or fabricated binary distance. Near/far are project
+conventions, not additional BioLiP requirements.
+
+The new output is `dataset/residue_ligand_contacts_vdw.pt` with
+`contact_label_protocol`, `atom_contact_counts`, `contact_mask`,
+`contact_mask_casp1`, `contact_mask_biolip2`, physical `distances` and diagnostic
+`vdw_surface_gap`. The updated PocketDatasetV8 checks protocol, masks and exact
+residue axes before using it. Legacy label files retain their historical behavior.
+Do not feed this artifact to an old loader that only thresholds `distances`.
+
+One real local sanity case (3ddq, 1,134 residues / 26 ligand heavy atoms):
+
+| Definition | Positive residues |
+| --- | ---: |
+| Fixed d_min <5 A (superseded job) | 22 |
+| Fixed d_min <=5.5 A | 25 |
+| vdW sum +0.5 A, >=1 pair | 13 |
+| vdW sum +0.5 A, >=2 pairs | 7 |
+
+This is one smoke case, not a cohort-wide estimate. Both cohorts independently
+rerun QC before freezing their sequence pool, since changing labels changes
+which samples meet the >=3-positive requirement. Retain both old-distance counts
+as diagnostics. Do not interpret a new-protocol F1 change as a model improvement
+relative to the old labels.
 
 ## Exact Pairwise Contract
 
@@ -113,14 +177,37 @@ different `COHORT` values. Each job requests one `i64m512u` CPU node, 64 CPUs,
 Deployment hashes source files into a new HDD experiment directory and does not
 `git pull` the dirty production checkout. Job IDs are recorded in deployment.json.
 
-Submitted jobs: **13003680** (PDBbind-only), **13003681** (joint). Both were
-pending `Priority` at the first post-submission check, not running or finished.
-Experiment root:
+Superseded fixed-5 A jobs: **13003680** (PDBbind-only), **13003681** (joint).
+They were held while still pending, before any dataset processing started,
+then cancelled after replacement submission. Their retained experiment root:
 `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_20261013/`.
 Local submission receipt: `tmp/internal_si30_dual_20261013/deployment.json`.
-The deployed AF3 environment reports Biopython 1.87; local unit tests use 1.85.
+
+**Replacement vdW jobs:** **13006855** (PDBbind-only) and **13006856** (joint),
+same `i64m512u`, 64 CPUs/160G each. Post-submission check: both `PD (Priority)`.
+Root: `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_vdw2_20261013_r2/`.
+Receipt: `tmp/internal_si30_dual_vdw2_20261013_r2/deployment.json`.
+
+The initial vdW deployment (without `_r2`) submitted **no jobs**: its preflight
+incorrectly stopped after 20 older V5 BioLiP tensors. The directory contains
+mixed V5/V6 caches, not a separate V6 tree. The corrected preflight selects an
+actual route5 V6 smoke example; full cohort QC still records every rejection.
+No old holdout allowlist is used to select the new cohort. Availability of
+existing V6 tensors can still reflect earlier extraction scope; this is not a
+claim that all BioLiP annotations have complete features.
+
+Remote real-data preflight passed:
+
+| Sample | Fixed <=5.5 A | vdW >=1 pair | vdW >=2 pairs |
+| --- | ---: | ---: | ---: |
+| PDBbind 3ddq | 25 | 13 | 7 |
+| BioLiP 1dwk_A_BS01_OXL | 7 | 4 | 3 |
+
+The AF3 environment reports Biopython 1.87; local unit tests use 1.85.
 Alignment version is pinned in each run contract, and chunk resume refuses a
-changed contract. Twenty-three focused tests and Slurm shell syntax passed.
-The full local CPU suite also passed: **306 tests**. Warnings concern unavailable
+changed contract. The original full local CPU suite passed **306 tests**;
+the vdW revision passes **315 tests**, including geometry, mask/axis validation,
+BioLiP chain-sidecar geometry, and a complete tiny-cohort
+QC -> SI -> normalization -> production-loader integration test. Warnings concern unavailable
 optional CUDA extensions, library deprecations and test-process fork behavior;
 this is not a GPU training smoke test.
