@@ -9,6 +9,14 @@ the protocol. SI computation and training are different completion gates.
 rule. As of October 14, current CPU jobs are **13013561** (PDBbind-only) and
 **13013562** (joint), resubmitted to `i64m512ue` with unchanged code and resources.
 
+**Latest outcome:** solo job 13013561 completed QC and all alignments, then
+failed because all 19,018 accepted samples belong to ONE connected component.
+There is no certified three-way split or preprocessed training dataset yet.
+Do not submit training based on completion of `all_pairs/summary.json` alone.
+See [connectivity diagnosis](internal_pdbbind_connectivity_blocker_20261014.md).
+The user clarified that the joint task should keep running, with further joint
+processing deferred until tomorrow. No joint task cancellation is authorized.
+
 ## Two independent experiments
 
 | Cohort | Input universe | SI and preprocessing |
@@ -235,6 +243,15 @@ experiment root. Latest queue check: solo pending for `Resources`, joint for
 `Priority`; estimated starts October 14 12:00:36 / 21:03:38 (cluster time).
 These are scheduler forecasts, not guaranteed start times. Full QC/SI had not
 started at this check.
+
+Later accounting supersedes those forecasts: both jobs started October 14
+03:19:26. PDBbind-only ended at 04:12:28 with exit 1:0, not OOM. QC and all
+44,476,596 pairwise alignments completed; `assign_components` then rejected the
+single-component graph. `split/summary.json` and
+`dataset/preprocessing_summary.json` are absent. The exact contract has NOT
+been weakened; global-only and length-filter scenarios were read-only diagnostics.
+The joint job was running at the initial later check and was left untouched
+under the user's corrected instruction.
 
 The fixed5 revision passes **26 focused tests**, including strict 5 A/8 A
 boundaries, rejection of fewer than three actual contacts, and full tiny-cohort

@@ -48,8 +48,21 @@ and **13013562** (joint) use `i64m512ue`, still 64 CPUs/160G each. Only the
 partition changed; the same hash-verified code and output roots are reused.
 Immutable deployment root:
 `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_fixed5_20261013/`.
-Latest check: solo `PD (Resources)`, joint `PD (Priority)`; Slurm estimates
-October 14 12:00:36 and 21:03:38 respectively (cluster time, not guarantees).
+Both actually started October 14 03:19:26 (cluster time). Solo **13013561
+FAILED** at 04:12:28, elapsed 53m02s, exit 1:0, after completing all pairwise
+alignments. QC retained **19,018 / 19,037** samples and 9,432 unique chains;
+all **44,476,596** pairs completed, but 585,538 graph edges merge every sample
+into one component. The three-way split correctly refused to break that family;
+cross-set audit and TRAIN-only normalization have NOT completed.
+
+The extra local-SI/one-sided-coverage predicate admits very short-chain hubs:
+the one-residue chain `P` from 1eb1 connects to 9,282 unique sequences. A
+read-only global-only diagnostic gives 1,865 components (largest 6,529), but
+using that rule requires explicit protocol approval and a fresh cross-set
+audit, not a silent relaxation. No training has been submitted on this pool.
+Joint **13013562** was running at the initial check. The user clarified that
+it must be **left running and not advanced further today**; no cancellation,
+resubmission, joint artifact edits or new joint training were performed.
 Both old `-u` jobs are confirmed cancelled, elapsed zero. New jobs were held
 until the old jobs left the queue, then released to avoid concurrent writes.
 Resubmission receipt: `resubmission_i64m512ue_20261014.json` in the experiment root.
@@ -68,6 +81,7 @@ itself a controlled BioLiP improvement estimate.
 Protocol and entry points:
 [independent internal cohorts](internal_only_dual_cohort_protocol_20261013.md).
 Read-only follow-up: [PDBbind tag/geometry audit](pdbbind_tag_geometry_audit_20261013.md).
+Current blocker: [short-chain connectivity diagnosis](internal_pdbbind_connectivity_blocker_20261014.md).
 
 ## Recent matched training pilots
 
