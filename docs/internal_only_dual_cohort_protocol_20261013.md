@@ -6,7 +6,8 @@ the protocol. SI computation and training are different completion gates.
 
 **Current decision:** retain the historical fixed heavy-atom center distance
 `d_min < 5.0 A`. The vdW investigation below is deferred, not the active label
-rule. Current CPU jobs are **13007974** (PDBbind-only) and **13007975** (joint).
+rule. As of October 14, current CPU jobs are **13013561** (PDBbind-only) and
+**13013562** (joint), resubmitted to `i64m512ue` with unchanged code and resources.
 
 ## Two independent experiments
 
@@ -193,8 +194,9 @@ first. The current mainline and its results remain unchanged.
 ## Execution
 
 `scripts/slurm/run_internal_pairwise_cohort.slurm` is submitted twice, with
-different `COHORT` values. Each job requests one `i64m512u` CPU node, 64 CPUs,
-160G RAM and a seven-day limit. No a128, GPU or external download is requested.
+different `COHORT` values. The script defaults to `i64m512u`; the active jobs
+override it with `sbatch --partition=i64m512ue`. Each requests one CPU node,
+64 CPUs, 160G RAM and a seven-day limit. No a128, GPU or external download is requested.
 Deployment hashes source files into a new HDD experiment directory and does not
 `git pull` the dirty production checkout. Job IDs are recorded in deployment.json.
 
@@ -210,15 +212,29 @@ and were cancelled on the user's instruction to return to fixed 5 A.
 Root: `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_vdw2_20261013_r2/`.
 Receipt: `tmp/internal_si30_dual_vdw2_20261013_r2/deployment.json`.
 
-**Active fixed-5 A jobs:** **13007974** (PDBbind-only) and **13007975** (joint).
+**Initial fixed-5 A replacement jobs:** **13007974** (PDBbind-only) and **13007975** (joint).
 Root: `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_fixed5_20261013/`.
 Receipt: `tmp/internal_si30_dual_fixed5_20261013/deployment.json`.
 Both request `i64m512u`, 64 CPUs/160G, seven days. Source hashes were verified
 before submission. Remote preflight under the active rule passed with 22
 contacts for PDBbind 3ddq and 5 for BioLiP 1dwk_A_BS01_OXL. The old experiment
 directories are retained; unrelated jobs were not cancelled.
-Post-submission `squeue` and `sacct` agree: both new jobs are `PENDING (Priority)`;
-both vdW jobs are `CANCELLED` with zero elapsed time. No GPU training was submitted.
+At original submission, both were `PENDING (Priority)`; both vdW jobs were
+`CANCELLED` with zero elapsed time. No GPU training was submitted.
+
+**October 14 partition replacement:** the user requested `-ue`. Source hashes
+were rechecked against `deployment.json`, and new jobs **13013561** (solo) and
+**13013562** (joint) were submitted with `--hold --partition=i64m512ue`, using
+the exact original commands/paths otherwise. Old fixed5 jobs 13007974/13007975
+were cancelled while still pending; after confirming they left the queue, the
+new jobs were released. Accounting confirms zero elapsed time for both old jobs.
+No source, labels, SI policy, resource sizes or output paths were changed.
+
+The remote receipt is `resubmission_i64m512ue_20261014.json` in the same
+experiment root. Latest queue check: solo pending for `Resources`, joint for
+`Priority`; estimated starts October 14 12:00:36 / 21:03:38 (cluster time).
+These are scheduler forecasts, not guaranteed start times. Full QC/SI had not
+started at this check.
 
 The fixed5 revision passes **26 focused tests**, including strict 5 A/8 A
 boundaries, rejection of fewer than three actual contacts, and full tiny-cohort

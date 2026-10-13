@@ -1,4 +1,4 @@
-# PLC status as of 2026-10-13
+# PLC status as of 2026-10-14
 
 This is an index of verified results, not a new evaluation. It separates
 training validation, held-out testing, external benchmarking and data
@@ -42,10 +42,17 @@ externally clean mainline described above.
 The final user decision retains **native heavy-atom d_min <5.0 A**, not 5.5 A
 and not vdW. The vdW analysis is deferred. Original fixed5 jobs 13003680/13003681
 and then vdW jobs 13006855/13006856 were cancelled before starting; artifacts
-are retained. Active replacement jobs **13007974** (solo) and **13007975** (joint)
-are submitted to `i64m512u`, 64 CPUs/160G each. Immutable deployment root:
+are retained. Fixed5 `-u` jobs 13007974/13007975 were also cancelled while pending
+on October 14 at the user's request. Active replacements **13013561** (solo)
+and **13013562** (joint) use `i64m512ue`, still 64 CPUs/160G each. Only the
+partition changed; the same hash-verified code and output roots are reused.
+Immutable deployment root:
 `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_fixed5_20261013/`.
-Both are verified `PD (Priority)`; vdW jobs are confirmed cancelled, elapsed zero.
+Latest check: solo `PD (Resources)`, joint `PD (Priority)`; Slurm estimates
+October 14 12:00:36 and 21:03:38 respectively (cluster time, not guarantees).
+Both old `-u` jobs are confirmed cancelled, elapsed zero. New jobs were held
+until the old jobs left the queue, then released to avoid concurrent writes.
+Resubmission receipt: `resubmission_i64m512ue_20261014.json` in the experiment root.
 Remote fixed5 preflights passed: 3ddq has 22 positive residues, BioLiP
 1dwk_A_BS01_OXL has 5. Samples still require >=3 positives, including after the
 existing residue cap. The versioned fixed5 label mask/axis is checked by the
