@@ -3,10 +3,10 @@
 # COHORT=pdbbind_only: PDBbind QC -> its own all-pairs SI graph/split/stats.
 # COHORT=pdbbind_biolip_joint: joint QC -> a separately recomputed graph/split/stats.
 # No COACH/HOLO exclusion, no old split assignment, no representative-only SI.
-# Binding residue: >=2 heavy-atom pairs with d <= vdW_sum+0.5 A (BioLiP-style).
-# Save >=1-pair mask for CASP-style diagnostics; sample needs >=3 binding residues.
+# Binding residue: nearest native heavy-atom CENTER distance d_min < 5.0 A.
+# Sample needs >=3 binding residues. vdW is deferred, NOT the active label rule.
 # Near/far auxiliary classes keep physical d_min<8 A / >=8 A for noncontacts.
-# Legacy ligand chemistry QC remains; unknown elements never default to carbon.
+# Legacy ligand chemistry QC remains; fixed5 needs no vdW radii or atom-pair count.
 # Biopython global + high-coverage local alignments, fixed scores, all unique pairs.
 # Full graph and fresh cross-set audit must pass before TRAIN-only normalization.
 # No GPU, model training, source overwrites, downloads, or a128 CPU allocation.
@@ -42,7 +42,7 @@ esac
 "${PYTHON}" -u scripts/diagnostics/prepare_internal_codataset_sequences.py \
     --pdbbind-root "${PDBBIND}" \
     --pdbbind-ids preparation/dataset_split/mmseqs_splits_strict.txt \
-    "${BIO_ARGS[@]}" --output-dir "${OUT}/pool" --workers 8 --min-atom-contacts 2
+    "${BIO_ARGS[@]}" --output-dir "${OUT}/pool" --workers 8 --contact-rule fixed5
 "${PYTHON}" -u scripts/diagnostics/run_internal_pairwise_split.py \
     --pool-dir "${OUT}/pool" --output-dir "${OUT}/split" \
     --workers "${SLURM_CPUS_PER_TASK:-64}" --chunk-size 20000 --seed 42

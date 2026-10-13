@@ -4,6 +4,10 @@ Date: 2026-10-13. New protocol requested by the user. Do not overwrite the
 existing externally clean split, or compare headline scores without naming
 the protocol. SI computation and training are different completion gates.
 
+**Current decision:** retain the historical fixed heavy-atom center distance
+`d_min < 5.0 A`. The vdW investigation below is deferred, not the active label
+rule. Current CPU jobs are **13007974** (PDBbind-only) and **13007975** (joint).
+
 ## Two independent experiments
 
 | Cohort | Input universe | SI and preprocessing |
@@ -26,8 +30,8 @@ These models must not be presented as external-benchmark-SI-clean models.
 No relaxation of biological/data validity is implied by removing benchmark
 exclusions. Before constructing the SI graph:
 
-- Require at least three actual class-0 contact residues under the versioned
-  vdW atom-pair protocol below. Also require three within the unchanged model
+- Require at least three actual class-0 contact residues with native heavy-atom
+  center distance `d_min < 5.0 A`. Also require three within the unchanged model
   residue limit of 1,800. Record rejection reasons.
 - Require finite features, 109D ligand atoms, 6D edges, 1280D ESM2, 62D protein
   physicochemistry, 89D raw spatial scalars and 8x3 vectors. Require exact
@@ -49,11 +53,28 @@ Every exclusion is logged. Exact duplicate BioLiP metadata observations have an
 alias ledger; same-PDB and exact-sequence copies cannot cross split boundaries.
 Broader chemical/site deduplication must not be confused with protein SI.
 
-## Revised Contact Labels: vdW Atom Pairs
+## Active Contact Labels: Fixed 5 A
 
-The initial fixed <5 A jobs were held before starting after the user changed
-the label definition. A 5.5 A fixed threshold is also NOT equivalent to the
-following atom-type-dependent rule:
+On the user's final instruction, both independent cohorts use protocol
+`plc_heavy_atom_dmin_lt5_v1`: class0 for `d_min < 5.0 A`, class1 for
+`5.0 <= d_min < 8.0 A`, and class2 for `d_min >= 8.0 A`. Distances are minima
+over native ligand heavy atoms and the heavy atoms of each input residue.
+Exactly 5.0 A is noncontact, matching the original loader; neither 5.5 A nor
+a vdW radius correction is active. There is no two-atom-pair requirement.
+
+The isolated output is `dataset/residue_ligand_distances_dcenter.pt`, containing
+physical `distances`, explicit protocol, contact mask and exact residue keys.
+The versioned loader validates the protocol/mask/axis, so a stray configuration
+threshold cannot silently reinterpret these labels. The physical distances
+remain the regression target. Old caches and existing training are untouched.
+5.5 A counts are recorded only as diagnostics; vdW counts are not calculated
+for these jobs. Both cohorts rerun sample QC, since label rules affect admission.
+
+## Deferred Contact Alternative: vdW Atom Pairs
+
+The following alternative was implemented and tested, then deferred by the
+user before either vdW job started. It does not describe the active jobs.
+A 5.5 A fixed threshold is NOT equivalent to this atom-type-dependent rule:
 
 `contact(a,b) = [d(a,b) <= r_vdW(a) + r_vdW(b) + 0.5 A]`.
 
@@ -102,7 +123,7 @@ One real local sanity case (3ddq, 1,134 residues / 26 ligand heavy atoms):
 
 | Definition | Positive residues |
 | --- | ---: |
-| Fixed d_min <5 A (superseded job) | 22 |
+| Fixed d_min <5 A (current rule) | 22 |
 | Fixed d_min <=5.5 A | 25 |
 | vdW sum +0.5 A, >=1 pair | 13 |
 | vdW sum +0.5 A, >=2 pairs | 7 |
@@ -183,10 +204,33 @@ then cancelled after replacement submission. Their retained experiment root:
 `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_20261013/`.
 Local submission receipt: `tmp/internal_si30_dual_20261013/deployment.json`.
 
-**Replacement vdW jobs:** **13006855** (PDBbind-only) and **13006856** (joint),
-same `i64m512u`, 64 CPUs/160G each. Post-submission check: both `PD (Priority)`.
+**Deferred vdW jobs:** **13006855** (PDBbind-only) and **13006856** (joint),
+same `i64m512u`, 64 CPUs/160G each. Both were still `PD (Priority)` when checked
+and were cancelled on the user's instruction to return to fixed 5 A.
 Root: `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_vdw2_20261013_r2/`.
 Receipt: `tmp/internal_si30_dual_vdw2_20261013_r2/deployment.json`.
+
+**Active fixed-5 A jobs:** **13007974** (PDBbind-only) and **13007975** (joint).
+Root: `/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_fixed5_20261013/`.
+Receipt: `tmp/internal_si30_dual_fixed5_20261013/deployment.json`.
+Both request `i64m512u`, 64 CPUs/160G, seven days. Source hashes were verified
+before submission. Remote preflight under the active rule passed with 22
+contacts for PDBbind 3ddq and 5 for BioLiP 1dwk_A_BS01_OXL. The old experiment
+directories are retained; unrelated jobs were not cancelled.
+Post-submission `squeue` and `sacct` agree: both new jobs are `PENDING (Priority)`;
+both vdW jobs are `CANCELLED` with zero elapsed time. No GPU training was submitted.
+
+The fixed5 revision passes **26 focused tests**, including strict 5 A/8 A
+boundaries, rejection of fewer than three actual contacts, and full tiny-cohort
+QC -> SI -> TRAIN-only normalization -> production-loader tests under BOTH
+protocols. CPU script syntax and the changed-file whitespace check pass.
+
+The old PDBbind tag cache was inspected after submission. Its positive-distance
+median is 3.5705 A, but 208 complexes contain zero-distance records. Source
+geometry checks on three examples reproduce near-coincident protein/ligand
+atoms; the cause needs separate chemical curation, not a threshold change.
+No additional exclusion was silently introduced. Details:
+[tag geometry audit](pdbbind_tag_geometry_audit_20261013.md).
 
 The initial vdW deployment (without `_r2`) submitted **no jobs**: its preflight
 incorrectly stopped after 20 older V5 BioLiP tensors. The directory contains

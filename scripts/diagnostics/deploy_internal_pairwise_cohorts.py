@@ -55,9 +55,9 @@ report=dict(root=str(root),sha256=expected,biopython=Bio.__version__,jobs={})
 sys.path.insert(0,str(code/'scripts/diagnostics'))
 from smoke_internal_contact_labels import run_smoke
 report['contact_smoke']=run_smoke('/hpc2hdd/home/shuang886/jhspoolers/PLC/data',
-                                '/hpc2hdd/home/shuang886/biolip',root/'contact_smoke')
+                                '/hpc2hdd/home/shuang886/biolip',root/'contact_smoke',contact_rule='fixed5')
 (root/'deployment.json').write_text(json.dumps(report,indent=2)+'\\n')
-for cohort,name in [('pdbbind_only','pdb_vdw2_si30'),('pdbbind_biolip_joint','joint_vdw2_si30')]:
+for cohort,name in [('pdbbind_only','pdb_5a_si30'),('pdbbind_biolip_joint','joint_5a_si30')]:
     out=root/cohort
     out.mkdir()
     cmd=['/opt/slurm/bin/sbatch','--parsable','--job-name='+name,'--chdir='+str(code),

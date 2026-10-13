@@ -39,14 +39,19 @@ subset of the joint split. The >=3 actual contact-tag filter and legacy ligand
 chemistry/validity gates are retained. These branches do not replace the
 externally clean mainline described above.
 
-Original CPU jobs **13003680** (solo) and **13003681** (joint) were held before
-starting and replaced because they used the superseded fixed-5 A definition. The
-replacement protocol uses vdW radii sum +0.5 A, >=2 atom pairs per binding
-residue, and retains >=1-pair diagnostic masks; samples still need >=3 binding
-residues. The fixed 5.5 A suggestion is not treated as equivalent to vdW.
-Replacement jobs **13006855** (solo) and **13006856** (joint) are submitted to
-`i64m512u`, 64 CPUs/160G each; latest check: both `PD (Priority)`. The remote
-PDBbind and BioLiP contact preflights passed. V5/V6 caches coexist in BioLiP;
+The final user decision retains **native heavy-atom d_min <5.0 A**, not 5.5 A
+and not vdW. The vdW analysis is deferred. Original fixed5 jobs 13003680/13003681
+and then vdW jobs 13006855/13006856 were cancelled before starting; artifacts
+are retained. Active replacement jobs **13007974** (solo) and **13007975** (joint)
+are submitted to `i64m512u`, 64 CPUs/160G each. Immutable deployment root:
+`/hpc2hdd/home/shuang886/PLC/experiments/internal_si30_dual_fixed5_20261013/`.
+Both are verified `PD (Priority)`; vdW jobs are confirmed cancelled, elapsed zero.
+Remote fixed5 preflights passed: 3ddq has 22 positive residues, BioLiP
+1dwk_A_BS01_OXL has 5. Samples still require >=3 positives, including after the
+existing residue cap. The versioned fixed5 label mask/axis is checked by the
+loader; legacy caches are unchanged. **26 focused tests pass**, including both
+protocols through the full tiny-cohort preprocessing/loader pipeline.
+V5/V6 caches coexist in BioLiP;
 old/missing-validity tensors are excluded with reasons, not silently accepted.
 No new split is certified and no training has started. Latest GFGF/V11m13
 seed44 scratch training is the next step after preprocessing and loader/smoke
@@ -55,6 +60,7 @@ itself a controlled BioLiP improvement estimate.
 
 Protocol and entry points:
 [independent internal cohorts](internal_only_dual_cohort_protocol_20261013.md).
+Read-only follow-up: [PDBbind tag/geometry audit](pdbbind_tag_geometry_audit_20261013.md).
 
 ## Recent matched training pilots
 

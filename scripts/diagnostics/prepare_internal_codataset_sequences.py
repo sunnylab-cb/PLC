@@ -96,15 +96,18 @@ def bio_eligible(row):
 
 def main():
     from internal_cohort_qc import qc_sample
-    from src.contact_labels import contact_protocol
+    from src.contact_labels import contact_protocol, fixed5_protocol
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pdbbind-root", type=Path, required=True)
     ap.add_argument("--pdbbind-ids", type=Path, required=True)
     ap.add_argument("--biolip-root", type=Path, help="Omit for the independent PDBbind-only pool")
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--contact-rule", choices=("fixed5", "vdw"), required=True,
+                    help="Explicit contact protocol; fixed5 is the approved current mainline")
     ap.add_argument("--min-atom-contacts", type=int, choices=(1, 2), default=2)
     args = ap.parse_args()
+    protocol = fixed5_protocol() if args.contact_rule == "fixed5" else contact_protocol(args.min_atom_contacts)
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
     complete = out / "pool_summary.json"
@@ -116,7 +119,7 @@ def main():
         Path(__file__).resolve().parents[2]/"src/contact_labels.py") if p}
     input_hashes["pdbbind_root"] = str(args.pdbbind_root.resolve())
     input_hashes["biolip_root"] = str(args.biolip_root.resolve()) if args.biolip_root else None
-    input_hashes["contact_label_protocol"] = contact_protocol(args.min_atom_contacts)
+    input_hashes["contact_label_protocol"] = protocol
     contract_path = out/"pool_input_contract.json"
     if contract_path.exists() and json.loads(contract_path.read_text()) != input_hashes:
         raise ValueError("pool extraction contract changed; use a new output directory")
@@ -151,7 +154,7 @@ def main():
         samples[f"pdbbind:{sid}"] = dict(source="pdbbind", sample_id=sid, pdb_id=sid,
             selected_chain=None, ligand_path=str(ligand),
             esm_path=str(esm), v4_path=str(v4), feature_files_present=True,
-            min_atom_contacts=args.min_atom_contacts, training_approved=False)
+            contact_rule=args.contact_rule, min_atom_contacts=args.min_atom_contacts, training_approved=False)
     counts, excluded, aliases, seen_obs, seen_ids = Counter(), early_excluded, [], {}, set()
     counts["raw_pdbbind_rows"] = len(ids)
     with gzip.open(metadata, "rt") if metadata else nullcontext(None) as f:
@@ -183,7 +186,7 @@ def main():
                 continue
             samples[f"biolip:{sid}"] = dict(source="biolip", sample_id=sid, pdb_id=pdb,
                 selected_chain=chain, biolip_root=str(args.biolip_root), ligand_metadata=row,
-                min_atom_contacts=args.min_atom_contacts,
+                contact_rule=args.contact_rule, min_atom_contacts=args.min_atom_contacts,
                 ligand_path=str(ligand), esm_path=str(esm), v4_path=str(v4),
                 feature_files_present=ligand.is_file() and esm.is_file(), training_approved=False,
                 ligand_id=row["ligand_id"], ligand_resseq=row["ligand_resseq"],
@@ -248,12 +251,14 @@ def main():
         excluded_rows=len(excluded), exclusion_counts=dict(Counter(r["reason"] for r in excluded)),
         duplicate_observations=len(aliases),
         external_benchmarks_used=False, old_split_assignments_used=False,
-        contact_label_protocol=contact_protocol(args.min_atom_contacts),
+        contact_label_protocol=protocol,
         contact_counts_by_source={source: {
             field: sum(extracted[k].get(field, 0) for k, s in accepted.items() if s["source"] == source)
-            for field in ("n_contact", "n_contact_casp1", "n_contact_biolip2", "n_contact_lt5", "n_contact_le5p5")}
+            for field in (("n_contact", "n_contact_lt5", "n_contact_le5p5") +
+                          (("n_contact_casp1", "n_contact_biolip2") if args.contact_rule == "vdw" else ()))}
             for source in sorted({s["source"] for s in accepted.values()})},
-        policy="native-heavy-atom d<=vdW_sum+0.5A; minimum atom contacts from versioned protocol; "
+        policy=("native-heavy-atom d_min<5.0A; " if args.contact_rule == "fixed5" else
+                "native-heavy-atom d<=vdW_sum+0.5A; minimum atom contacts from versioned protocol; ") +
                "binding residues >=3 (also after residue cap1800); finite/axis QC; "
                "BioLiP legacy regular_organic route5, exact complete mapping, 6-128 heavy atoms, completeness>=0.8; "
                "PDBbind existing V5 native-coordinate ligands >=6 heavy atoms, no new upper atom exclusion",

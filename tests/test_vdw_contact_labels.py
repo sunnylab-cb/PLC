@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/"scripts/diagnostics"))
 from internal_contact_geometry import count_contacts, ligand_elements, protein_elements
 from internal_cohort_qc import cif_atoms
-from src.contact_labels import contact_protocol, decode_contact_labels, validate_contact_axis
+from src.contact_labels import contact_protocol, decode_contact_labels, fixed5_protocol, validate_contact_axis
 
 
 def label_fixture(minimum=2):
@@ -68,6 +68,23 @@ def test_corrupt_protocol_mask_and_axis_fail_closed():
     bad = dict(data, residue_index=[2, 1, 3])
     with pytest.raises(ValueError, match="residue-key"):
         validate_contact_axis(entry, data, bad)
+
+
+def test_fixed5_is_strict_center_distance_and_ignores_vdw_pair_minimum():
+    distances = torch.tensor([0., 4.999, 5., 5.5, 7.999, 8.])
+    entry = dict(contact_label_protocol=fixed5_protocol(), distances=distances,
+                 contact_mask=distances < 5., n_residues=6,
+                 residue_keys=[("A", i, "") for i in range(6)])
+    labels, raw = decode_contact_labels(entry)
+    assert labels.tolist() == [0, 0, 1, 1, 1, 2]
+    assert torch.equal(raw, distances)
+    entry["contact_mask"][2] = True
+    with pytest.raises(ValueError, match="fixed 5A"):
+        decode_contact_labels(entry)
+    entry["contact_mask"][2] = False
+    entry["contact_label_protocol"]["contact_dmin_angstrom"] = 5.5
+    with pytest.raises(ValueError, match="protocol"):
+        decode_contact_labels(entry)
 
 
 def test_explicit_element_resolution_never_calls_ca_calcium_or_other_carbon():
@@ -169,7 +186,8 @@ def test_biolip_chain_qc_preserves_atom_geometry_needed_by_loader(tmp_path):
     assert result["n_contact_biolip2"] == 3
 
 
-def test_small_cohort_end_to_end_pool_split_stats_and_production_loader(tmp_path, monkeypatch):
+@pytest.mark.parametrize("contact_rule", ["vdw", "fixed5"])
+def test_small_cohort_end_to_end_pool_split_stats_and_production_loader(tmp_path, monkeypatch, contact_rule):
     import prepare_internal_codataset_sequences as prepare
     import run_internal_pairwise_split as split
     import preprocess_internal_cohort as preprocess
@@ -196,13 +214,18 @@ def test_small_cohort_end_to_end_pool_split_stats_and_production_loader(tmp_path
             path.parent.mkdir(parents=True)
             torch.save(content, path)
     monkeypatch.setattr(sys, "argv", ["prepare", "--pdbbind-root", str(data), "--pdbbind-ids", str(ids),
-                                      "--output-dir", str(pool), "--workers", "1"])
+                                      "--output-dir", str(pool), "--workers", "1",
+                                      "--contact-rule", contact_rule])
     prepare.main()
     rows = [json.loads(s) for s in (pool/"samples.jsonl").read_text().splitlines()]
     assert len(rows) == 3
     # Regression: a sequence-loop variable previously overwrote each sample's QC.
     assert all(row["qc"]["aligned_protein_path"] for row in rows)
-    assert all(row["qc"]["n_contact_biolip2"] == 3 for row in rows)
+    assert all(row["qc"]["n_contact"] == 3 for row in rows)
+    if contact_rule == "vdw":
+        assert all(row["qc"]["n_contact_biolip2"] == 3 for row in rows)
+    else:
+        assert all("n_contact_biolip2" not in row["qc"] for row in rows)
     monkeypatch.setattr(sys, "argv", ["split", "--pool-dir", str(pool), "--output-dir", str(si),
                                       "--workers", "1", "--chunk-size", "2"])
     split.main()
@@ -210,7 +233,9 @@ def test_small_cohort_end_to_end_pool_split_stats_and_production_loader(tmp_path
                                       "--output-dir", str(out)])
     preprocess.main()
     summary = json.loads((out/"preprocessing_summary.json").read_text())
-    assert summary["contact_label_protocol"] == contact_protocol(2)
+    assert summary["contact_label_protocol"] == (contact_protocol(2) if contact_rule == "vdw" else fixed5_protocol())
+    assert Path(summary["labels_file"]).name == ("residue_ligand_contacts_vdw.pt" if contact_rule == "vdw"
+                                                else "residue_ligand_distances_dcenter.pt")
     dataset = PocketDatasetV8(data_root=str(out), pdb_ids=["1abc"],
         protein_features_dir="complete_features_v4_nma", nma_features_dir="complete_features_v4_nma",
         ligand_features_dir="ligand_features_v5",

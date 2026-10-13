@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from internal_cohort_qc import finite_shape
-from src.contact_labels import decode_contact_labels
+from src.contact_labels import FIXED5_PROTOCOL_ID, decode_contact_labels
 from prepare_internal_codataset_sequences import digest, save_json
 from run_internal_pairwise_split import load_pool
 
@@ -185,7 +185,9 @@ def main():
         contact_counts[assignment[key]].append(n_contact)
         if index % 500 == 0:
             print("PREPROCESS",pool["cohort"],index,"/",len(samples),flush=True)
-    label_file = out/"residue_ligand_contacts_vdw.pt"
+    label_name = ("residue_ligand_distances_dcenter.pt" if pool["contact_label_protocol"]["id"] == FIXED5_PROTOCOL_ID
+                  else "residue_ligand_contacts_vdw.pt")
+    label_file = out/label_name
     atomic_save(distances,label_file)
     (out/"splits.txt").write_text("".join(f"{s}\t{k}\n" for s,k in output_rows))
     summary = dict(**contract,preprocessing_passed=True,training_smoke_passed=False,

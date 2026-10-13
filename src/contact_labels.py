@@ -7,6 +7,7 @@ import torch
 
 
 PROTOCOL_ID = "plc_vdw_atom_pairs_v1"
+FIXED5_PROTOCOL_ID = "plc_heavy_atom_dmin_lt5_v1"
 # Explicit project table, not a claim of bitwise reproduction of CASP/BioLiP.
 # Values retain the existing PLC Bondi/extended table; unknowns have no fallback.
 VDW_RADII = {
@@ -28,6 +29,16 @@ def contact_protocol(min_atom_contacts=2):
     )
 
 
+def fixed5_protocol():
+    """The historical PLC contact convention, now with explicit provenance."""
+    return dict(
+        id=FIXED5_PROTOCOL_ID, contact_dmin_angstrom=5.0, comparison="<",
+        heavy_atoms_only=True, native_bound_coordinates=True,
+        near_noncontact_dmin_angstrom=8.0, near_comparison="<",
+        minimum_binding_residues_per_sample=3,
+    )
+
+
 def decode_contact_labels(entry):
     """Return class IDs and physical d_min, checking stored masks against counts.
 
@@ -36,25 +47,32 @@ physical d_min <8 A and class 2 is farther away. This near/far distinction is a
 PLC auxiliary convention, not part of the CASP/BioLiP binding-site definition.
 """
     protocol = entry["contact_label_protocol"]
-    if protocol != contact_protocol(protocol.get("min_atom_contacts")):
-        raise ValueError("Unsupported or changed contact-label protocol")
     distances = torch.as_tensor(entry["distances"], dtype=torch.float32)
-    counts = torch.as_tensor(entry["atom_contact_counts"])
     mask = torch.as_tensor(entry["contact_mask"])
-    if (distances.ndim != 1 or counts.shape != distances.shape or mask.shape != distances.shape
-            or counts.is_floating_point() or counts.dtype == torch.bool or mask.dtype != torch.bool
-            or not bool(torch.isfinite(distances).all()) or bool((distances < 0).any())
-            or bool((counts < 0).any())):
+    if (distances.ndim != 1 or mask.shape != distances.shape or mask.dtype != torch.bool
+            or not bool(torch.isfinite(distances).all()) or bool((distances < 0).any())):
         raise ValueError("Invalid contact label shapes, dtypes or values")
-    if not torch.equal(mask, counts >= protocol["min_atom_contacts"]):
-        raise ValueError("Contact mask disagrees with atom-contact counts")
-    for name, minimum in (("contact_mask_casp1", 1), ("contact_mask_biolip2", 2)):
-        other = torch.as_tensor(entry[name])
-        if other.dtype != torch.bool or not torch.equal(other, counts >= minimum):
-            raise ValueError(f"Inconsistent diagnostic mask: {name}")
+    if protocol.get("id") == FIXED5_PROTOCOL_ID:
+        if protocol != fixed5_protocol():
+            raise ValueError("Unsupported or changed contact-label protocol")
+        if not torch.equal(mask, distances < protocol["contact_dmin_angstrom"]):
+            raise ValueError("Contact mask disagrees with fixed 5A distance cutoff")
+    else:
+        if protocol != contact_protocol(protocol.get("min_atom_contacts")):
+            raise ValueError("Unsupported or changed contact-label protocol")
+        counts = torch.as_tensor(entry["atom_contact_counts"])
+        if (counts.shape != distances.shape or counts.is_floating_point()
+                or counts.dtype == torch.bool or bool((counts < 0).any())):
+            raise ValueError("Invalid atom-contact count shapes, dtypes or values")
+        if not torch.equal(mask, counts >= protocol["min_atom_contacts"]):
+            raise ValueError("Contact mask disagrees with atom-contact counts")
+        for name, minimum in (("contact_mask_casp1", 1), ("contact_mask_biolip2", 2)):
+            other = torch.as_tensor(entry[name])
+            if other.dtype != torch.bool or not torch.equal(other, counts >= minimum):
+                raise ValueError(f"Inconsistent diagnostic mask: {name}")
     if int(entry["n_residues"]) != len(distances) or len(entry["residue_keys"]) != len(distances):
         raise ValueError("Contact label residue axis mismatch")
-    labels = torch.full_like(counts, 2, dtype=torch.long)
+    labels = torch.full_like(distances, 2, dtype=torch.long)
     labels[distances < protocol["near_noncontact_dmin_angstrom"]] = 1
     labels[mask] = 0
     return labels, distances

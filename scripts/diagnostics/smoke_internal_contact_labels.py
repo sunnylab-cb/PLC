@@ -9,11 +9,12 @@ from internal_cohort_qc import qc_sample, load_tensor
 from prepare_internal_codataset_sequences import bio_eligible, feature_path, save_json
 
 
-def run_smoke(pdbbind_root, biolip_root, output):
+def run_smoke(pdbbind_root, biolip_root, output, contact_rule="fixed5"):
     pdbbind_root, biolip_root, output = map(Path, (pdbbind_root, biolip_root, output))
     output.mkdir(parents=True, exist_ok=True)
     sid = "3ddq"
-    sample = dict(source="pdbbind", sample_id=sid, pdb_id=sid, selected_chain=None, min_atom_contacts=2)
+    sample = dict(source="pdbbind", sample_id=sid, pdb_id=sid, selected_chain=None,
+                  contact_rule=contact_rule, min_atom_contacts=2)
     for key, folder, suffix in (
         ("v4_path", "complete_features_v4_nma", "_protein_conf0.pt"),
         ("esm_path", "esm2_latents", "_protein.pt"),
@@ -43,7 +44,8 @@ def run_smoke(pdbbind_root, biolip_root, output):
                 legacy_skipped += 1
                 continue
             sample = dict(source="biolip", sample_id=sid, pdb_id=pdb_id, selected_chain=chain,
-                          min_atom_contacts=2, biolip_root=str(biolip_root), ligand_metadata=row,
+                          contact_rule=contact_rule, min_atom_contacts=2,
+                          biolip_root=str(biolip_root), ligand_metadata=row,
                           **{k: str(p) for k, p in paths.items()})
             result = qc_sample(("biolip:"+sid, sample, str(output)))
             attempts.append(dict(key=result["key"], error=result["error"]))
@@ -59,5 +61,6 @@ def run_smoke(pdbbind_root, biolip_root, output):
     if bio is None:
         raise ValueError("No passing BioLiP smoke sample: "+json.dumps(attempts))
     return {source: {k: r[k] for k in (
-        "key", "n_contact", "n_contact_casp1", "n_contact_biolip2", "n_contact_lt5", "n_contact_le5p5")}
+        "key", "contact_label_protocol", "n_contact", "n_contact_casp1", "n_contact_biolip2",
+        "n_contact_lt5", "n_contact_le5p5") if k in r}
         for source, r in (("pdbbind", pdb), ("biolip", bio))}

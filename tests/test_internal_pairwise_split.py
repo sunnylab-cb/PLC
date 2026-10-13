@@ -120,7 +120,8 @@ def test_reject_normalized_ligand_and_native_coord_absence():
         ligand_check(ligand, {"source":"pdbbind"})
 
 
-def test_contact_geometry_not_metadata_counts(tmp_path):
+@pytest.mark.parametrize("contact_rule", ["fixed5", "vdw"])
+def test_contact_geometry_not_metadata_counts(tmp_path, contact_rule):
     n = 3
     protein = dict(physchem_features=torch.zeros(n,62), spatial_scalar_raw_features=torch.zeros(n,89),
         spatial_vector_features=torch.zeros(n,8,3), ca_coords=torch.zeros(n,3),
@@ -132,11 +133,33 @@ def test_contact_geometry_not_metadata_counts(tmp_path):
     for path, value in ((p,protein),(e,esm),(l,ligand_fixture())):
         torch.save(value, path)
     sample = dict(source="pdbbind", sample_id="1abc", selected_chain=None,
-                  v4_path=str(p), esm_path=str(e), ligand_path=str(l))
+                  contact_rule=contact_rule, v4_path=str(p), esm_path=str(e), ligand_path=str(l))
     result = qc_sample(("pdbbind:1abc",sample,str(tmp_path)))
     assert "fewer_than_3_actual_contact_tags:2" in result["error"]
     assert not (tmp_path/"labels/1abc.pt").exists()
     assert torch.equal(heavy_distances(protein["all_atom_coords"],np.zeros((6,3))),torch.tensor([1.,2.,9.]))
+
+
+def test_fixed5_qc_keeps_residues_outside_vdw_and_rejects_5a_boundary(tmp_path):
+    protein = dict(physchem_features=torch.zeros(5,62), spatial_scalar_raw_features=torch.zeros(5,89),
+        spatial_vector_features=torch.zeros(5,8,3), ca_coords=torch.zeros(5,3),
+        residue_names=["ALA"]*5, residue_indices=list(range(1,6)), insertion_codes=[""]*5, chain_ids=["A"]*5,
+        all_atom_coords=[np.array([[x,0,0]]) for x in (4.1,4.5,4.9,5.,5.5)], all_atom_names=[["CA"]]*5)
+    esm = dict(embeddings=torch.zeros(5,1280), residue_name_1=["A"]*5, residue_index=list(range(1,6)),
+               insertion_code=[""]*5, chain_id=["A"]*5)
+    paths = {}
+    for name, value in (("v4_path",protein),("esm_path",esm),("ligand_path",ligand_fixture())):
+        path = tmp_path/(name+".pt")
+        torch.save(value,path)
+        paths[name] = str(path)
+    sample = dict(source="pdbbind", sample_id="1abc", selected_chain=None, contact_rule="fixed5", **paths)
+    result = qc_sample(("pdbbind:1abc",sample,str(tmp_path)))
+    assert result["error"] is None
+    assert result["n_contact"] == 3
+    label = torch.load(result["labels_path"],weights_only=False)
+    assert label["contact_mask"].tolist() == [True,True,True,False,False]
+    result = qc_sample(("pdbbind:1abc",dict(sample,contact_rule="vdw"),str(tmp_path/"vdw")))
+    assert "fewer_than_3_actual_contact_tags:0" in result["error"]
 
 
 def test_full_enumeration_resume_integrity_and_fresh_cross_audit(tmp_path):

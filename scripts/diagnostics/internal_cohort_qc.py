@@ -10,6 +10,7 @@ import torch
 from scipy.spatial import cKDTree
 
 from internal_contact_geometry import count_contacts, ligand_elements, protein_elements
+from src.contact_labels import fixed5_protocol
 
 
 @lru_cache(maxsize=3)
@@ -124,6 +125,9 @@ def qc_sample(task):
     provenance = {str(p): dict(size=p.stat().st_size, mtime_ns=p.stat().st_mtime_ns) for p in paths}
     record = dict(key=key, sources=provenance, error=None)
     try:
+        rule = sample.get("contact_rule", "vdw")
+        if rule not in ("fixed5", "vdw"):
+            raise ValueError(f"Unknown contact rule: {rule}")
         protein, esm, ligand = (load_tensor(str(p)) for p in paths)
         pk, ek = residue_axis(protein), residue_axis(esm)
         positions = [i for i, k in enumerate(pk) if sample["selected_chain"] is None
@@ -142,10 +146,12 @@ def qc_sample(task):
             finite_shape(protein[field], (n_full, *tail), field)
         finite_shape(esm["embeddings"], (n, 1280), "ESM2")
         ligand_xyz, n_heavy = ligand_check(ligand, sample)
-        ligand_symbols, element_method, native_source = ligand_elements(ligand, ligand_xyz)
-        if native_source:
-            st = native_source.stat()
-            provenance[str(native_source)] = dict(size=st.st_size, mtime_ns=st.st_mtime_ns)
+        element_method = "not required for fixed heavy-atom center-distance labels"
+        if rule == "vdw":
+            ligand_symbols, element_method, native_source = ligand_elements(ligand, ligand_xyz)
+            if native_source:
+                st = native_source.stat()
+                provenance[str(native_source)] = dict(size=st.st_size, mtime_ns=st.st_mtime_ns)
         if sample["source"] == "pdbbind":
             atoms = protein["all_atom_coords"]
             names = protein["all_atom_names"]
@@ -158,8 +164,9 @@ def qc_sample(task):
                 keep = [j for j, name in enumerate(names[i])
                         if not str(name).lstrip("0123456789").startswith(("H", "D"))]
                 heavy_atoms.append(np.asarray(atoms[i])[keep])
-                heavy_symbols.append(protein_elements(str(protein["residue_names"][i]).upper(),
-                                                      [names[i][j] for j in keep]))
+                if rule == "vdw":
+                    heavy_symbols.append(protein_elements(str(protein["residue_names"][i]).upper(),
+                                                          [names[i][j] for j in keep]))
             protein_path = str(paths[0])
         else:
             root = Path(sample["biolip_root"])
@@ -189,13 +196,18 @@ def qc_sample(task):
             sliced["all_atom_coords"] = heavy_atoms
             sliced["all_atom_names"] = heavy_names
             protein_path = str(Path(output)/"chain_sidecars"/(sample["sample_id"]+"_protein.pt"))
-        labels = count_contacts(heavy_atoms, heavy_symbols, ligand_xyz, ligand_symbols,
-                                sample.get("min_atom_contacts", 2))
+        if rule == "fixed5":
+            distances = heavy_distances(heavy_atoms, ligand_xyz)
+            labels = dict(contact_label_protocol=fixed5_protocol(), distances=distances,
+                          contact_mask=distances < 5.0)
+        else:
+            labels = count_contacts(heavy_atoms, heavy_symbols, ligand_xyz, ligand_symbols,
+                                    sample.get("min_atom_contacts", 2))
+            record.update(n_contact_casp1=int(labels["contact_mask_casp1"].sum()),
+                          n_contact_biolip2=int(labels["contact_mask_biolip2"].sum()))
         distances = labels["distances"]
         n_contact = int(labels["contact_mask"].sum())
         record.update(n_contact=n_contact,
-                      n_contact_casp1=int(labels["contact_mask_casp1"].sum()),
-                      n_contact_biolip2=int(labels["contact_mask_biolip2"].sum()),
                       n_contact_lt5=int((distances < 5.).sum()),
                       n_contact_le5p5=int((distances <= 5.5).sum()),
                       ligand_element_source=element_method,
