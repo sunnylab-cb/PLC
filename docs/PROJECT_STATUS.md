@@ -29,6 +29,26 @@ homology audit. None is approved merely because its features exist.
 Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013.md),
 [expansion assessment](biolip_expansion_assessment_20261013.md).
 
+### New internal-only protocols (submitted, not yet certified)
+
+The user separately approved two independently rebuilt cohorts: PDBbind-only
+and PDBbind+BioLiP joint. Neither uses external benchmark exclusion. Each runs
+its own sample QC, exhaustive Biopython global/local SI graph, connected split,
+fresh cross-set audit and TRAIN-only normalization; the solo split is not a
+subset of the joint split. The >=3 actual contact-tag filter and legacy ligand
+chemistry/validity gates are retained. These branches do not replace the
+externally clean mainline described above.
+
+CPU jobs **13003680** (solo) and **13003681** (joint) were submitted to
+`i64m512u`, each 64 CPUs/160G. Last checked: both pending `Priority`;
+no new split is certified and no training has started. Latest GFGF/V11m13
+seed44 scratch training is the next step after preprocessing and loader/smoke
+checks. Independent holdouts mean a cross-cohort score difference is not by
+itself a controlled BioLiP improvement estimate.
+
+Protocol and entry points:
+[independent internal cohorts](internal_only_dual_cohort_protocol_20261013.md).
+
 ## Recent matched training pilots
 
 All rows below are **seed44 strict VAL**, using legacy batch-aggregated class0
@@ -95,7 +115,8 @@ See [complete matched analysis](libre_benchmark_20261010.md).
 ## Next work, not completed claims
 
 Finish admission QC of the isolated BioLiP expansion without relaxing frozen
-holdout/benchmark rules. Preserve missing-feature masks rather than replacing
+holdout/benchmark rules for that original branch. The newly requested
+internal-only cohorts above are a separate protocol. Preserve missing-feature masks rather than replacing
 missing measurements with physical zero. Then compare a matched old-data
 control against expansion from scratch. No such training was submitted by
 the October 13 coverage/extraction tasks.
