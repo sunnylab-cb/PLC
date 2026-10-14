@@ -38,6 +38,13 @@ recompute cross-set SI, normalize TRAIN only and train the exact GFGF/V11m13
 seed44 recipe from scratch behind CPU/loader/GPU-smoke gates. This revision
 does not edit or advance the deferred joint branch. See
 [replacement pipeline](pdbbind_global_si30_training_20261014.md).
+The replacement is now submitted: **13036932 RUNNING** on `i64m512ue`, with
+**13036933 GPU smoke** and **13036934 scratch training** waiting on sequential
+`afterok` dependencies, one GPU each on `i64m1tga800ue`. Cache validation and
+assignment succeeded: candidate **15,214 TRAIN / 1,902 VAL / 1,902 TEST**.
+Fresh cross-set audit is in progress; not yet a completed certificate or new
+training result. Source commit `f72ed65`, 512 deployment hashes verified,
+70 local tests passed. Joint branch remains untouched.
 The following paragraphs record the original failure, not completion of the
 replacement audit or training.
 

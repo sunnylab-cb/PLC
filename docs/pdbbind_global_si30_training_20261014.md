@@ -44,8 +44,24 @@ is used while CPU preprocessing is running. Queue submission is idempotent.
 Root: `/hpc2hdd/home/shuang886/PLC/experiments/pdbbind_global_si30_gfgf_20261014`.
 Source cache: the `pdbbind_only/` subtree of
 `internal_si30_dual_fixed5_20261013`. The latter remains read-only.
-Job IDs and current stage will be recorded after actual submission; scripts
-existing on disk do not imply that training has started.
+Deployed 512 tracked source/config/test files from commit `f72ed65`, verified
+individually against SHA256 on HPC. Existing FLA0.4.1/einops dependencies are
+reused from the original GFGF experiment. No dirty production-checkout pull.
+
+Submitted October 14 at 08:06:38 UTC (16:06:38 UTC+8):
+
+| Stage | Job | Observed state | Partition |
+| --- | --- | --- | --- |
+| SI audit + preprocessing + config | 13036932 | RUNNING, cpu1-26 | i64m512ue |
+| GPU smoke | 13036933 | PENDING, afterok:13036932 | i64m1tga800ue |
+| Scratch seed44 training | 13036934 | PENDING, afterok:13036933 | i64m1tga800ue |
+
+The source-cache integrity checks and connected-component assignment completed.
+The new candidate split has **15,214 TRAIN / 1,902 VAL / 1,902 TEST** samples,
+all PDBbind. Fresh cross-set alignment is running, so this is not yet a
+completed SI certificate. The initial log has no error; no training epoch or
+new F1 has been produced. `submission.json`, `deployment.json`, logs, source
+hashes and `split/all_pairs_reuse.json` are retained in the experiment root.
 
 ## Exact training recipe
 
@@ -71,6 +87,10 @@ superset cache reuse and corruption rejection, fresh cross-set diagnostics,
 whole-component splitting, fixed5 labels, TRAIN-only normalization, tiny-cohort
 production-loader end-to-end, and exact scratch-config safeguards.
 Both new Slurm scripts pass `bash -n`. GPU validation remains a remote job gate.
+An additional 29 regression tests passed for the existing trainer/probe,
+versioned-label evaluation compatibility and validation probability metrics
+(70 total). Local optional CUDA-extension warnings do not certify GPU support;
+the actual HPC GPU smoke is required before training.
 
 Entry points:
 `run_internal_pairwise_split.py --edge-rule global_only --reuse-all-pairs ...`,
