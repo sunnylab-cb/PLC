@@ -17,6 +17,13 @@ See [connectivity diagnosis](internal_pdbbind_connectivity_blocker_20261014.md).
 The user clarified that the joint task should keep running, with further joint
 processing deferred until tomorrow. No joint task cancellation is authorized.
 
+**Approved follow-up, October 14:** the PDBbind-only replacement uses global
+SI <0.30 across all three sets; local SI is diagnostic only. The completed
+cache is reused without edits and cross-set alignments recomputed afresh.
+See [replacement split/training pipeline](pdbbind_global_si30_training_20261014.md).
+This amendment does not alter the joint task or certify the earlier combined
+local/global predicate documented below.
+
 ## Two independent experiments
 
 | Cohort | Input universe | SI and preprocessing |

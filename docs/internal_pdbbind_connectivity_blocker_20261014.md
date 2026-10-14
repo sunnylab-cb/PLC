@@ -1,5 +1,10 @@
 # PDBbind internal split: completed alignments, blocked training
 
+**Update, October 14:** the user explicitly approved global SI <0.30 as the
+cross-set rule for PDBbind-only, with local SI diagnostic only. The old failed
+run below is retained unchanged. The replacement dependency-gated pipeline is
+documented in [global-SI training](pdbbind_global_si30_training_20261014.md).
+
 Checked October 14, 2026. User request: train the strongest current mainline
 from scratch on the new PDBbind-only dataset; leave the joint task running
 and defer further joint processing. No old checkpoint or old split may replace
@@ -71,11 +76,11 @@ Simply deleting the shortest few complexes does not recover a useful balanced
 split under the combined rule. No alternative in this table is certified:
 assignment, fresh cross-set audit and TRAIN-only preprocessing still have to run.
 
-Recommended decision for user confirmation: use global pairwise SI <0.30 as
+Decision subsequently approved by the user: use global pairwise SI <0.30 as
 the explicit cross-set guarantee, connected-component assignment, and retain
 local SI as a diagnostic rather than a hard edge. This preserves the full QC
 pool but does NOT certify the superseded local-SI condition or domain-level
-independence. The primary contract must not change without acknowledgement.
+independence. This explicitly revises, rather than certifies, the old condition.
 The completed all-pairs cache contains every global-threshold edge, so it can
 be reused with provenance checks; cross-set SI must still be independently
 recomputed under the approved rule.

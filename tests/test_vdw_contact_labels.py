@@ -229,6 +229,17 @@ def test_small_cohort_end_to_end_pool_split_stats_and_production_loader(tmp_path
     monkeypatch.setattr(sys, "argv", ["split", "--pool-dir", str(pool), "--output-dir", str(si),
                                       "--workers", "1", "--chunk-size", "2"])
     split.main()
+    if contact_rule == "fixed5":
+        old_si, si = si, tmp_path/"global_si"
+        monkeypatch.setattr(sys, "argv", ["split", "--pool-dir", str(pool), "--output-dir", str(si),
+            "--workers", "1", "--chunk-size", "2", "--edge-rule", "global_only",
+            "--reuse-all-pairs", str(old_si/"all_pairs"), "--reuse-source-script", str(Path(split.__file__))])
+        split.main()
+        result = json.loads((si/"summary.json").read_text())
+        assert result["passed"] and result["contract"]["edge_rule"] == "global_only"
+        assert result["cross_set_audit"]["evaluated"] == 3
+        assert result["cross_set_audit"]["edges"] == 0
+        assert not (si/"all_pairs").exists()
     monkeypatch.setattr(sys, "argv", ["prep", "--pool-dir", str(pool), "--split-dir", str(si),
                                       "--output-dir", str(out)])
     preprocess.main()

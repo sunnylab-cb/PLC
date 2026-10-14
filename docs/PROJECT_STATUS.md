@@ -31,6 +31,16 @@ Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013
 
 ### New internal-only protocols (submitted, not yet certified)
 
+**October 14 approved follow-up:** PDBbind-only now uses global SI <0.30 as
+the explicit three-way cross-set guarantee; local SI is diagnostic only.
+Reuse the completed combined-rule all-pairs cache with integrity checks, then
+recompute cross-set SI, normalize TRAIN only and train the exact GFGF/V11m13
+seed44 recipe from scratch behind CPU/loader/GPU-smoke gates. This revision
+does not edit or advance the deferred joint branch. See
+[replacement pipeline](pdbbind_global_si30_training_20261014.md).
+The following paragraphs record the original failure, not completion of the
+replacement audit or training.
+
 The user separately approved two independently rebuilt cohorts: PDBbind-only
 and PDBbind+BioLiP joint. Neither uses external benchmark exclusion. Each runs
 its own sample QC, exhaustive Biopython global/local SI graph, connected split,
@@ -57,9 +67,9 @@ cross-set audit and TRAIN-only normalization have NOT completed.
 
 The extra local-SI/one-sided-coverage predicate admits very short-chain hubs:
 the one-residue chain `P` from 1eb1 connects to 9,282 unique sequences. A
-read-only global-only diagnostic gives 1,865 components (largest 6,529), but
-using that rule requires explicit protocol approval and a fresh cross-set
-audit, not a silent relaxation. No training has been submitted on this pool.
+read-only global-only diagnostic gives 1,865 components (largest 6,529).
+The user subsequently approved that rule; a fresh cross-set audit is still
+required, not a silent relaxation. No training had been submitted at that check.
 Joint **13013562** was running at the initial check. The user clarified that
 it must be **left running and not advanced further today**; no cancellation,
 resubmission, joint artifact edits or new joint training were performed.

@@ -13,6 +13,7 @@ from prepare_internal_codataset_sequences import bio_eligible, chain_sequences, 
 from run_internal_pairwise_split import (
     UnionFind, alignment_stats, assign_components, check_saved_chunk, is_edge,
     iter_pairs, load_pool, make_aligners, pair_at, pair_stats, run_stage,
+    PREDICATES, verify_reusable_all_pairs,
 )
 from preprocess_internal_cohort import Moments, fit_training_stats, norm_dims
 
@@ -35,6 +36,60 @@ def test_global_and_local_contract_at_exact_thresholds():
     assert is_edge((.29, .30, .1, .80))
     assert not is_edge((.299, .299, 1, 1))
     assert not is_edge((.1, .9, .79, .79))
+
+
+def test_global_only_keeps_short_chain_matches_diagnostic():
+    stats = pair_stats("P", "WWWWPWWW", make_aligners())
+    assert is_edge(stats)
+    assert not is_edge(stats, rule="global_only")
+    assert is_edge((.30, 0, 0, 0), rule="global_only")
+    assert not is_edge((.299999, 1, 1, 1), rule="global_only")
+    with pytest.raises(ValueError, match="unknown"):
+        is_edge(stats, rule="typo")
+
+
+def reusable_cache(tmp_path):
+    source_script = Path(__file__)
+    seqs = ["P", "WWWWPWWW", "DDDDDDDD"]
+    old = dict(schema=1, identity=.3, coverage=.8, chunk_size=2, pool_sha256="bound-pool",
+               script_sha256=digest(source_script), predicate=PREDICATES["global_or_local"])
+    source, _ = run_stage(seqs, None, old, tmp_path/"cache", 1, 2)
+    new = dict(old, script_sha256="new-script", predicate=PREDICATES["global_only"], edge_rule="global_only")
+    return seqs, old, new, source_script, source
+
+
+def test_reuse_superset_and_recompute_cross_pairs_with_local_diagnostic(tmp_path):
+    seqs, old, new, source_script, source = reusable_cache(tmp_path)
+    hashes = {p.name:digest(p) for p in (tmp_path/"cache").iterdir()}
+    result, tasks, provenance = verify_reusable_all_pairs(tmp_path/"cache", source_script, new, len(seqs))
+    assert result == source and result["edges"] == 1 and len(tasks) == 2
+    assert provenance["source_contract_hash"] == source["contract_hash"]
+    audit, _ = run_stage(seqs, ["train", "val", "test"], new, tmp_path/"fresh", 1, 2)
+    assert audit["evaluated"] == 3 and audit["edges"] == 0
+    assert audit["local_only_matches"] == 1
+    assert audit["max_global_si"] < .3 and audit["max_local_si_at_required_coverage"] == 1
+    assert len(audit["by_set_pair_max_global_si"]) == 3
+    assert hashes == {p.name:digest(p) for p in (tmp_path/"cache").iterdir()}
+
+
+@pytest.mark.parametrize("corruption", ["pool", "source_script", "missing_chunk", "edge_hash", "summary"])
+def test_reuse_fails_closed(tmp_path, corruption):
+    seqs, old, new, source_script, _ = reusable_cache(tmp_path)
+    if corruption == "pool":
+        new["pool_sha256"] = "other-pool"
+    elif corruption == "source_script":
+        source_script = Path(__file__).parents[1]/"scripts/diagnostics/run_internal_pairwise_split.py"
+    elif corruption == "missing_chunk":
+        (tmp_path/"cache/chunk_0000000.json").unlink()
+    elif corruption == "edge_hash":
+        (tmp_path/"cache/chunk_0000000.edges.tsv.gz").write_bytes(b"corrupt")
+    else:
+        path = tmp_path/"cache/summary.json"
+        summary = json.loads(path.read_text())
+        summary["evaluated"] -= 1
+        save_json(path, summary)
+    with pytest.raises(ValueError):
+        verify_reusable_all_pairs(tmp_path/"cache", source_script, new, len(seqs))
 
 
 def test_biopython_identity_is_not_score_and_keeps_gap_columns():

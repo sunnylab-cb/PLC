@@ -3,8 +3,10 @@
 
 No search prefilter, representative clustering, external dataset or old split
 is consulted. Every unordered pair of exact unique input-chain sequences is
-aligned. Fixed BLOSUM62 affine-gap global SI >=.30 OR local SI >=.30 with either
-coverage >=.80 creates an edge. The first score-optimal alignment in canonical
+aligned. The default edge is global SI >=.30 OR covered local SI >=.30.
+The explicit global_only rule retains local SI as a diagnostic, not an edge.
+Completed combined-rule caches can supply the global-edge subset, but the
+cross-set audit always recomputes alignments. The first optimal alignment in canonical
 SHA256 sequence order defines SI, not the maximum SI over all possible/tied
 alignments. Version and scoring policy are pinned in each run's contract.
 
@@ -31,6 +33,10 @@ from prepare_internal_codataset_sequences import ALPHABET, digest, save_json
 
 SCHEMA = 1
 SPLITS = ("train", "val", "test")
+PREDICATES = {
+    "global_or_local": "global_SI>=0.30 OR (local_SI>=0.30 AND max(qcov,tcov)>=0.80)",
+    "global_only": "global_SI>=0.30; local SI is diagnostic only",
+}
 _STATE = None
 
 
@@ -108,8 +114,12 @@ def pair_stats(left, right, aligners):
     return values[0][0], *values[1]
 
 
-def is_edge(stats, identity=.30, coverage=.80):
+def is_edge(stats, identity=.30, coverage=.80, rule="global_or_local"):
     global_si, local_si, qcov, tcov = stats
+    if rule == "global_only":
+        return global_si >= identity
+    if rule != "global_or_local":
+        raise ValueError(f"unknown SI edge rule: {rule}")
     return global_si >= identity or (local_si >= identity and max(qcov, tcov) >= coverage)
 
 
@@ -171,10 +181,11 @@ def work_chunk(task):
     started = time.monotonic()
     edges = path.with_suffix(".edges.tsv.gz")
     tmp = edges.with_suffix(edges.suffix + ".tmp")
-    evaluated = skipped = violations = 0
+    evaluated = skipped = violations = local_only = 0
     histogram = [0] * 101
     max_global = max_covered_local = 0.0
     pair_counts = Counter()
+    pair_maxima = {}
     with gzip.open(tmp, "wt", compresslevel=1) as f:
         for i, j in iter_pairs(start, stop, len(sequences)):
             if labels is not None and labels[i] == labels[j]:
@@ -186,12 +197,17 @@ def work_chunk(task):
                 raise ValueError(f"invalid alignment stats: {i}, {j}, {stats}")
             evaluated += 1
             if labels is not None:
-                pair_counts["_vs_".join(sorted((labels[i], labels[j])))] += 1
+                pair_name = "_vs_".join(sorted((labels[i], labels[j])))
+                pair_counts[pair_name] += 1
+                pair_maxima[pair_name] = max(pair_maxima.get(pair_name, 0.), g)
             histogram[min(100, int(g*100))] += 1
             max_global = max(max_global, g)
             if max(qc, tc) >= contract["coverage"]:
                 max_covered_local = max(max_covered_local, local)
-            if is_edge(stats, contract["identity"], contract["coverage"]):
+            local_only += int(g < contract["identity"] and local >= contract["identity"]
+                              and max(qc, tc) >= contract["coverage"])
+            if is_edge(stats, contract["identity"], contract["coverage"],
+                       contract.get("edge_rule", "global_or_local")):
                 violations += 1
                 f.write("\t".join(map(str, (i, j, *stats))) + "\n")
     tmp.replace(edges)
@@ -199,6 +215,7 @@ def work_chunk(task):
         evaluated=evaluated, same_split_skipped=skipped, edges=violations,
         global_si_histogram_1pct=histogram, max_global_si=max_global,
         max_local_si_at_required_coverage=max_covered_local, by_set_pair=dict(pair_counts),
+        local_only_matches=local_only, by_set_pair_max_global_si=pair_maxima,
         edge_sha256=digest(edges), elapsed_seconds=time.monotonic()-started)
     save_json(path, result)
     return result
@@ -217,12 +234,15 @@ def run_stage(sequences, labels, base_contract, out, workers, chunk_size):
              for k, start in enumerate(range(0, total, chunk_size))]
     started = time.monotonic()
     counts, pair_counts = Counter(), Counter()
+    pair_maxima = {}
     hist, maxima = [0]*101, [0.0, 0.0]
     def consume(r):
-        for name in ("evaluated", "same_split_skipped", "edges"):
-            counts[name] += r[name]
+        for name in ("evaluated", "same_split_skipped", "edges", "local_only_matches"):
+            counts[name] += r.get(name, 0)
         counts["chunks"] += 1
         pair_counts.update(r["by_set_pair"])
+        for name, value in r.get("by_set_pair_max_global_si", {}).items():
+            pair_maxima[name] = max(pair_maxima.get(name, 0.), value)
         for k, value in enumerate(r["global_si_histogram_1pct"]):
             hist[k] += value
         maxima[0] = max(maxima[0], r["max_global_si"])
@@ -276,6 +296,7 @@ def run_stage(sequences, labels, base_contract, out, workers, chunk_size):
             raise RuntimeError(f"cross-set audit count mismatch: {pair_counts} != {expected}")
     summary = dict(contract_hash=contract["hash"], **counts, all_unordered_pairs=total,
         by_set_pair=dict(pair_counts), global_si_histogram_1pct=hist, max_global_si=maxima[0],
+        by_set_pair_max_global_si=pair_maxima,
         max_local_si_at_required_coverage=maxima[1])
     save_json(out/"summary.json", summary)
     progress()
@@ -341,6 +362,51 @@ def load_pool(path):
     return samples, seqs, pool_summary
 
 
+def verify_reusable_all_pairs(path, source_script, contract, n_sequences):
+    """Validate an exhaustive, combined-rule superset without changing its files."""
+    old = json.loads((path/"contract.json").read_text())
+    hashed = {k:v for k,v in old.items() if k != "hash"}
+    if hashlib.sha256(json.dumps(hashed, sort_keys=True).encode()).hexdigest() != old["hash"]:
+        raise ValueError("source alignment contract hash mismatch")
+    if digest(source_script) != old["script_sha256"]:
+        raise ValueError("source alignment implementation hash mismatch")
+    if contract["edge_rule"] != "global_only" or old["predicate"] != PREDICATES["global_or_local"]:
+        raise ValueError("only combined-to-global cache reuse is supported")
+    for key, value in contract.items():
+        if key not in {"script_sha256", "predicate", "edge_rule"} and old.get(key) != value:
+            raise ValueError(f"source alignment contract differs: {key}")
+    if old["labels_sha256"] != hashlib.sha256(json.dumps(None).encode()).hexdigest():
+        raise ValueError("source is not an exhaustive all-pairs cache")
+    summary = json.loads((path/"summary.json").read_text())
+    total = n_sequences*(n_sequences-1)//2
+    tasks = [(k, start, min(start+old["chunk_size"], total))
+             for k, start in enumerate(range(0, total, old["chunk_size"]))]
+    if (summary["contract_hash"] != old["hash"] or summary["evaluated"] != total
+            or summary["same_split_skipped"] != 0 or summary["all_unordered_pairs"] != total
+            or summary["chunks"] != len(tasks) or summary["by_set_pair"]):
+        raise ValueError("incomplete or incompatible source all-pairs summary")
+    if len(list(path.glob("chunk_*.json"))) != len(tasks):
+        raise ValueError("source chunk set differs from exhaustive enumeration")
+    evaluated = edges = 0
+    histogram = [0]*101
+    for k, start, stop in tasks:
+        chunk = check_saved_chunk(path/f"chunk_{k:07d}.json", old["hash"], start, stop)
+        if chunk is None or chunk["same_split_skipped"] or chunk["by_set_pair"]:
+            raise ValueError("incomplete source all-pairs chunk")
+        evaluated += chunk["evaluated"]
+        edges += chunk["edges"]
+        if len(chunk["global_si_histogram_1pct"]) != 101:
+            raise ValueError("invalid source SI histogram")
+        histogram = [a+b for a,b in zip(histogram, chunk["global_si_histogram_1pct"])]
+    if (evaluated != total or edges != summary["edges"] or sum(histogram) != total
+            or histogram != summary["global_si_histogram_1pct"]):
+        raise ValueError("source chunk accounting differs from summary")
+    return summary, tasks, dict(directory=str(path.resolve()),
+        contract_sha256=digest(path/"contract.json"), summary_sha256=digest(path/"summary.json"),
+        source_script_sha256=digest(source_script), source_contract_hash=old["hash"],
+        note="global edges filtered from complete combined-rule cache; cross-set audit recomputed")
+
+
 def main():
     import Bio
     ap = argparse.ArgumentParser(description=__doc__)
@@ -349,9 +415,14 @@ def main():
     ap.add_argument("--workers", type=int, default=len(os.sched_getaffinity(0)))
     ap.add_argument("--chunk-size", type=int, default=20000)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--edge-rule", choices=tuple(PREDICATES), default="global_or_local")
+    ap.add_argument("--reuse-all-pairs", type=Path)
+    ap.add_argument("--reuse-source-script", type=Path)
     args = ap.parse_args()
     if args.workers < 1 or args.chunk_size < 1:
         ap.error("workers and chunk size must be positive")
+    if bool(args.reuse_all_pairs) != bool(args.reuse_source_script):
+        ap.error("cache reuse requires both --reuse-all-pairs and --reuse-source-script")
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
     samples, records, pool = load_pool(args.pool_dir)
@@ -361,14 +432,23 @@ def main():
         identity_letters="original letters including ambiguous-letter equality; no sequence remapping",
         gap_open=-10.0, gap_extend=-.5, terminal_gaps="penalized in global",
         epsilon=1e-6, tie_policy="first optimal alignment; ascending sequence SHA256 orientation",
-        predicate="global_SI>=0.30 OR (local_SI>=0.30 AND max(qcov,tcov)>=0.80)",
+        predicate=PREDICATES[args.edge_rule], edge_rule=args.edge_rule,
         identity_denominator="alignment columns including internal/terminal gaps as returned per mode",
         coverage_definition="consumed original residues / full original chain length",
         prefilter="none; all unique unordered pairs", seed=args.seed, chunk_size=args.chunk_size,
         cohort=pool["cohort"], pool_sha256=digest(args.pool_dir/"pool_summary.json"),
         script_sha256=digest(Path(__file__)))
     save_json(out/"status.json", dict(stage="all_pairs", passed=False, training_approved=False))
-    all_result, tasks = run_stage(sequences, None, contract, out/"all_pairs", args.workers, args.chunk_size)
+    edge_dir = args.reuse_all_pairs or out/"all_pairs"
+    if args.reuse_all_pairs:
+        if edge_dir.resolve() == (out/"all_pairs").resolve():
+            raise ValueError("use a new split directory; never overwrite the source cache")
+        all_result, tasks, provenance = verify_reusable_all_pairs(
+            edge_dir, args.reuse_source_script, contract, len(sequences))
+        contract["all_pairs_reuse"] = provenance
+        save_json(out/"all_pairs_reuse.json", provenance)
+    else:
+        all_result, tasks = run_stage(sequences, None, contract, edge_dir, args.workers, args.chunk_size)
     uf = UnionFind(samples)
     pdb_first = {}
     for key, sample in samples.items():
@@ -378,16 +458,30 @@ def main():
         members = row["members"]
         for member in members[1:]:
             uf.union(members[0], member)
-    edge_count = 0
-    for k, _, _ in tasks:
-        with gzip.open(out/"all_pairs"/f"chunk_{k:07d}.edges.tsv.gz", "rt") as f:
+    edge_count = selected_edges = 0
+    for k, start, stop in tasks:
+        previous_pair = start-1
+        chunk_edges = 0
+        with gzip.open(edge_dir/f"chunk_{k:07d}.edges.tsv.gz", "rt") as f:
             for line in f:
                 fields = line.split("\t")
                 i, j = map(int, fields[:2])
-                if not (0 <= i < j < len(records)) or not is_edge(tuple(map(float, fields[2:]))):
+                stats = tuple(map(float, fields[2:]))
+                source_rule = "global_or_local" if args.reuse_all_pairs else args.edge_rule
+                if (len(stats) != 4 or not all(math.isfinite(v) and 0 <= v <= 1 for v in stats)
+                        or not (0 <= i < j < len(records)) or not is_edge(stats, rule=source_rule)):
                     raise ValueError("invalid graph edge")
-                uf.union(records[i]["members"][0], records[j]["members"][0])
+                pair_index = row_start(i, len(records))+j-i-1
+                if not start <= pair_index < stop or pair_index <= previous_pair:
+                    raise ValueError("duplicate, unordered or out-of-chunk graph edge")
+                previous_pair = pair_index
+                if is_edge(stats, rule=args.edge_rule):
+                    uf.union(records[i]["members"][0], records[j]["members"][0])
+                    selected_edges += 1
                 edge_count += 1
+                chunk_edges += 1
+        if chunk_edges != json.loads((edge_dir/f"chunk_{k:07d}.json").read_text())["edges"]:
+            raise ValueError("chunk edge line count mismatch")
     if edge_count != all_result["edges"]:
         raise ValueError("graph edge accounting mismatch")
     assignment, components = assign_components(samples, uf, args.seed)
@@ -413,6 +507,7 @@ def main():
     passed = audit["edges"] == 0
     report = dict(passed=passed, training_approved=False, stage="si_complete", cohort=pool["cohort"],
         contract=contract, counts=dict(counts), by_source=by_source, unique_sequences=len(records),
+        graph_edges=selected_edges, source_cache_edges=edge_count,
         components=len(components), largest_components=sorted(map(len, components), reverse=True)[:20],
         actual_fractions={s:counts[s]/len(samples) for s in SPLITS},
         balance_within_3_percentage_points=all(abs(counts[s]/len(samples)-f) <= .03
@@ -424,6 +519,7 @@ def main():
             "separate TRAIN-only normalization for this cohort; no old all-data stats",
             "fresh random initialization; no checkpoint trained on old split"],
         limitations=["SI is defined by the fixed optimal-score alignment policy, not all possible alignments",
+            "global_only does not guarantee local/domain SI independence; local SI remains diagnostic",
             "Observed input chains, not an audit of PLM pretraining or unseen full-length sequences",
             "Two independent cohorts have different holdouts: do not attribute score differences solely to BioLiP"])
     save_json(out/"summary.json", report)
