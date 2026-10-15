@@ -1,4 +1,4 @@
-# PLC status as of 2026-10-14
+# PLC status as of 2026-10-15
 
 This is an index of verified results, not a new evaluation. It separates
 training validation, held-out testing, external benchmarking and data
@@ -7,7 +7,7 @@ protocols: historical F1 values must not be placed in one ranking table.
 
 ## Dataset and current expansion
 
-Approved strict TRAIN is **10,317 = 5,160 PDBbind + 5,157 BioLiP**;
+The original externally clean strict TRAIN is **10,317 = 5,160 PDBbind + 5,157 BioLiP**;
 VAL and TEST each contain 647 PDBbind rows. No expansion rows have been
 admitted and no split or normalization policy changed in the October 13 audit.
 
@@ -29,7 +29,7 @@ homology audit. None is approved merely because its features exist.
 Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013.md),
 [expansion assessment](biolip_expansion_assessment_20261013.md).
 
-### New internal-only protocols (submitted, not yet certified)
+### New internal-only protocols (PDBbind certified and trained)
 
 **October 14 approved follow-up:** PDBbind-only now uses global SI <0.30 as
 the explicit three-way cross-set guarantee; local SI is diagnostic only.
@@ -38,13 +38,20 @@ recompute cross-set SI, normalize TRAIN only and train the exact GFGF/V11m13
 seed44 recipe from scratch behind CPU/loader/GPU-smoke gates. This revision
 does not edit or advance the deferred joint branch. See
 [replacement pipeline](pdbbind_global_si30_training_20261014.md).
-The replacement is now submitted: **13036932 RUNNING** on `i64m512ue`, with
-**13036933 GPU smoke** and **13036934 scratch training** waiting on sequential
-`afterok` dependencies, one GPU each on `i64m1tga800ue`. Cache validation and
-assignment succeeded: candidate **15,214 TRAIN / 1,902 VAL / 1,902 TEST**.
-Fresh cross-set audit is in progress; not yet a completed certificate or new
-training result. Source commit `f72ed65`, 512 deployment hashes verified,
-70 local tests passed. Joint branch remains untouched.
+**October 15 verification:** all three replacement jobs completed successfully.
+CPU preparation **13036932** and GPU smoke **13036933** passed. Scratch training
+**13036934** ended October 14 at 23:37:05 UTC+8, elapsed6h36m30s, with loss-based
+early stopping at epoch36 (not OOM). Certified **15,214 TRAIN / 1,902 VAL /
+1,902 TEST**: all 18,801,387 cross-set chain pairs were recomputed, zero global
+SI violations, maximum0.299295775. TRAIN-only normalization and loader QC passed.
+
+Best VAL F1=**0.566083 at epoch36**, AUPRC at that checkpoint=0.587411. Best
+AUPRC=**0.588037 at epoch27**. Global contact F1@0.5=0.568376 and at the VAL-fit
+gate0.408461=0.569704 (epoch36). These are not TEST results or controlled gains
+over the old split. Logged gradients are finite; no new TEST/ligand-dependency
+evaluation, resumed training or joint-cohort processing was performed.
+See [completed-run analysis](pdbbind_global_si30_results_20261015.md).
+Source commit `f72ed65`, 512 deployment hashes verified, 70 local tests passed.
 The following paragraphs record the original failure, not completion of the
 replacement audit or training.
 
@@ -90,9 +97,9 @@ loader; legacy caches are unchanged. **26 focused tests pass**, including both
 protocols through the full tiny-cohort preprocessing/loader pipeline.
 V5/V6 caches coexist in BioLiP;
 old/missing-validity tensors are excluded with reasons, not silently accepted.
-No new split is certified and no training has started. Latest GFGF/V11m13
-seed44 scratch training is the next step after preprocessing and loader/smoke
-checks. Independent holdouts mean a cross-cohort score difference is not by
+At that original failed-run check, no new split was certified or training
+started; the replacement has since completed as reported above. Independent
+holdouts mean a cross-cohort score difference is not by
 itself a controlled BioLiP improvement estimate.
 
 Protocol and entry points:

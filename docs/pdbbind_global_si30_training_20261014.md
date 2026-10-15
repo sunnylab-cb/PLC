@@ -1,5 +1,9 @@
 # PDBbind-only global-SI split and scratch GFGF training
 
+**October 15 update:** all three jobs completed. The split and preprocessing
+passed; training stopped normally at epoch36, best VAL F1=0.566083. See the
+[completed-run results](pdbbind_global_si30_results_20261015.md). No TEST result yet.
+
 ## Approved scope
 
 The user approved the protocol change after the combined global/local edge
@@ -48,19 +52,19 @@ Deployed 512 tracked source/config/test files from commit `f72ed65`, verified
 individually against SHA256 on HPC. Existing FLA0.4.1/einops dependencies are
 reused from the original GFGF experiment. No dirty production-checkout pull.
 
-Submitted October 14 at 08:06:38 UTC (16:06:38 UTC+8):
+Submitted October 14 at 08:06:38 UTC (16:06:38 UTC+8); completion verified October15:
 
 | Stage | Job | Observed state | Partition |
 | --- | --- | --- | --- |
-| SI audit + preprocessing + config | 13036932 | RUNNING, cpu1-26 | i64m512ue |
-| GPU smoke | 13036933 | PENDING, afterok:13036932 | i64m1tga800ue |
-| Scratch seed44 training | 13036934 | PENDING, afterok:13036933 | i64m1tga800ue |
+| SI audit + preprocessing + config | 13036932 | COMPLETED, 46m31s | i64m512ue |
+| GPU smoke | 13036933 | COMPLETED, 7m26s | i64m1tga800ue |
+| Scratch seed44 training | 13036934 | COMPLETED, 6h36m30s; early stop e36 | i64m1tga800ue |
 
 The source-cache integrity checks and connected-component assignment completed.
-The new candidate split has **15,214 TRAIN / 1,902 VAL / 1,902 TEST** samples,
-all PDBbind. Fresh cross-set alignment is running, so this is not yet a
-completed SI certificate. The initial log has no error; no training epoch or
-new F1 has been produced. `submission.json`, `deployment.json`, logs, source
+The certified split has **15,214 TRAIN / 1,902 VAL / 1,902 TEST** samples,
+all PDBbind. Fresh cross-set alignment completed all18,801,387 pairs with no
+global SI violations; maximum SI=0.299295775. Loader/smoke and training passed.
+`submission.json`, `deployment.json`, logs, source
 hashes and `split/all_pairs_reuse.json` are retained in the experiment root.
 
 ## Exact training recipe
@@ -78,7 +82,8 @@ All model and training settings are compared for equality.
 - Existing best-F1 and AUPRC/AUROC checkpoints and VAL-only gate metrics retained.
 
 The strongest old-split test result motivates the recipe, not a comparable new
-score: these holdouts and normalization statistics differ. No new F1 exists yet.
+score: these holdouts and normalization statistics differ. New VAL results are
+reported separately in the October15 analysis, not as matched old-split gains.
 
 ## Verification
 
@@ -86,11 +91,11 @@ score: these holdouts and normalization statistics differ. No new F1 exists yet.
 superset cache reuse and corruption rejection, fresh cross-set diagnostics,
 whole-component splitting, fixed5 labels, TRAIN-only normalization, tiny-cohort
 production-loader end-to-end, and exact scratch-config safeguards.
-Both new Slurm scripts pass `bash -n`. GPU validation remains a remote job gate.
+Both new Slurm scripts pass `bash -n`. The remote GPU validation gate passed.
 An additional 29 regression tests passed for the existing trainer/probe,
 versioned-label evaluation compatibility and validation probability metrics
 (70 total). Local optional CUDA-extension warnings do not certify GPU support;
-the actual HPC GPU smoke is required before training.
+the actual HPC GPU smoke subsequently passed before training was allowed.
 
 Entry points:
 `run_internal_pairwise_split.py --edge-rule global_only --reuse-all-pairs ...`,
