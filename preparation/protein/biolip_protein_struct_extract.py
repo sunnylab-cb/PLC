@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import os
+import string
 import sys
 import tempfile
 import traceback
@@ -198,16 +199,38 @@ def parse_cif_protein(cif_path: Path) -> Dict:
     }
 
 
-def _write_temp_pdb_from_cif(cif_path: Path) -> str:
+def _temporary_chain_aliases(names: List[str]) -> Dict[str, str]:
+    """Keep original axes in tensors; only legacy PDB consumers need aliases."""
+    names = list(dict.fromkeys(names))
+    alphabet = string.ascii_uppercase + string.ascii_lowercase + string.digits
+    if len(names) > len(alphabet):
+        raise ValueError(f'{len(names)} chains exceed temporary PDB capacity; CIF-native extraction required')
+    aliases = {name: name for name in names if len(name) == 1 and name in alphabet}
+    free = iter(c for c in alphabet if c not in aliases.values())
+    for name in names:
+        if name not in aliases:
+            aliases[name] = next(free)
+    return aliases
+
+
+def _write_temp_pdb_from_cif(cif_path: Path, return_mapping: bool = False):
     """
     Write a temporary PDB converted by gemmi from CIF.
     Used by DSSP / B-factor modules that require a PDB file path.
     """
     fd, tmp_path = tempfile.mkstemp(suffix='.pdb')
     os.close(fd)
-    st = gemmi.read_structure(str(cif_path))
-    st.write_pdb(tmp_path)
-    return tmp_path
+    try:
+        st = gemmi.read_structure(str(cif_path))
+        aliases = _temporary_chain_aliases([chain.name for model in st for chain in model])
+        for model in st:
+            for chain in model:
+                chain.name = aliases[chain.name]
+        st.write_pdb(tmp_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+    return (tmp_path, aliases) if return_mapping else tmp_path
 
 
 # ── per-structure extraction ──────────────────────────────────────────────────
@@ -248,8 +271,10 @@ def extract_protein_features(
         n = pdb_info['n_residues']
 
         # Write temp PDB for modules that need a file path (DSSP, B-factors)
-        tmp_pdb = _write_temp_pdb_from_cif(cif_path)
+        tmp_pdb, chain_aliases = _write_temp_pdb_from_cif(cif_path, return_mapping=True)
         tmp_pdb_path = Path(tmp_pdb)
+        feature_info = dict(pdb_info, pdb_path=tmp_pdb,
+                            chain_ids=[chain_aliases[c] for c in pdb_info['chain_ids']])
 
         # ── V4 feature computation (reuse existing modules) ───────────────
         v2_physchem_full = extract_physicochemical_features(
@@ -257,7 +282,7 @@ def extract_protein_features(
             pdb_info['sequence'],
             pdb_info['residue_names'],
             pdb_info['residue_indices'],
-            pdb_info['chain_ids'],
+            feature_info['chain_ids'],
         )
         v2_surface = extract_surface_features(
             pdb_info['ca_coords'], pdb_info['residue_names']
@@ -266,7 +291,7 @@ def extract_protein_features(
             tmp_pdb_path,
             pdb_info['ca_coords'],
             pdb_info['residue_indices'],
-            pdb_info['chain_ids'],
+            feature_info['chain_ids'],
         )
         pocketness  = compute_pocketness_features(pdb_info['ca_coords'])
         sasa_values = v2_physchem_full[:, 0]
@@ -284,14 +309,14 @@ def extract_protein_features(
         v2_hbond    = v2_physchem_full[:, 34:42]
 
         physchem_features = extract_physchem_features_v4(
-            pdb_info, v2_basic, v2_sequence, v2_hbond, v2_structural_geometry
+            feature_info, v2_basic, v2_sequence, v2_hbond, v2_structural_geometry
         )
         spatial_scalar_raw, spatial_scalar_features = extract_spatial_scalar_features_v4(
-            pdb_info, v2_sasa, v2_surface, v2_structural_geometry,
+            feature_info, v2_sasa, v2_surface, v2_structural_geometry,
             v2_enhanced, norm_stats,
         )
         spatial_vector_features = extract_spatial_vector_features_v4(
-            tmp_pdb_path, pdb_info
+            tmp_pdb_path, feature_info
         )
 
     except Exception as e:
@@ -316,6 +341,7 @@ def extract_protein_features(
         'n_residues':                 n,
         'pdb_id':                     pdb_id,
         'cif_source':                 src_tag,
+        'temporary_pdb_chain_aliases': chain_aliases,
         'spatial_scalar_feature_names': get_spatial_scalar_feature_names_v4(),
     }
 
