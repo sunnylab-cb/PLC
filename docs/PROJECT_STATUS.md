@@ -29,6 +29,26 @@ homology audit. None is approved merely because its features exist.
 Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013.md),
 [expansion assessment](biolip_expansion_assessment_20261013.md).
 
+### Full BioLiP Feature Completion Launched October 15
+
+The user authorized completing missing features rather than treating cache
+absence as a permanent exclusion. The new unchanged-policy inventory contains
+**188,088 deduplicated candidates**, not just the old5,786 feature-ready subset.
+Missing work:179,571 ligand tensors,13,613 protein V4 files and111,061 chain keys
+scheduled for ESM (exact sequences deduplicated before inference). Another2,731
+rejected/legacy ligand files are regenerated in the isolated output tree.
+
+**13077842 / 13077843** are RUNNING for32,432 /149,870 ligand rows;
+**13077980** is RUNNING for protein V4. Full ESM **13077845** is pending Priority,
+**13077846** follows it and V4; final coverage/geometry QC **13077847** is queued
+behind extraction. CPU=`i64m512ue`, GPU=`i64m1tga800ue`, no AMD/local resources.
+The ligand and ESM smokes passed. A real long-CIF-chain-name conversion bug was
+fixed without changing saved residue identities; patched protein smoke passed
+and full extraction is producing tensors.49 focused tests pass. Immutable
+revisions `972c36f` / `e9cd122` are pushed; no production cache/model/split changed.
+This is feature preparation, not an enlarged TRAIN certificate or model result.
+See [job ledger and funnel](internal_only_dual_cohort_protocol_20261013.md#feature-completion-authorized-october-15).
+
 ### New internal-only protocols (PDBbind certified and trained)
 
 **October 14 approved follow-up:** PDBbind-only now uses global SI <0.30 as

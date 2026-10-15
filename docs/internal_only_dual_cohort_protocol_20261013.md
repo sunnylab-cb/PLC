@@ -95,8 +95,50 @@ structures, failed extraction and incompatible routes remain explicit ledgers.
 
 Code: `scripts/diagnostics/biolip_feature_expansion.py`; CPU/GPU Slurm entry
 points: `scripts/slurm/run_biolip_feature_expansion_{cpu,esm}.slurm`.
-Deployment/job receipts will record actual submission separately; this paragraph
-does not claim the larger cohort has been prepared, split or trained.
+
+**Submitted and checked October 15:** immutable source `972c36f`, with a separate
+protein-extraction patch `e9cd122` in `code_v2`. The deployment receipt and logs
+are under `/hpc2hdd/home/shuang886/PLC/experiments/biolip_feature_expansion_20261015/`.
+Neither snapshot overwrites the production checkout or changes running jobs'
+code. Both commits were pushed to `plc/master`.
+
+Inventory job **13077785** completed in53s. After36 duplicate aliases the plan
+contains **188,088 candidates**, including5,786 previously QC-passed rows.
+There are **179,571 missing ligand tensors** plus2,731 previously rejected
+existing tensors to regenerate. The missing-V4 pool comprises **13,613 PDBs**,
+all with a fixed receptor CIF already present. ESM preparation schedules
+**111,061 distinct PDB/chain keys**, not111,061 unique sequences; exact sequence
+hashes deduplicate model inference, and long sequences use overlapping windows.
+
+| Active stage | Job | Requested work | State at check |
+| --- | --- | --- | --- |
+| Ligands with existing V4/ESM | 13077842 | 32,432 extraction/re-extraction rows | RUNNING |
+| Other eligible ligands | 13077843 | 149,870 rows | RUNNING |
+| Missing V4, patched extractor | 13077980 | 13,613 proteins | RUNNING |
+| ESM on existing V4 axes | 13077845 | Ready subset of missing-chain manifest | PENDING, Priority |
+| ESM after V4 completion | 13077846 | New-V4 subset, sequential after first ESM job | PENDING, Dependency |
+| Overlay, coverage and native5A geometry QC | 13077847 | All available candidates plus PDBbind inventory | PENDING, Dependency |
+
+CPU extraction uses `i64m512ue`, not the busy AMD partition. ESM uses one
+`i64m1tga800ue` GPU per task; the two full ESM tasks are serialized. Existing
+local ESM2 weights are used, with no model downloads or local-GPU work.
+Ligand smoke **13077837** passed3/3; ESM smoke **13077839** passed2/2. Initial
+protein smoke **13077838** exposed a genuine legacy failure: temporary PDB
+conversion rejects long CIF chain names, e.g. `AAA` and `SSS`. The fix uses
+bijective one-character aliases only for temporary PDB-based feature routines,
+while final tensors retain original CIF chains, indices and insertion codes.
+Patch smoke **13077979** passed4abz/4ue3 (2/2), and the full protein job advanced
+beyond those cases. The unstarted blocked protein job13077844 was cancelled
+and replaced; downstream dependencies were updated without interrupting either
+running ligand task. Cases exceeding62 chains still require CIF-native handling
+and are explicitly reported, not silently merged or truncated.
+
+Early ligand logs show1,000/32,432 and956/149,870 completed with zero reported
+extraction failures. These are output-file successes, NOT tensor/geometry/SI
+admission counts. All49 focused local tests pass; the real remote smokes also
+pass after the patch. The full extraction/QC jobs have not finished; no expanded
+joint split, normalization statistics or training has been submitted. Final
+source/chemical deduplication and an independent SI audit remain mandatory.
 
 ## Two independent experiments
 
