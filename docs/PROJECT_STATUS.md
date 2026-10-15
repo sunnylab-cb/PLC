@@ -67,7 +67,7 @@ The final user decision retains **native heavy-atom d_min <5.0 A**, not 5.5 A
 and not vdW. The vdW analysis is deferred. Original fixed5 jobs 13003680/13003681
 and then vdW jobs 13006855/13006856 were cancelled before starting; artifacts
 are retained. Fixed5 `-u` jobs 13007974/13007975 were also cancelled while pending
-on October 14 at the user's request. Active replacements **13013561** (solo)
+on October 14 at the user's request. Replacement jobs **13013561** (solo)
 and **13013562** (joint) use `i64m512ue`, still 64 CPUs/160G each. Only the
 partition changed; the same hash-verified code and output roots are reused.
 Immutable deployment root:
@@ -87,6 +87,16 @@ required, not a silent relaxation. No training had been submitted at that check.
 Joint **13013562** was running at the initial check. The user clarified that
 it must be **left running and not advanced further today**; no cancellation,
 resubmission, joint artifact edits or new joint training were performed.
+**October 15 joint verification:** that job subsequently FAILED 1:0 at October
+14 04:56:37, after1h37m11s, at the same component-assignment guard (not OOM).
+QC retained **24,804 = 19,018 PDBbind + 5,786 BioLiP**; all **74,231,020**
+pairs across **12,185** unique chains completed. The combined-rule graph joins
+all samples into one component, so no certified split/preprocessed dataset or
+new joint training exists. A hash-checked, read-only global-only reconstruction
+gives **2,748 components**, largest6,596; its hypothetical seed42 split is
+**19,843 / 2,481 / 2,480**. This is not a fresh cross-set SI certificate or a
+protocol amendment. No joint artifacts were changed and no jobs submitted.
+See [joint status and source counts](internal_only_dual_cohort_protocol_20261013.md#joint-status-verified-october-15).
 Both old `-u` jobs are confirmed cancelled, elapsed zero. New jobs were held
 until the old jobs left the queue, then released to avoid concurrent writes.
 Resubmission receipt: `resubmission_i64m512ue_20261014.json` in the experiment root.

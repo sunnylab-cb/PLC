@@ -6,7 +6,7 @@ the protocol. SI computation and training are different completion gates.
 
 **Current decision:** retain the historical fixed heavy-atom center distance
 `d_min < 5.0 A`. The vdW investigation below is deferred, not the active label
-rule. As of October 14, current CPU jobs are **13013561** (PDBbind-only) and
+rule. On October 14, replacement CPU jobs were **13013561** (PDBbind-only) and
 **13013562** (joint), resubmitted to `i64m512ue` with unchanged code and resources.
 
 **Latest outcome:** solo job 13013561 completed QC and all alignments, then
@@ -23,6 +23,80 @@ cache is reused without edits and cross-set alignments recomputed afresh.
 See [replacement split/training pipeline](pdbbind_global_si30_training_20261014.md).
 This amendment does not alter the joint task or certify the earlier combined
 local/global predicate documented below.
+
+## Joint Status Verified October 15
+
+Job **13013562** ended October 14 at 04:56:37 (cluster time), **FAILED 1:0**
+after 1h37m11s. It was not an OOM or timeout: `assign_components` raised
+`fewer than three separable components; refusing to split a family`.
+The prior instruction to leave this job alone was respected; no cancellation
+or replacement joint job was submitted.
+
+QC retained **24,804 samples = 19,018 PDBbind + 5,786 BioLiP**, under the
+unchanged native-heavy-atom `<5 A`, >=3-positive and feature-validity policy.
+There are **12,185 exact unique input-chain sequences**. All **74,231,020**
+unordered pairs and all **3,712 chunks** completed. The combined global/local
+rule has 700,903 sequence edges and joins all 24,804 samples into one component.
+This is completion of QC/alignment, NOT completion of a usable training dataset.
+The split summary and dataset preprocessing summary are absent; the pipeline
+exited before the fresh cross-set audit and TRAIN-only normalization.
+
+A read-only reconstruction verified pool hashes and saved chunk integrity,
+then compared graph predicates without changing any remote artifact or running
+new alignments. The same-PDB and exact-sequence unions were retained. Selecting
+only global SI >=0.30 edges gives **202,746 edges, 2,748 sample components**,
+largest **6,596**. The existing seed42 component assignment would produce:
+
+| Hypothetical set | PDBbind | BioLiP | Total |
+| --- | ---: | ---: | ---: |
+| TRAIN | 16,068 | 3,775 | 19,843 |
+| VAL | 1,498 | 983 | 2,481 |
+| TEST | 1,452 | 1,028 | 2,480 |
+
+These assignments were calculated in memory only. They are **not a certified
+or deployed split**, and approval of the PDBbind-only global rule did not
+silently amend the joint protocol. Recommended next step: explicitly adopt the
+same global-only rule for this independent cohort, reuse its validated alignment
+cache, recompute all cross-set pairs, fit separate TRAIN-only statistics, pass
+loader/GPU smoke checks, then train the same scratch GFGF recipe. No such jobs
+were submitted in this status check. Local/domain SI independence would still
+NOT be guaranteed under global-only.
+
+BioLiP coverage is feature-limited, not the full 704,660-row database. Of
+188,124 metadata-eligible observations, the QC ledger records 53,911
+`missing_input_sequence_v4` and 125,660 `missing_ligand_or_esm` exclusions;
+2,723 rows also fail the route5 regular-organic requirement. There are 36
+duplicate-observation aliases. These QC-passed pool counts do not certify
+broader cross-source chemical/site deduplication. The prospective joint holdouts
+differ from PDBbind-only, so score differences alone would not isolate a BioLiP
+benefit. No joint model score is available for this new cohort yet.
+
+### Feature Completion Authorized October 15
+
+The user requested maximum practical coverage by extracting missing features,
+not treating absent caches as permanent biological exclusions. The measured
+BioLiP funnel is 188,124 metadata-eligible rows minus36 duplicate aliases,
+53,911 missing-V4 rows and125,660 missing-ligand/ESM rows, leaving8,517 rows
+with all three files. Of these,2,723 fail the old route5 gate and8 fail actual
+contact QC, leaving5,786. Within the125,660 missing rows, **29,701 lack only
+ligand features** and **95,959 lack both ligand and ESM**. This is a preparation
+coverage bottleneck before SI, not evidence that BioLiP has only5,786 valid pairs.
+
+The new feature-expansion runner inventories the full unchanged metadata scope,
+extracts missing or previously rejected ligand tensors into a separate root,
+and fills missing V4 plus exact-V4-axis ESM2 caches. ESM inference deduplicates
+exact sequences and uses the existing local650M weights without downloads.
+New V4 chains receive fresh aligned ESM even if an older CIF-axis file exists.
+Existing production caches and the completed PDBbind-only run remain untouched.
+The final collection step constructs an isolated overlay and reruns native5A
+geometry/axis QC; extraction/file presence alone is never training admission.
+The route5/chemical eligibility policy is not silently broadened. Missing raw
+structures, failed extraction and incompatible routes remain explicit ledgers.
+
+Code: `scripts/diagnostics/biolip_feature_expansion.py`; CPU/GPU Slurm entry
+points: `scripts/slurm/run_biolip_feature_expansion_{cpu,esm}.slurm`.
+Deployment/job receipts will record actual submission separately; this paragraph
+does not claim the larger cohort has been prepared, split or trained.
 
 ## Two independent experiments
 

@@ -1253,6 +1253,8 @@ def main() -> int:
                         help='Path to cache file for discovered pairs (pickle).')
     parser.add_argument('--manifest', default=None,
                         help='TSV allowlist containing an exact feature_stem column.')
+    parser.add_argument('--failures-file', default=None,
+                        help='Separate failure ledger for disjoint concurrent manifests.')
     parser.add_argument('--refresh-cache', action='store_true',
                         help='Force re-discovery even if cache exists.')
     args = parser.parse_args()
@@ -1369,7 +1371,8 @@ def main() -> int:
                 failures.append((_output_stem(pair), msg))
 
         if failures:
-            fail_path = output_root / 'failures.tsv'
+            fail_path = Path(args.failures_file) if args.failures_file else output_root / 'failures.tsv'
+            fail_path.parent.mkdir(parents=True, exist_ok=True)
             with open(fail_path, 'w') as f:
                 f.write('pair_id\terror\n')
                 for pid, err in failures:
@@ -1415,7 +1418,8 @@ def main() -> int:
             bar.close()
 
     if failures:
-        fail_path = output_root / 'failures.tsv'
+        fail_path = Path(args.failures_file) if args.failures_file else output_root / 'failures.tsv'
+        fail_path.parent.mkdir(parents=True, exist_ok=True)
         with open(fail_path, 'w') as f:
             f.write('pair_id\terror\n')
             for err in failures:
