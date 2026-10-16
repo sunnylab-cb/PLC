@@ -1,5 +1,42 @@
 # BioLiP Ligand Extraction Runtime, October 17
 
+## 64-Worker Replacement Submitted
+
+At **2026-10-17 02:16:51 UTC+8**, submitted **13133479** to **i64m512ue**:
+one node,64 CPUs,448 GiB RAM,48-hour limit. The user requested64 workers;
+the original16-worker allocation was conservative, not an extractor limit.
+The follow-up queue check reports **PENDING (Resources)**. The16-worker
+predecessor13077843 remains RUNNING while the replacement waits for a node.
+
+The new allocation runs a guarded takeover: verify original source hashes,
+old job identity and QC dependency, cancel only13077843, wait for its Slurm
+exit AND released stage lock, then invoke the immutable972c36f extractor with
+64 single-thread workers. Completed atomic `.pt` files are skipped; unfinished
+pairs and missing failed outputs are retried. No overwrite, conformer-count,
+RDKit-thread, timeout, feature-definition or admission-policy change is made.
+
+QC13077847 was held during dependency rewiring, then released with
+`afterok:13133479`. A failed takeover therefore does not launch premature QC.
+Extractor-level partial outcomes remain explicitly recorded by the existing
+stage summary and final QC. No expanded training set is certified yet.
+
+Source **2cea12e** is pushed to `plc/master`;26 focused tests and Bash syntax
+validation pass. Original extraction code and the remote production checkout
+are untouched. The source archive SHA256 is
+`b6ac430c0c0adae88faa78eaf565ca023b9713f58361f7ffb82d316f4255adb8`.
+Deployment receipt: experiment-relative
+`ligand_resume64_20261017/deployment.json`; takeover receipt will be
+`ligand_resume64_13133479.json`. Logs are
+`logs/ligand_resume64_13133479.{out,err}`; the extraction log gains a
+`RESUME64` marker before the resumed progress stream.
+
+**Provisional compute ETA after allocation:6-8h**, based on four times the
+workers and the remaining approximately33k pairs. This is extrapolation, not
+a measured64-worker throughput result. Queue time is additional; the old job
+continues reducing the remaining work while queued. Shared I/O, memory use,
+worker startup and chemistry mix can prevent linear scaling. The prior
+16-worker estimate below remains historical, not the new job's completion ETA.
+
 ## Verified Progress
 
 Check time **2026-10-17 01:54:57 UTC+8**. Job13077843 has run36h12m10s
@@ -68,8 +105,9 @@ chemistry later in the queue could finish earlier; slow native calls could
 finish later. The earlier12-20h estimate was optimistic after the composition
 and throughput shift. QC/queue time is additional and has not been estimated.
 
-No running extraction code, conformer policy, job allocation or dependency was
-changed. No cancellation, restart or duplicate extraction task was submitted.
+At the first01:54 check, no running extraction code, conformer policy, job
+allocation or dependency was changed. The later user-requested64-worker
+resubmission is recorded above.
 
 ## ESM Recovery Is No Longer Running
 

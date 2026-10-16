@@ -31,6 +31,17 @@ Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013
 
 ### Latest Extraction Check, October 17
 
+**02:16:51 UTC+8 update:** user-requested64-worker replacement **13133479**
+is submitted to **i64m512ue**,64 CPUs/448G,one node,48h limit; follow-up state
+is PENDING(Resources). Old16-worker13077843 continues while it queues. Once
+allocated, the successor verifies job/source identity and QC dependencies,
+cancels only the old ligand job, waits for termination and the stage lock,
+then resumes the original immutable extractor, skipping existing atomic
+outputs. Chemistry settings are unchanged. QC13077847 now waits on
+`afterok:13133479`. Source2cea12e is pushed,26 tests pass. Provisional compute
+ETA is6-8h **after allocation**, not measured throughput and excluding queue/QC.
+
+The preceding16-worker diagnosis was:
 At01:54:57 UTC+8, ligand job13077843 is still RUNNING after36h12m10s:
 **116,788/149,870 processed (77.93%)**,116,785 successes and3 failures.
 All16 workers are computing at99.8-99.9% CPU; memory is95.93/128 GiB. It is
@@ -39,8 +50,9 @@ compared with3,227 over the whole run. Recent completed outputs are enriched
 for43-heavy-atom PEB ligands in a1% metadata sample; the50-conformer,
 100,000-max-iteration MMFF path is a plausible major cost, not a measured
 per-operator attribution. Current conditional ETA is **23-27h**, around
-**October18 01:00-05:00**, excluding final QC13077847. That QC still waits
-normally for this task. See [runtime evidence and ETA](biolip_ligand_runtime_20261017.md).
+**October18 01:00-05:00**, excluding final QC13077847. This estimate and the
+old QC dependency are superseded once the64-worker takeover starts. See
+[runtime evidence, resubmission and ETA](biolip_ligand_runtime_20261017.md).
 
 ### ESM2 Coverage Recovery Submitted October 16
 
