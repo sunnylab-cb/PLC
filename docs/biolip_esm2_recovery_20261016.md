@@ -59,3 +59,24 @@ Both Slurm scripts pass `bash -n`. The recovery, expansion, chain-alias,
 pairwise-split and geometry/loader tests pass **58 tests** locally. Warnings are
 from optional local hbond/PyG extensions and upstream deprecations; no failure.
 Existing ligand extraction13077843 and final QC13077847 are not modified.
+
+## Deployment
+
+Source revision **48e23bd** is pushed to `plc/master`. A hash-checked immutable
+snapshot, receipt, manifests, logs and new features reside under:
+
+`/hpc2hdd/home/shuang886/PLC/experiments/biolip_feature_expansion_20261015/esm2_recovery_20261016/`
+
+| Stage | Job | Status checked October 16, 17:32 UTC+8 |
+| --- | --- | --- |
+| Full failed-chain CIF-axis audit | 13124029 | PENDING, Priority |
+| Three-chain GPU smoke | 13124030 | PENDING, afterok13124029 |
+| All sequence-ready failed chains | 13124031 | PENDING, afterok13124030 |
+
+The source archive SHA256 is
+`f5aaa406317e9ee3e43cabc82ea2ac4f17098bc6f2aecdf3613199517a98b004`.
+The remote runner and both Slurm scripts were independently hash-matched before
+submission. A subsequent `squeue --start` check shows the audit waiting for
+Resources, with a provisional start at **October17 00:57:01 UTC+8**; this is a
+scheduler estimate, not a guaranteed launch time. No GPU inference or successful
+recovery is claimed yet. Existing expansion/QC dependencies are unchanged.

@@ -1,4 +1,4 @@
-# PLC status as of 2026-10-15
+# PLC status as of 2026-10-16
 
 This is an index of verified results, not a new evaluation. It separates
 training validation, held-out testing, external benchmarking and data
@@ -28,6 +28,22 @@ homology audit. None is approved merely because its features exist.
 
 Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013.md),
 [expansion assessment](biolip_expansion_assessment_20261013.md).
+
+### ESM2 Coverage Recovery Submitted October 16
+
+The user requested further ESM2 coverage. New jobs **13124029 -> 13124030 ->
+13124031** audit the5,377 previously failed chain keys directly in existing
+CIFs, then run a three-chain GPU smoke and full ESM2 recovery. This removes the
+unnecessary V4-file prerequisite for sequence inference, without pretending
+that V4/geometry/axis QC has passed. Missing or ambiguous CIF axes are rejected;
+new sequence features remain quarantined outside current feature/overlay paths.
+
+At17:32 UTC+8 all three jobs are PENDING; a later scheduler check reports audit
+Resources with provisional start October17 00:57:01, GPU jobs Dependency.
+CPU=`i64m512ue`, GPU=`i64m1tga800ue`; old ligand13077843 and QC13077847 are
+untouched. Source48e23bd is pushed, archive/scripts hash-verified,58 tests pass.
+Actual recovered coverage awaits job output. See
+[ESM2 recovery contract and jobs](biolip_esm2_recovery_20261016.md).
 
 ### Full BioLiP Feature Completion Launched October 15
 
