@@ -80,3 +80,31 @@ submission. A subsequent `squeue --start` check shows the audit waiting for
 Resources, with a provisional start at **October17 00:57:01 UTC+8**; this is a
 scheduler estimate, not a guaranteed launch time. No GPU inference or successful
 recovery is claimed yet. Existing expansion/QC dependencies are unchanged.
+
+## Completion Verified October 17
+
+The preceding queue snapshot is historical. Accounting and output summaries
+now confirm all three jobs COMPLETED with exit0:0:
+
+| Stage | Job | Actual start/end on October16, UTC+8 | Elapsed |
+| --- | --- | --- | --- |
+| CIF-axis audit | 13124029 | 17:42:48 / 17:43:54 | 1m06s |
+| GPU smoke | 13124030 | 17:43:54 / 17:44:17 | 23s |
+| Full recovery | 13124031 | 17:44:18 / 17:45:26 | 1m08s |
+
+The audit resolved **5,079/5,377** requested chain axes, all from fixed CIFs;
+**298 remain unresolved**. Resolved axes correspond to14,143 candidate pair
+rows, unresolved axes to440. The GPU stage succeeded on **5,079/5,079**, with
+3 outputs resumed from smoke,4,963 exact-sequence cache hits and113 newly
+computed unique sequences. This explains the short GPU runtime without any
+zero filling or sequence truncation.
+
+Together with105,684 existing outputs, scheduled-chain cache coverage is
+**110,763/111,061 (99.73%)**. The sealed axis manifest SHA256 is
+`af223d2ae1822a0d682a795a29d8a81eb97685be0a497e506956e4d92ec073ad`.
+
+These are **sequence-cache successes, not training admission**. Recovery
+outputs remain in the separate `esm2_features/` directory under the recovery
+root; no overlay was promoted. V4 feature/axis recovery and geometry/chemical
+QC are still required for the affected pairs. The original ligand extraction
+and QC jobs are unchanged.

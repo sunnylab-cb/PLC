@@ -1,4 +1,4 @@
-# PLC status as of 2026-10-16
+# PLC status as of 2026-10-17
 
 This is an index of verified results, not a new evaluation. It separates
 training validation, held-out testing, external benchmarking and data
@@ -29,6 +29,19 @@ homology audit. None is approved merely because its features exist.
 Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013.md),
 [expansion assessment](biolip_expansion_assessment_20261013.md).
 
+### Latest Extraction Check, October 17
+
+At01:54:57 UTC+8, ligand job13077843 is still RUNNING after36h12m10s:
+**116,788/149,870 processed (77.93%)**,116,785 successes and3 failures.
+All16 workers are computing at99.8-99.9% CPU; memory is95.93/128 GiB. It is
+not stuck or OOM. Recent4-12h throughput is only1,230-1,434 pairs/hour,
+compared with3,227 over the whole run. Recent completed outputs are enriched
+for43-heavy-atom PEB ligands in a1% metadata sample; the50-conformer,
+100,000-max-iteration MMFF path is a plausible major cost, not a measured
+per-operator attribution. Current conditional ETA is **23-27h**, around
+**October18 01:00-05:00**, excluding final QC13077847. That QC still waits
+normally for this task. See [runtime evidence and ETA](biolip_ligand_runtime_20261017.md).
+
 ### ESM2 Coverage Recovery Submitted October 16
 
 The user requested further ESM2 coverage. New jobs **13124029 -> 13124030 ->
@@ -38,11 +51,15 @@ unnecessary V4-file prerequisite for sequence inference, without pretending
 that V4/geometry/axis QC has passed. Missing or ambiguous CIF axes are rejected;
 new sequence features remain quarantined outside current feature/overlay paths.
 
-At17:32 UTC+8 all three jobs are PENDING; a later scheduler check reports audit
-Resources with provisional start October17 00:57:01, GPU jobs Dependency.
+**October17 verification:** all three jobs COMPLETED0:0, actually starting
+October16 17:42:48 and finishing17:45:26, earlier than the provisional queue
+estimate. The audit resolved5,079/5,377 failed chain keys; **all5,079 new ESM
+outputs succeeded**, bringing scheduled-chain cache coverage to
+**110,763/111,061 (99.73%)**. Another298 chains remain unresolved. New cached
+chains cover14,143 candidate pairs, but their V4/geometry admission is pending.
 CPU=`i64m512ue`, GPU=`i64m1tga800ue`; old ligand13077843 and QC13077847 are
 untouched. Source48e23bd is pushed, archive/scripts hash-verified,58 tests pass.
-Actual recovered coverage awaits job output. See
+Recovered outputs remain separate from the training/overlay namespace. See
 [ESM2 recovery contract and jobs](biolip_esm2_recovery_20261016.md).
 
 ### Full BioLiP Feature Completion Launched October 15
