@@ -31,6 +31,27 @@ Details: [coverage and expansion](pdbbind_coverage_and_biolip_expansion_20261013
 
 ### Latest Extraction Check, October 17
 
+**15:21 UTC+8 update:**64-worker ligand13133479 COMPLETED at12:08:01 after
+9h19m13s, peak RSS364.07 GiB/448G; no OOM. It safely replaced13077843 at02:48.
+Remaining-manifest outputs149,860/149,870; all10 failures are K6G molecule-read
+failures, so the extractor's own summary correctly remains partial. Final
+QC13077847 COMPLETED at12:33:04 and produced a verified **173,948-row pool:
+154,930 BioLiP +19,018 PDBbind**,65,788 unique sequences. This is a QC pool,
+not a certified TRAIN split.
+
+The user authorized training. New independent joint pipeline **13146709 ->
+13146710 ->13146711 ->13146712** is submitted: global-SI audit, TRAIN-only
+normalization/loader QC, GPU smoke, then scratch GFGF seed44. SI is RUNNING
+on64 CPUs in `i64m512ue`; remaining jobs are pending dependencies. GPU jobs use
+one GPU each in `i64m1tga800ue`. Source33acf20 is pushed and48 tests pass.
+At15:22:39 the SI stage has actually processed780,000 pairs/39 chunks,
+initial7,764 pairs/s, empty stderr; the2.164-billion-pair audit is a multi-day
+preparation, not an immediate GPU start.
+**GPU training has not started.** See
+[joint protocol, resource gates and job ledger](joint_global_si30_training_20261017.md).
+
+Earlier checks below are retained as history:
+
 **02:16:51 UTC+8 update:** user-requested64-worker replacement **13133479**
 is submitted to **i64m512ue**,64 CPUs/448G,one node,48h limit; follow-up state
 is PENDING(Resources). Old16-worker13077843 continues while it queues. Once

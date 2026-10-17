@@ -1,5 +1,36 @@
 # BioLiP Ligand Extraction Runtime, October 17
 
+## Completion Verified
+
+Checked **2026-10-17 15:08 UTC+8**. Replacement13133479 actually started
+02:48:48 on `cpu1-42`, stopped its predecessor at02:48:52, waited for exit/lock
+release, and invoked the original extractor at02:48:58. It COMPLETED0:0 at
+12:08:01, elapsed **9h19m13s**, peak RSS **364.07/448 GiB**, without OOM.
+The stage summary reports **149,860/149,870 files**,10 failures and extractor
+return code1 (`partial_or_failed`). All10 are K6G SDF molecule-read failures
+across7wu3/7wu4/7wu5/8srx, not scheduler or memory failures. Blind reruns are
+not an input repair. The first manifest remains32,432/32,432 complete.
+
+The resumed log includes skipped existing files, so149,870 divided by runtime
+is NOT new-output throughput. Before takeover the old log had processed
+117,904 rows; actual persisted-file counts at cancellation were not separately
+snapshotted. The new log reached149,850 at6h57m02s but the last20 results took
+another2h20m44s. This long tail explains why the earlier6-8h estimate was
+optimistic. Slurm total CPU time430.49h is72.17% of the64-core allocation's
+capacity over9h19m; this does not establish uniform worker efficiency or a
+controlled4x speedup across different chemistry mixes.
+
+QC13077847 ran12:08:02-12:33:04 (25m02s), COMPLETED0:0. The output is
+**154,930 BioLiP +19,018 PDBbind =173,948 QC-passed pairs**,65,788 unique
+sequences. Actual JSONL counts and SHA256s match the QC summary. QC failures
+include17,646 non-route5 ligand features and14,146 missing protein inputs;
+the independently recovered ESM features are not silently promoted.
+
+The subsequent user-approved joint SI/preprocess/smoke/scratch-training chain
+is recorded in [the new experiment ledger](joint_global_si30_training_20261017.md).
+No expanded TRAIN/test certificate exists yet. Earlier queue/ETA observations
+below are historical, not the current task state.
+
 ## 64-Worker Replacement Submitted
 
 At **2026-10-17 02:16:51 UTC+8**, submitted **13133479** to **i64m512ue**:
