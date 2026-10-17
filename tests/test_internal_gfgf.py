@@ -5,7 +5,7 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts/diagnostics"))
-from prepare_internal_gfgf import make_config
+from prepare_internal_gfgf import make_config, split_members, source_smoke_ids
 
 
 def baseline():
@@ -39,3 +39,45 @@ def test_no_resume_freezing_compile_or_legacy_label_fallback(tmp_path, section, 
     base[section][key] = value
     with pytest.raises(ValueError):
         make_config(base, tmp_path, tmp_path/"dataset")
+
+
+def test_joint_recipe_changes_only_identity_and_data_paths(tmp_path):
+    base = baseline()
+    cfg = make_config(base, tmp_path, tmp_path/"dataset", "pdbbind_biolip_joint")
+    assert cfg["model"] == base["model"]
+    assert cfg["training"] == base["training"]
+    assert cfg["experiment"]["name"] == "pdbbind_biolip_joint_global_si30_GFGF_scratch_seed44"
+
+
+def joint_members(tmp_path):
+    rows = [("train", "pdbbind", "p1"), ("train", "biolip", "b1"),
+            ("train", "biolip", "b2"), ("val", "pdbbind", "p2"), ("test", "biolip", "b3")]
+    path = tmp_path/"split.tsv"
+    path.write_text("split\tsource\tsample_id\tsample_key\n" + "".join(
+        f"{s}\t{source}\t{sid}\t{source}:{sid}\n" for s, source, sid in rows))
+    groups = {s:[sid for t, _, sid in rows if s == t] for s in ("train", "val", "test")}
+    return path, groups
+
+
+def test_joint_stats_membership_uses_real_source_keys(tmp_path):
+    path, groups = joint_members(tmp_path)
+    members = split_members(path, groups, "pdbbind_biolip_joint")
+    assert {members[sid][0] for sid in groups["train"]} == {"pdbbind:p1", "biolip:b1", "biolip:b2"}
+    ids = source_smoke_ids(groups, members, "train", 3)
+    assert {members[sid][1] for sid in ids[:2]} == {"biolip", "pdbbind"}
+    assert set(ids).issubset(groups["train"])
+    with pytest.raises(ValueError):
+        split_members(path, groups, "pdbbind_only")
+
+
+@pytest.mark.parametrize("corruption", ["wrong_prefix", "holdout_to_train", "duplicate_id"])
+def test_joint_membership_rejects_source_leakage_and_collisions(tmp_path, corruption):
+    path, groups = joint_members(tmp_path)
+    if corruption == "wrong_prefix":
+        path.write_text(path.read_text().replace("biolip:b1", "pdbbind:b1"))
+    elif corruption == "holdout_to_train":
+        groups["train"].append(groups["val"].pop())
+    else:
+        groups["test"].append(groups["train"][0])
+    with pytest.raises(ValueError):
+        split_members(path, groups, "pdbbind_biolip_joint")

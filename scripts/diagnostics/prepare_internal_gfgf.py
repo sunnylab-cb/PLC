@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze the exact GFGF seed44 recipe on the newly audited PDBbind-only cohort.
+"""Freeze the exact GFGF seed44 recipe on an independently audited cohort.
 
 Changes are dataset/split/label and output paths ONLY. No checkpoint loading,
 old normalization, external benchmark filtering, or TEST-based model selection.
@@ -7,6 +7,7 @@ old normalization, external benchmark filtering, or TEST-based model selection.
 
 import argparse
 import copy
+import csv
 import inspect
 import json
 from pathlib import Path
@@ -20,7 +21,12 @@ from strict_assignment_common import read_strict_splits
 from src.contact_labels import decode_contact_labels, fixed5_protocol
 
 
-def make_config(base, experiment, dataset):
+COHORTS = ("pdbbind_only", "pdbbind_biolip_joint")
+
+
+def make_config(base, experiment, dataset, cohort="pdbbind_only"):
+    if cohort not in COHORTS:
+        raise ValueError("Unknown cohort")
     cfg = copy.deepcopy(base)
     m, t = cfg["model"], cfg["training"]
     if any(t.get(k) for k in ("init_from_checkpoint", "init_from_v11m3", "resume",
@@ -35,12 +41,47 @@ def make_config(base, experiment, dataset):
         raise ValueError("Do not retain legacy label sidecars")
     d.update(data_root=str(dataset), split_file=str(dataset/"splits.txt"),
              distances_file=str(dataset/"residue_ligand_distances_dcenter.pt"))
-    cfg["experiment"].update(name="pdbbind_global_si30_GFGF_scratch_seed44",
+    prefix = "pdbbind" if cohort == "pdbbind_only" else "pdbbind_biolip_joint"
+    cfg["experiment"].update(name=prefix+"_global_si30_GFGF_scratch_seed44",
                              output_dir=str(experiment/"outputs"))
     return cfg
 
 
-def validate_dataset(experiment, cfg, pool):
+def split_members(path, groups, cohort):
+    """Bind source-prefixed QC keys to the IDs consumed by the training loader."""
+    if cohort not in COHORTS:
+        raise ValueError("Unknown cohort")
+    allowed = {"pdbbind"} if cohort == "pdbbind_only" else {"pdbbind", "biolip"}
+    members = {}
+    with path.open() as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            sid, source, split = row["sample_id"], row["source"], row["split"]
+            if (sid in members or source not in allowed or split not in groups
+                    or row["sample_key"] != source+":"+sid):
+                raise ValueError("Invalid/colliding source-aware split member")
+            members[sid] = (row["sample_key"], source, split)
+    expected = [(sid, split) for split, ids in groups.items() for sid in ids]
+    if (len(expected) != len(members) or len({sid for sid, _ in expected}) != len(expected)
+            or any(sid not in members or members[sid][2] != split for sid, split in expected)
+            or {item[1] for item in members.values()} != allowed):
+        raise ValueError("Audited cohort and training membership differ")
+    return members
+
+
+def source_smoke_ids(groups, members, split, count):
+    buckets = [[sid for sid in groups[split] if members[sid][1] == source]
+               for source in sorted({v[1] for v in members.values()})]
+    selected = []
+    for index in range(count):
+        for bucket in buckets:
+            if index < len(bucket):
+                selected.append(bucket[index])
+            if len(selected) == count:
+                return selected
+    return selected
+
+
+def validate_dataset(experiment, cfg, pool, cohort="pdbbind_only"):
     from src.data.pocket_dataset_v8 import PocketDatasetV8
 
     data = experiment/"dataset"
@@ -48,9 +89,9 @@ def validate_dataset(experiment, cfg, pool):
     prep = json.loads((data/"preprocessing_summary.json").read_text())
     if (si["passed"] is not True or si["contract"]["edge_rule"] != "global_only"
             or si["cross_set_audit"]["edges"] != 0 or si["cross_set_audit"]["max_global_si"] >= .3
-            or si["cohort"] != "pdbbind_only" or si["external_benchmarks_used"]):
-        raise ValueError("New PDBbind-only global SI audit has not passed")
-    if (prep["preprocessing_passed"] is not True or prep["cohort"] != "pdbbind_only"
+            or si["cohort"] != cohort or si["external_benchmarks_used"]):
+        raise ValueError("New independent cohort global SI audit has not passed")
+    if (prep["preprocessing_passed"] is not True or prep["cohort"] != cohort
             or prep["contact_label_protocol"] != fixed5_protocol()):
         raise ValueError("Expected newly prepared native heavy-atom <5A labels")
     checks = {
@@ -72,7 +113,9 @@ def validate_dataset(experiment, cfg, pool):
     if counts != si["counts"] or counts != prep["dataset_counts"]:
         raise ValueError("SI/preprocessing/training split counts differ")
     stats = json.loads((data/"train_only_stats.json").read_text())
-    if (set(stats["train_keys"]) != {"pdbbind:"+sid for sid in groups["train"]}
+    members = split_members(experiment/"split/candidate_split.tsv", groups, cohort)
+    if (set(stats["train_keys"]) != {members[sid][0] for sid in groups["train"]}
+            or len(stats["train_keys"]) != len(groups["train"])
             or stats["split_sha256"] != si["split_sha256"]):
         raise ValueError("Normalization was not fitted on exactly this TRAIN")
     ids = sum(groups.values(), [])
@@ -95,6 +138,11 @@ def validate_dataset(experiment, cfg, pool):
         contact_min[s] = minimum
     # Metadata/label QC above covers TEST; no TEST forward pass or model selection.
     read_ids = groups["train"][:4]+groups["train"][-2:]+groups["val"][:4]+groups["val"][-2:]
+    for split in ("train", "val"):
+        for source in sorted({v[1] for v in members.values()}):
+            source_ids = [sid for sid in groups[split] if members[sid][1] == source]
+            read_ids.extend(source_ids[:2])
+    read_ids = list(dict.fromkeys(read_ids))
     for sid in read_ids:
         item = loader[ids.index(sid)]
         for name, value in item.items():
@@ -102,7 +150,7 @@ def validate_dataset(experiment, cfg, pool):
                 raise ValueError(f"Non-finite production input: {sid}/{name}")
         if int((item["labels"] == 0).sum()) < 3:
             raise ValueError(f"Production label mismatch: {sid}")
-    return dict(passed=True, counts=counts, loader_ids_match=True,
+    return dict(passed=True, counts=counts, by_source=si["by_source"], loader_ids_match=True,
         minimum_contact_count_after_residue_cap=contact_min,
         train_val_item_smoke=read_ids, test_forward_used=False), checks
 
@@ -129,6 +177,7 @@ def main():
     ap.add_argument("--experiment", required=True, type=Path)
     ap.add_argument("--pool-dir", type=Path)
     ap.add_argument("--base", type=Path)
+    ap.add_argument("--cohort", choices=COHORTS, default="pdbbind_only")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--require-smoke", action="store_true")
     args = ap.parse_args()
@@ -140,13 +189,15 @@ def main():
     if args.base is None or args.pool_dir is None or sha256(args.base) != BASE_SHA:
         raise ValueError("Use the exact audited GFGF baseline config and QC pool")
     if (root/"prepared/provenance.json").exists():
-        verify_prepared(root)
+        existing = verify_prepared(root)
+        if existing.get("cohort", "pdbbind_only") != args.cohort:
+            raise ValueError("Prepared artifact belongs to another cohort")
         print("ALREADY_PREPARED", flush=True)
         return
     torch.set_num_threads(1)
     base = yaml.safe_load(args.base.read_text())
-    cfg = make_config(base, root, root/"dataset")
-    qc, checks = validate_dataset(root, cfg, args.pool_dir)
+    cfg = make_config(base, root, root/"dataset", args.cohort)
+    qc, checks = validate_dataset(root, cfg, args.pool_dir, args.cohort)
     checks.update({p:sha256(p) for p in (args.base, root/"split/summary.json",
         root/"dataset/preprocessing_summary.json", root/"dataset/preprocessing_contract.json")})
     prepared = root/"prepared"
@@ -155,7 +206,7 @@ def main():
     save_json(prepared/"loader_qc.json", qc)
     manifest = dict(asset_hashes={str(p.resolve()):h for p,h in checks.items()},
         source_hashes=source_hashes(root/"code_v1"), config_sha256=sha256(prepared/"GFGF.yaml"),
-        loader_qc=qc, seed=44, start="scratch", test_used_for_selection=False,
+        loader_qc=qc, cohort=args.cohort, seed=44, start="scratch", test_used_for_selection=False,
         model_and_training_unchanged=cfg["model"] == base["model"] and cfg["training"] == base["training"],
         changed_fields=["data.data_root", "data.split_file", "data.distances_file",
                         "experiment.name", "experiment.output_dir"],

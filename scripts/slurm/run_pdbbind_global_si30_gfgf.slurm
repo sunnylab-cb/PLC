@@ -3,7 +3,8 @@
 # STAGE=smoke: verify artifacts, FLA/reference check, production mixed-precision
 # loss/backward and real VAL inference; discard the smoke model afterwards.
 # STAGE=train: requires matching successful smoke; no resume/compile/warm-start.
-# Dataset: independent PDBbind-only global SI<.30 TRAIN/VAL/TEST, fixed5 labels.
+# Dataset: independently prepared PDBbind-only OR joint global SI<.30 cohort.
+# The frozen provenance/config identifies the cohort; native fixed5 labels.
 # Existing best-F1, AUPRC/AUROC and VAL gate utilities remain unchanged.
 #SBATCH --job-name=pdb_gsi30_gfgf
 #SBATCH --partition=i64m1tga800ue

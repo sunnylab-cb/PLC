@@ -45,10 +45,13 @@ class CheckedAdamW(torch.optim.AdamW):
         return super().step(closure)
 
 
-def training_batch(cfg):
+def training_batch(cfg, ids=None):
     data = cfg["data"]
     n = cfg["training"]["batch_size"]
-    ids = read_strict_splits(data["split_file"])["train"][:n]
+    train_ids = read_strict_splits(data["split_file"])["train"]
+    ids = train_ids[:n] if ids is None else ids
+    if len(ids) != n or len(set(ids)) != n or not set(ids).issubset(train_ids):
+        raise ValueError("Smoke batch must contain distinct TRAIN IDs only")
     allowed = inspect.signature(PocketDatasetV8).parameters
     kwargs = {k: v for k, v in data.items() if k in allowed}
     kwargs.update(pdb_ids=ids, use_nma=False, split="train", verbose=False)

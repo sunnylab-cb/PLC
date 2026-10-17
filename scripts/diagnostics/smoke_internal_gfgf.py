@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT/"scripts/train"))
 import train_v11m13 as trainer
 from src.data.collate import prepare_model_inputs_v11, pocket_collate_fn_v10
 from src.data.pocket_dataset_v8 import PocketDatasetV8
-from prepare_internal_gfgf import verify_prepared
+from prepare_internal_gfgf import verify_prepared, split_members, source_smoke_ids
 from prepare_libre_transfer import sha256
 from smoke_libre_transfer import CheckedAdamW, ScalarRecorder, training_batch
 from smoke_protein_hybrid import kernel_check
@@ -34,7 +34,7 @@ def main():
     ap.add_argument("--experiment", required=True, type=Path)
     args = ap.parse_args()
     root = args.experiment
-    verify_prepared(root)
+    manifest = verify_prepared(root)
     if not torch.cuda.is_available():
         raise RuntimeError("Use a Slurm GPU allocation")
     torch.set_num_threads(4)
@@ -47,7 +47,12 @@ def main():
     torch.manual_seed(44)
     random.seed(44)
     np.random.seed(44)
-    batch = training_batch(cfg)
+    groups = read_strict_splits(cfg["data"]["split_file"])
+    joint = manifest.get("cohort") == "pdbbind_biolip_joint"
+    members = (split_members(root/"split/candidate_split.tsv", groups, manifest["cohort"])
+               if joint else None)
+    train_ids = source_smoke_ids(groups, members, "train", cfg["training"]["batch_size"]) if joint else None
+    batch = training_batch(cfg, ids=train_ids)
     model = trainer.create_model(cfg, device)
     if not all(p.requires_grad for p in model.parameters()):
         raise RuntimeError("Unexpected frozen parameters in scratch model")
@@ -69,7 +74,7 @@ def main():
     training_peak = torch.cuda.max_memory_allocated()/2**30
     # Separate real VAL rows exercise inference; TEST is never forwarded here.
     data = cfg["data"]
-    ids = read_strict_splits(data["split_file"])["val"][:4]
+    ids = source_smoke_ids(groups, members, "val", 4) if joint else groups["val"][:4]
     ds = PocketDatasetV8(**{k:v for k,v in data.items() if k in inspect.signature(PocketDatasetV8).parameters},
                          pdb_ids=ids, use_nma=False, split="val", verbose=False)
     if ds.pdb_ids != ids:
