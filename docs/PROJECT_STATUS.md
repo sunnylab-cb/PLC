@@ -1,5 +1,12 @@
 # PLC status as of 2026-10-17
 
+Latest scheduling update (15:31 UTC+8): expanded joint-cohort SI moved from
+single-node13146709 to **13146925**, RUNNING on four `i64m512ue` nodes,
+256 CPUs total. All four ranks verified;6,260,000 previously completed pairs
+reused. Preparation13146710 now waits for the new SI job, followed by
+smoke13146711 and scratch training13146712. Training has not started.
+See [handoff details](joint_global_si30_training_20261017.md).
+
 This is an index of verified results, not a new evaluation. It separates
 training validation, held-out testing, external benchmarking and data
 preparation. Older PDBbind splits and current strict splits are different

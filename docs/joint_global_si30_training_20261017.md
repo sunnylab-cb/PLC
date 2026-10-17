@@ -1,5 +1,31 @@
 # Expanded Joint Cohort: Strict Split to Scratch Training
 
+## Four-node SI Handoff (2026-10-17 15:30 UTC+8)
+
+At the user's request, SI now runs as **13146925**, on four `i64m512ue`
+nodes (`cpu1-[87-90]`), 64 CPUs/160G per node, 256 CPUs total.
+Both exhaustive comparisons and the fresh cross-set audit use four shards.
+The old single-node job13146709 was cancelled only after preparation13146710
+was held and rewired to `afterok:13146925`. Smoke13146711 and training13146712
+retain their existing dependencies. GPU training has NOT started.
+
+The last pre-handoff progress snapshot contained308 completed chunks,
+6,160,000 comparisons. Valid completed chunks are reused, not deleted.
+Scheduler overlay commit **1a45971** keeps original `code_v1` (33acf20) intact,
+including the source hash embedded in the numerical SI contract. Chunk ownership
+is `chunk_id % 4`; each rank writes separate progress. The original reducer
+validates complete enumeration after all workers finish. Tests cover partition
+coverage, equality with the original single-node computation, fresh cross-set
+audit and cache reuse without rewriting completed chunks:40 tests passed.
+
+Overlay directory: `si_multinode_20261017/code`, relative to the experiment root.
+Overlay archive SHA256:
+`07e0ebfddd21131da368fd3180088df117d8bcb899f8bf21793acc9c5ec64335`.
+This changes scheduling only, not sequence identity, labels, splits or training.
+The older single-node estimates below are historical, not the new ETA.
+
+## Original Submission
+
 Submitted **2026-10-17 15:20:39 UTC+8** after user approval to train the expanded
 PDBbind + BioLiP cohort. At15:21:06 the SI job is RUNNING on `cpu1-57`; all
 downstream jobs are PENDING(Dependency). **GPU training has not started.**
