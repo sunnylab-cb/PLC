@@ -1,6 +1,8 @@
 import copy
 from pathlib import Path
 import sys
+import json
+import types
 
 import pytest
 
@@ -81,3 +83,46 @@ def test_joint_membership_rejects_source_leakage_and_collisions(tmp_path, corrup
         groups["test"].append(groups["train"][0])
     with pytest.raises(ValueError):
         split_members(path, groups, "pdbbind_biolip_joint")
+
+
+def test_validate_dataset_keeps_source_mapping_after_label_loop(tmp_path, monkeypatch):
+    import torch
+    import prepare_internal_gfgf as module
+    path, groups = joint_members(tmp_path)
+    (tmp_path / "split").mkdir()
+    path.rename(tmp_path / "split/candidate_split.tsv")
+    data = tmp_path / "dataset"
+    data.mkdir()
+    counts = {key: len(ids) for key, ids in groups.items()}
+    protocol = module.fixed5_protocol()
+    si = dict(passed=True, contract=dict(edge_rule="global_only", pool_sha256="hash"),
+              cross_set_audit=dict(edges=0, max_global_si=.2), cohort="pdbbind_biolip_joint",
+              external_benchmarks_used=False, counts=counts, split_sha256="hash", by_source={})
+    prep = dict(preprocessing_passed=True, cohort=si["cohort"], contact_label_protocol=protocol,
+                training_split_sha256="hash", stats_sha256="hash", labels_sha256="hash",
+                split_sha256="hash", pool_sha256="hash", dataset_root=str(data),
+                labels_file=str(data / "labels.pt"), dataset_counts=counts)
+    for p, obj in [(tmp_path / "split/summary.json", si),
+                   (data / "preprocessing_summary.json", prep),
+                   (data / "train_only_stats.json", dict(split_sha256="hash",
+                    train_keys=["pdbbind:p1", "biolip:b1", "biolip:b2"]))]:
+        p.write_text(json.dumps(obj))
+    read = []
+    class Loader:
+        def __init__(self, pdb_ids, **kwargs):
+            self.pdb_ids = pdb_ids
+            self.distances_dict = {sid: dict(contact_label_protocol=protocol) for sid in pdb_ids}
+
+        def __getitem__(self, index):
+            read.append(self.pdb_ids[index])
+            return dict(labels=torch.zeros(3, dtype=torch.long))
+
+    monkeypatch.setitem(sys.modules, "src.data.pocket_dataset_v8", types.SimpleNamespace(PocketDatasetV8=Loader))
+    monkeypatch.setattr(module, "sha256", lambda path: "hash")
+    monkeypatch.setattr(module, "read_strict_splits", lambda path: groups)
+    monkeypatch.setattr(module, "decode_contact_labels", lambda label: (torch.zeros(3), None))
+    cfg = dict(data=dict(distances_file=str(data / "labels.pt"), max_seq_len=1800))
+    qc, _ = module.validate_dataset(tmp_path, cfg, tmp_path, si["cohort"])
+    assert qc["passed"] and qc["minimum_contact_count_after_residue_cap"] == dict(train=3, val=3, test=3)
+    assert set(read) == set(groups["train"] + groups["val"])
+    assert not set(read).intersection(groups["test"])

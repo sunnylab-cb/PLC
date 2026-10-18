@@ -124,9 +124,9 @@ def validate_dataset(experiment, cfg, pool, cohort="pdbbind_only"):
     if loader.pdb_ids != ids or set(loader.distances_dict) != set(ids):
         raise ValueError("Production loader silently dropped samples or labels")
     contact_min = {}
-    for s, members in groups.items():
+    for s, split_ids in groups.items():
         minimum = float("inf")
-        for sid in members:
+        for sid in split_ids:
             label = loader.distances_dict[sid]
             if label["contact_label_protocol"] != fixed5_protocol():
                 raise ValueError(f"Mixed contact protocol: {sid}")
@@ -198,7 +198,7 @@ def main():
     base = yaml.safe_load(args.base.read_text())
     cfg = make_config(base, root, root/"dataset", args.cohort)
     qc, checks = validate_dataset(root, cfg, args.pool_dir, args.cohort)
-    checks.update({p:sha256(p) for p in (args.base, root/"split/summary.json",
+    checks.update({p:sha256(p) for p in (Path(__file__).resolve(), args.base, root/"split/summary.json",
         root/"dataset/preprocessing_summary.json", root/"dataset/preprocessing_contract.json")})
     prepared = root/"prepared"
     prepared.mkdir(parents=True, exist_ok=True)
