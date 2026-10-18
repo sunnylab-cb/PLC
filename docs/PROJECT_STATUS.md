@@ -1,5 +1,23 @@
 # PLC status as of 2026-10-17
 
+## 2026-10-18 Recovery Update
+
+SI13146925 completed successfully:2,163,997,578 all-pairs comparisons and
+902,795,631 independent cross-set comparisons, zero global SI>=0.30 violations.
+Joint TRAIN/VAL/TEST counts are139,158/17,395/17,395.
+All173,948 samples finished preprocessing at17:27. Loader QC then failed at18:08
+because a loop shadowed the source-membership dictionary with a list; this was
+not an OOM or data/SI failure. The dependency guard cancelled smoke13146711 and
+training13146712 before they ran.
+
+Fix095285c preserves completed data and immutable model code, reruns full loader
+QC via a separately hashed overlay, then smoke and scratch training.16 targeted
+tests passed, including the previously missed label-loop/source-lookup path.
+Replacement jobs: **13187467** (QC, i64m512ue), **13187468** (smoke,
+i64m1tga800ue), **13187469** (training, i64m1tga800ue). At submission QC is
+PENDING(Priority), others PENDING(Dependency); training has not started.
+Remote receipt/logs: `joint_global_si30_gfgf_20261017/loader_recovery_20261018/`.
+
 Latest scheduling update (15:31 UTC+8): expanded joint-cohort SI moved from
 single-node13146709 to **13146925**, RUNNING on four `i64m512ue` nodes,
 256 CPUs total. All four ranks verified;6,260,000 previously completed pairs
