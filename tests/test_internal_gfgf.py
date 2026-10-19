@@ -19,12 +19,13 @@ def baseline():
                   max_atoms=256, atom_truncation_policy="alternating_ends"))
 
 
-def test_only_paths_change_and_input_not_mutated(tmp_path):
+def test_only_paths_and_stop_monitor_change_and_input_not_mutated(tmp_path):
     base = baseline()
     before = copy.deepcopy(base)
     result = make_config(base, tmp_path, tmp_path/"dataset")
     assert base == before
-    assert result["model"] == base["model"] and result["training"] == base["training"]
+    assert result["model"] == base["model"]
+    assert result["training"] == dict(base["training"], early_stopping_metric="f1_c0")
     assert result["experiment"]["seed"] == 44
     assert result["data"]["max_atoms"] == 256
     assert result["data"]["distances_file"] == str(tmp_path/"dataset/residue_ligand_distances_dcenter.pt")
@@ -43,11 +44,11 @@ def test_no_resume_freezing_compile_or_legacy_label_fallback(tmp_path, section, 
         make_config(base, tmp_path, tmp_path/"dataset")
 
 
-def test_joint_recipe_changes_only_identity_and_data_paths(tmp_path):
+def test_joint_recipe_changes_only_identity_paths_and_stop_monitor(tmp_path):
     base = baseline()
     cfg = make_config(base, tmp_path, tmp_path/"dataset", "pdbbind_biolip_joint")
     assert cfg["model"] == base["model"]
-    assert cfg["training"] == base["training"]
+    assert cfg["training"] == dict(base["training"], early_stopping_metric="f1_c0")
     assert cfg["experiment"]["name"] == "pdbbind_biolip_joint_global_si30_GFGF_scratch_seed44"
 
 

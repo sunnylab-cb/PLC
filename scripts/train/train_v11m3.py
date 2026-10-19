@@ -64,6 +64,7 @@ from src.metrics.metrics import (
     compute_segmentation_metrics,
 )
 from src.metrics.diagnostics import collect_model_diagnostics, compute_feature_statistics
+from src.utils.early_stopping import ValidationEarlyStopping
 from src.losses import compute_combined_iou_loss, compute_iou_metric  # V7m2: IoU Loss
 from src.losses.boundary_loss import compute_boundary_loss, compute_combined_loss_with_boundary  # V9m2: Boundary Loss
 from src.losses.confident_negative_clip import compute_cnc_weights, compute_cnc_stats  # V10m7: CNC
@@ -1884,6 +1885,8 @@ def main():
 
     # Load config
     config = load_config(args.config)
+    stop_metric = config['training'].setdefault('early_stopping_metric', 'f1_c0')
+    early_stopping = ValidationEarlyStopping(stop_metric)
 
     # Set seed
     seed = config['experiment']['seed']
@@ -2226,6 +2229,7 @@ def main():
     # Resume from checkpoint if specified
     start_epoch = 0
     best_val_loss = float('inf')
+    best_val_f1_c0 = -float('inf')
     patience_counter = 0
 
     if args.resume:
@@ -2253,7 +2257,15 @@ def main():
             # Load training state
             start_epoch = checkpoint['epoch'] + 1
             best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            previous_f1 = checkpoint.get('val_metrics', {}).get('f1_c0', -float('inf'))
+            best_val_f1_c0 = checkpoint.get('best_val_f1_c0', -float('inf'))
+            if math.isfinite(previous_f1):
+                best_val_f1_c0 = max(best_val_f1_c0, previous_f1)
             patience_counter = checkpoint.get('patience_counter', 0)
+            restored_stop_state = early_stopping.restore(checkpoint)
+            patience_counter = early_stopping.bad_epochs
+            if not restored_stop_state:
+                print_rank0("Early-stopping monitor changed/legacy checkpoint: resetting patience")
 
             print_rank0(f"✓ Resumed from epoch {checkpoint['epoch'] + 1}")
             print_rank0(f"  Best val loss: {best_val_loss:.4f}")
@@ -2263,6 +2275,11 @@ def main():
             print_rank0("Starting training from scratch...")
     else:
         print_rank0("Starting training from scratch...")
+
+    print_rank0(
+        f"Early stopping: val {early_stopping.metric}, "
+        f"patience={train_cfg['early_stopping_patience']}; best val-loss checkpoint kept separately"
+    )
 
     # Class weights
     class_weights = torch.tensor(train_cfg['class_weights'], dtype=torch.float32).to(device)
@@ -2492,6 +2509,22 @@ def main():
                             epoch,
                         )
 
+            # Update stopping state BEFORE saving, independently of loss selection.
+            early_stopping.update(val_metrics)
+            patience_counter = early_stopping.bad_epochs
+            val_loss_improved = math.isfinite(val_metrics['loss']) and val_metrics['loss'] < best_val_loss
+            if val_loss_improved:
+                best_val_loss = val_metrics['loss']
+            current_f1_c0 = float(val_metrics['f1_c0'])
+            val_f1_improved = math.isfinite(current_f1_c0) and current_f1_c0 > best_val_f1_c0
+            if val_f1_improved:
+                best_val_f1_c0 = current_f1_c0
+            print_rank0(
+                f"Early-stop monitor: {early_stopping.metric}="
+                f"{val_metrics[early_stopping.metric]:.6f}, best={early_stopping.best:.6f}, "
+                f"patience={patience_counter}/{train_cfg['early_stopping_patience']}"
+            )
+
             # ✅ Save checkpoints with complete state
             # 1. Save latest checkpoint after EVERY epoch
             latest_checkpoint = {
@@ -2500,7 +2533,10 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
                 'best_val_loss': best_val_loss,
+                'best_val_f1_c0': best_val_f1_c0,
+                'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
                 'patience_counter': patience_counter,
+                'early_stopping_state': early_stopping.state_dict(),
                 'train_metrics': train_metrics,
                 'val_metrics': val_metrics,
                 'config': config
@@ -2518,7 +2554,10 @@ def main():
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'best_val_loss': best_val_loss,
+                    'best_val_f1_c0': best_val_f1_c0,
+                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
                     'patience_counter': patience_counter,
+                    'early_stopping_state': early_stopping.state_dict(),
                     'train_metrics': train_metrics,
                     'val_metrics': val_metrics,
                     'config': config
@@ -2530,17 +2569,17 @@ def main():
                 print_rank0(f"✓ Saved checkpoint at epoch {epoch + 1}")
 
             # 3. Save best model
-            if val_metrics['loss'] < best_val_loss:
-                best_val_loss = val_metrics['loss']
-                patience_counter = 0
-
+            if val_loss_improved:
                 best_checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'best_val_loss': best_val_loss,
+                    'best_val_f1_c0': best_val_f1_c0,
+                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
                     'patience_counter': patience_counter,
+                    'early_stopping_state': early_stopping.state_dict(),
                     'val_metrics': val_metrics,
                     'config': config
                 }
@@ -2549,8 +2588,11 @@ def main():
 
                 torch.save(best_checkpoint, exp_dir / 'best_model.pt')
                 print_rank0(f"✓ Saved best model (val_loss={best_val_loss:.4f})")
-            else:
-                patience_counter += 1
+
+            # Ranking metrics remain in logs/checkpoints, without extra best files.
+            if val_f1_improved:
+                torch.save(latest_checkpoint, exp_dir / 'best_f1_c0_model.pt')
+                print_rank0(f"Saved best F1_c0 model (f1_c0={best_val_f1_c0:.4f})")
 
             # Early stopping
             if patience_counter >= train_cfg['early_stopping_patience']:

@@ -5,7 +5,8 @@
 # STAGE=train: requires matching successful smoke; no resume/compile/warm-start.
 # Dataset: independently prepared PDBbind-only OR joint global SI<.30 cohort.
 # The frozen provenance/config identifies the cohort; native fixed5 labels.
-# Existing best-F1, AUPRC/AUROC and VAL gate utilities remain unchanged.
+# New launches stop on VAL F1; keep best-loss and best-F1 checkpoints only.
+# AUPRC/AUROC, MCC and VAL-gate metrics remain logged, without extra best files.
 #SBATCH --job-name=pdb_gsi30_gfgf
 #SBATCH --partition=i64m1tga800ue
 #SBATCH --nodes=1

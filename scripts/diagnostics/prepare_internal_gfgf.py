@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Freeze the exact GFGF seed44 recipe on an independently audited cohort.
 
-Changes are dataset/split/label and output paths ONLY. No checkpoint loading,
-old normalization, external benchmark filtering, or TEST-based model selection.
+Changes are dataset/split/label and output paths, plus explicit F1-based early
+stopping for new runs. No checkpoint loading, old normalization, external
+benchmark filtering, or TEST-based model selection.
 """
 
 import argparse
@@ -44,6 +45,7 @@ def make_config(base, experiment, dataset, cohort="pdbbind_only"):
     prefix = "pdbbind" if cohort == "pdbbind_only" else "pdbbind_biolip_joint"
     cfg["experiment"].update(name=prefix+"_global_si30_GFGF_scratch_seed44",
                              output_dir=str(experiment/"outputs"))
+    t["early_stopping_metric"] = "f1_c0"
     return cfg
 
 
@@ -209,7 +211,7 @@ def main():
         loader_qc=qc, cohort=args.cohort, seed=44, start="scratch", test_used_for_selection=False,
         model_and_training_unchanged=cfg["model"] == base["model"] and cfg["training"] == base["training"],
         changed_fields=["data.data_root", "data.split_file", "data.distances_file",
-                        "experiment.name", "experiment.output_dir"],
+                        "experiment.name", "experiment.output_dir", "training.early_stopping_metric"],
         protocol="native heavy-atom d_min <5A; global chain SI <.30 across all three sets; TRAIN-only stats")
     save_json(prepared/"provenance.json", manifest)
     verify_prepared(root)

@@ -104,129 +104,6 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
         raise RuntimeError("Could not patch V11m3 grad logging block for V11m4")
     source = source.replace(old_grad_block, new_grad_block, 1)
 
-    source = source.replace(
-        "    best_val_loss = float('inf')\n    patience_counter = 0",
-        "    best_val_loss = float('inf')\n    best_val_f1_c0 = -float('inf')\n    best_val_dice_c0 = -float('inf')\n    best_val_auprc_c0 = -float('inf')\n    best_val_auroc_c0 = -float('inf')\n    patience_counter = 0",
-        1,
-    )
-    source = source.replace(
-        "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
-        "            best_val_loss = checkpoint.get('best_val_loss', float('inf'))\n            best_val_f1_c0 = checkpoint.get('best_val_f1_c0', -float('inf'))\n            best_val_dice_c0 = checkpoint.get('best_val_dice_c0', -float('inf'))\n            best_val_auprc_c0 = checkpoint.get('best_val_auprc_c0', -float('inf'))\n            best_val_auroc_c0 = checkpoint.get('best_val_auroc_c0', -float('inf'))\n            patience_counter = checkpoint.get('patience_counter', 0)",
-        1,
-    )
-    source = source.replace(
-        "                'best_val_loss': best_val_loss,\n                'patience_counter': patience_counter,",
-        "                'best_val_loss': best_val_loss,\n                'best_val_f1_c0': best_val_f1_c0,\n                'best_val_dice_c0': best_val_dice_c0,\n                'best_val_auprc_c0': best_val_auprc_c0,\n                'best_val_auroc_c0': best_val_auroc_c0,\n                'patience_counter': patience_counter,",
-    )
-
-    old_best_tail = """            else:
-                patience_counter += 1
-
-            # Early stopping
-"""
-    new_best_tail = """            else:
-                patience_counter += 1
-
-            # 4. Save metric-best checkpoints. Val loss can become a poor
-            # selector for contact segmentation, so keep explicit F1/Dice bests.
-            current_f1_c0 = float(val_metrics.get('f1_c0', -float('inf')))
-            if math.isfinite(current_f1_c0) and current_f1_c0 > best_val_f1_c0:
-                best_val_f1_c0 = current_f1_c0
-                best_f1_checkpoint = {
-                    'epoch': epoch,
-                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict(),
-                    'best_val_loss': best_val_loss,
-                    'best_val_f1_c0': best_val_f1_c0,
-                    'best_val_dice_c0': best_val_dice_c0,
-                    'best_val_auprc_c0': best_val_auprc_c0,
-                    'best_val_auroc_c0': best_val_auroc_c0,
-                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
-                    'patience_counter': patience_counter,
-                    'train_metrics': train_metrics,
-                    'val_metrics': val_metrics,
-                    'config': config
-                }
-                if scaler is not None:
-                    best_f1_checkpoint['scaler_state_dict'] = scaler.state_dict()
-                torch.save(best_f1_checkpoint, exp_dir / 'best_f1_c0_model.pt')
-                print_rank0(f"✓ Saved best F1_c0 model (f1_c0={best_val_f1_c0:.4f})")
-
-            current_dice_c0 = float(val_metrics.get('dice_c0', -float('inf')))
-            if math.isfinite(current_dice_c0) and current_dice_c0 > best_val_dice_c0:
-                best_val_dice_c0 = current_dice_c0
-                best_dice_checkpoint = {
-                    'epoch': epoch,
-                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict(),
-                    'best_val_loss': best_val_loss,
-                    'best_val_f1_c0': best_val_f1_c0,
-                    'best_val_dice_c0': best_val_dice_c0,
-                    'best_val_auprc_c0': best_val_auprc_c0,
-                    'best_val_auroc_c0': best_val_auroc_c0,
-                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
-                    'patience_counter': patience_counter,
-                    'train_metrics': train_metrics,
-                    'val_metrics': val_metrics,
-                    'config': config
-                }
-                if scaler is not None:
-                    best_dice_checkpoint['scaler_state_dict'] = scaler.state_dict()
-                torch.save(best_dice_checkpoint, exp_dir / 'best_dice_c0_model.pt')
-                print_rank0(f"✓ Saved best DICE_c0 model (dice_c0={best_val_dice_c0:.4f})")
-
-            # Threshold-independent selectors. These inference checkpoints
-            # omit optimizer/scaler state to bound the extra storage cost.
-            current_auprc_c0 = float(val_metrics.get('auprc_c0_global', -float('inf')))
-            if math.isfinite(current_auprc_c0) and current_auprc_c0 > best_val_auprc_c0:
-                best_val_auprc_c0 = current_auprc_c0
-                best_auprc_checkpoint = {
-                    'epoch': epoch,
-                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
-                    'best_val_loss': best_val_loss,
-                    'best_val_f1_c0': best_val_f1_c0,
-                    'best_val_dice_c0': best_val_dice_c0,
-                    'best_val_auprc_c0': best_val_auprc_c0,
-                    'best_val_auroc_c0': best_val_auroc_c0,
-                    'selection_metric': 'auprc_c0_global',
-                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
-                    'val_metrics': val_metrics,
-                    'config': config,
-                }
-                torch.save(best_auprc_checkpoint, exp_dir / 'best_auprc_c0_model.pt')
-                print_rank0(
-                    f"✓ Saved best AUPRC_c0 model (auprc={best_val_auprc_c0:.4f}, "
-                    f"val_gate={best_auprc_checkpoint['val_contact_gate']:.4f})"
-                )
-
-            current_auroc_c0 = float(val_metrics.get('auroc_c0_global', -float('inf')))
-            if math.isfinite(current_auroc_c0) and current_auroc_c0 > best_val_auroc_c0:
-                best_val_auroc_c0 = current_auroc_c0
-                best_auroc_checkpoint = {
-                    'epoch': epoch,
-                    'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),
-                    'best_val_loss': best_val_loss,
-                    'best_val_f1_c0': best_val_f1_c0,
-                    'best_val_dice_c0': best_val_dice_c0,
-                    'best_val_auprc_c0': best_val_auprc_c0,
-                    'best_val_auroc_c0': best_val_auroc_c0,
-                    'selection_metric': 'auroc_c0_global',
-                    'val_contact_gate': float(val_metrics.get('best_gate_c0', 0.5)),
-                    'val_metrics': val_metrics,
-                    'config': config,
-                }
-                torch.save(best_auroc_checkpoint, exp_dir / 'best_auroc_c0_model.pt')
-                print_rank0(
-                    f"✓ Saved best AUROC_c0 model (auroc={best_val_auroc_c0:.4f}, "
-                    f"val_gate={best_auroc_checkpoint['val_contact_gate']:.4f})"
-                )
-
-            # Early stopping
-"""
-    if old_best_tail not in source:
-        raise RuntimeError("Could not patch V11m3 best-metric checkpoint block for V11m4")
     local_delta_anchor = """                # V11m3: Uni-Mol ligand feature contribution diagnostics.
                 unimol_stats = compute_unimol_stats(_model, _unimol)
                 for key, value in unimol_stats.items():
@@ -405,7 +282,7 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
     if assignment_tb_anchor not in source:
         raise RuntimeError("Could not patch assignment TensorBoard block for V11m15")
     source = source.replace(assignment_tb_anchor, assignment_tb_block, 1)
-    return source.replace(old_best_tail, new_best_tail, 1)
+    return source
 
 
 def _load_v11m3_train_module() -> ModuleType:

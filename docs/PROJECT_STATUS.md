@@ -1,4 +1,21 @@
-# PLC status as of 2026-10-17
+# PLC status as of 2026-10-19
+
+## 2026-10-19 Joint Training Update
+
+Subsequent mainline launches use VAL F1_c0 early stopping, retaining only
+best-loss and best-F1 metric-best checkpoints. AUPRC/AUROC/MCC remain logged;
+latest recovery checkpoints remain enabled. This does not hot-patch the
+active immutable run or delete historical outputs.
+
+At21:21 UTC+8, expanded joint scratch training13187469 is RUNNING,18 epochs
+validated and epoch19 in progress. Best VAL legacy F1/AUPRC=.5879/.6263
+(epoch18); its global F1/MCC at0.5=.6047/.5886. Future summaries also report
+MCC at the VAL-F1-selected gate. No TEST result has been collected here.
+Read-only Slurm GPU sampling observes57.13GiB used of80GiB,22.12GiB free;
+historical CUDA peak is not instrumented. Batch18 is a candidate for a separate
+stress test, not a live recipe change. Recent epoch time is69.48min; unchanged
+loss-based patience30 would stop at epoch34 around October20 16:00 UTC+8
+unless VAL loss improves. See [metrics, ETA and memory inspection](joint_training_progress_20261019.md).
 
 ## 2026-10-18 Recovery Update
 
