@@ -1,5 +1,12 @@
 # Expanded Joint GFGF Training: Interim Check
 
+Completed update, October21: job13187469 finished34 epochs on October20
+15:31:33 (40h01m01s, exit0:0). Best F1=.588257 at epoch25, AUPRC=.625655,
+MCC@0.5=.589897; last F1=.582968, tail5=.581594. See the
+[completed VAL results](joint_global_si30_results_20261021.md) for checkpoint
+metrics, interpretation and coverage caveats. Earlier snapshots below are
+historical, not the current job status.
+
 ## Policy for Subsequent Launches
 
 User instruction after this inspection: stop on VAL F1_c0, not validation loss.

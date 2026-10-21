@@ -1,4 +1,16 @@
-# PLC status as of 2026-10-19
+# PLC status as of 2026-10-21
+
+## 2026-10-21 Joint Training Completed
+
+Job13187469 COMPLETED, exit0:0, at October20 15:31:33 after40h01m01s.
+34 epochs finished; the immutable run still used loss-based early stopping.
+Best-F1 checkpoint is epoch25: VAL F1_c0=.588257, AUPRC=.625655,
+AUROC=.954814, global F1/MCC@0.5=.605089/.589897, and
+F1/MCC at VAL-selected gate=.606903/.590500. Last F1=.582968;
+tail5 mean=.581594. No TEST result or new training job in this inspection.
+The queue was empty at09:34. Detailed [completed results](joint_global_si30_results_20261021.md)
+include late plateau, baseline-comparison limitations, gradients and the
+small finite-score coverage difference that final inference should audit.
 
 ## 2026-10-19 Joint Training Update
 
