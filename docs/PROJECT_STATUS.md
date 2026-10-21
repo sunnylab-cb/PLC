@@ -1,5 +1,17 @@
 # PLC status as of 2026-10-21
 
+## 2026-10-21 Reference-Only TEST Submitted
+
+Job **13244903** was submitted to `i64m1tga800ue` (one GPU) at09:48 UTC+8;
+at09:51 it is RUNNING on `gpu1-38`, with no completed inference result yet.
+It evaluates only the epoch25
+VAL-best-F1 checkpoint with its already-selected VAL gate0.5535550117492676.
+Real/shuffle/zero run sequentially over17,395 TEST rows, reporting overall
+and PDBbind/BioLiP metrics. No TEST results are available at submission.
+**TEST is reference-only and must not drive model, threshold or experiment
+iteration. All development selection remains TRAIN/VAL-only.**
+See [locked protocol and submission](joint_reference_test_20261021.md).
+
 ## 2026-10-21 Joint Training Completed
 
 Job13187469 COMPLETED, exit0:0, at October20 15:31:33 after40h01m01s.
