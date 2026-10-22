@@ -1,5 +1,19 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 LiBRe Same-TEST Evaluation Submitted
+
+User explicitly accepts released-checkpoint overlap and requests direct
+comparison on the latest17,395-row TEST, not LiBRe retraining. Submitted
+CPU preparation13272415 completed. A native stereo-H graph-count check was
+too strict; corrected in7f074c9 (30 tests pass). Replacement CPU13272844
+(i64m512ue) and dependent GPU13272845 (one A800,i64m1tga800ue) were submitted
+at03:35 UTC+8; the superseded pending GPU job13272416 was cancelled after
+replacement succeeded. Active outputs are under joint_test_20261023/v3/.
+Raw ESM2/official40D inputs, exact residue/label alignment,
+fixed native thresholds and all prespecified Top-K budgets are retained;
+no overlap filtering or TEST-based optimization. PLC reuses frozen epoch25
+predictions. No comparison scores yet. See [execution protocol](libre_joint_test_20261023.md).
+
 ## 2026-10-23 LiBRe Joint-TEST Feasibility Audit
 
 Existing pinned LiBRe checkpoint reverified and strictly loaded on CPU;
