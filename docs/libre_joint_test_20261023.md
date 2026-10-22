@@ -152,3 +152,30 @@ Active work root is the v3/ subdirectory of the remote root above. It uses
 a symlink to the unchanged staged SDFs; submission.json records replacement
 job IDs and the correction rationale. Final coverage and inference metrics
 must be read from v3/prepared/ and v3/results/, respectively.
+
+## Corrected Preflight Completed
+
+Job13272844 finished input preparation successfully. Every requested row is
+accounted for; all324 stereo-H graph rejections were recovered without
+changing the official graph or repairing molecule chemistry.
+
+| Source | Requested | Accepted | Rejected |
+| --- | ---: | ---: | ---: |
+| PDBbind |1,649|1,649|0|
+| BioLiP |15,746|14,837|909|
+| Total |17,395|16,486|909|
+
+The remaining909 native SDFs do not pass full RDKit sanitization. The matched
+comparison therefore covers94.77% of the requested cohort, with complete
+PDBbind coverage. Both models will be scored on the same16,486 accepted rows;
+do not compare LiBRe subset metrics directly to the older full-cohort PLC
+summary. No overlap-based filtering occurred.
+
+Preparation fingerprints:
+
+- ready.pt:7664d92b9da94c6de85b0e1f286cd2f3634187589e0169ac33c8a6a5f7c16087
+- failures.json:da8a59037be852fbae63543d8bb88f207640cb21eabaa402fdcc4db21d15239c
+- protocol.json:8c67f93003e6356022b66910ce1d1ba17fb9156561b4c87457e3c809442209ec
+
+At the post-preparation check,13272845 is PENDING(Priority), not blocked on
+dependency. No LiBRe TEST scores exist yet.

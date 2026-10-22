@@ -12,7 +12,11 @@ replacement succeeded. Active outputs are under joint_test_20261023/v3/.
 Raw ESM2/official40D inputs, exact residue/label alignment,
 fixed native thresholds and all prespecified Top-K budgets are retained;
 no overlap filtering or TEST-based optimization. PLC reuses frozen epoch25
-predictions. No comparison scores yet. See [execution protocol](libre_joint_test_20261023.md).
+predictions. Corrected preflight is complete:16,486/17,395 accepted
+(PDBbind1,649/1,649; BioLiP14,837/15,746),909 native-SDF sanitization failures.
+All324 false stereo-H rejections were recovered. Both models will use this
+same matched subset. GPU13272845 is PENDING(Priority), dependency cleared;
+no comparison scores yet. See [execution protocol](libre_joint_test_20261023.md).
 
 ## 2026-10-23 LiBRe Joint-TEST Feasibility Audit
 
