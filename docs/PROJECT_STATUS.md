@@ -1,4 +1,17 @@
-# PLC status as of 2026-10-22
+# PLC status as of 2026-10-23
+
+## 2026-10-23 LiBRe Joint-TEST Feasibility Audit
+
+Existing pinned LiBRe checkpoint reverified and strictly loaded on CPU;
+no new download, inference or training job. The official recipe does not
+certify cross-set SI30: CD-HIT90 redundancy reduction, shared-PDB removal
+and a Foldseek structural filter are different guarantees. Public assets
+include only50 train examples, not a complete checkpoint-linked manifest.
+Those examples share3 exact chain sequences with21 BioLiP TEST rows and
+3 PDB IDs with7 TEST rows (23-row union, not28). These are example overlaps,
+not a measured checkpoint leakage rate. The released model can be a
+reference after input adaptation, but not a certified strict-SI30 baseline.
+See [feasibility, evidence and comparison boundaries](libre_joint_test_feasibility_20261023.md).
 
 ## 2026-10-22 Fixed Top-K Reference Diagnostics Completed
 

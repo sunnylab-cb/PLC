@@ -1,0 +1,320 @@
+{
+  "date": "2026-10-23",
+  "upstream_revision": "e9151a85bab2d05b67b953bc55a74c780aa2bf24",
+  "public_train_example_rows": 50,
+  "public_train_example_unique_sequences": 50,
+  "public_train_manifest_complete": false,
+  "checkpoint_training_membership_certified": false,
+  "current_test_rows": 17395,
+  "current_test_unique_chain_sequences": 8380,
+  "pdb_id_overlap_rows": 7,
+  "pdb_id_overlap_by_source": {
+    "biolip": 5,
+    "pdbbind": 2
+  },
+  "pdb_id_overlap_matches": [
+    {
+      "split": "test",
+      "sample_key": "biolip:2bjh_A_BS01_FER",
+      "source": "biolip",
+      "sample_id": "2bjh_A_BS01_FER",
+      "pdb_id": "2bjh",
+      "component_id": "1232"
+    },
+    {
+      "split": "test",
+      "sample_key": "biolip:2bjh_B_BS01_FER",
+      "source": "biolip",
+      "sample_id": "2bjh_B_BS01_FER",
+      "pdb_id": "2bjh",
+      "component_id": "1232"
+    },
+    {
+      "split": "test",
+      "sample_key": "biolip:2bjh_C_BS01_FER",
+      "source": "biolip",
+      "sample_id": "2bjh_C_BS01_FER",
+      "pdb_id": "2bjh",
+      "component_id": "1232"
+    },
+    {
+      "split": "test",
+      "sample_key": "biolip:5jar_A_BS01_6HV",
+      "source": "biolip",
+      "sample_id": "5jar_A_BS01_6HV",
+      "pdb_id": "5jar",
+      "component_id": "423"
+    },
+    {
+      "split": "test",
+      "sample_key": "biolip:5v1b_A_BS02_8UY",
+      "source": "biolip",
+      "sample_id": "5v1b_A_BS02_8UY",
+      "pdb_id": "5v1b",
+      "component_id": "267"
+    },
+    {
+      "split": "test",
+      "sample_key": "pdbbind:5jar",
+      "source": "pdbbind",
+      "sample_id": "5jar",
+      "pdb_id": "5jar",
+      "component_id": "423"
+    },
+    {
+      "split": "test",
+      "sample_key": "pdbbind:5v1b",
+      "source": "pdbbind",
+      "sample_id": "5v1b",
+      "pdb_id": "5v1b",
+      "component_id": "267"
+    }
+  ],
+  "exact_sequence_overlap_unique_sequences": 3,
+  "exact_sequence_overlap_test_rows": 21,
+  "exact_sequence_overlap_by_source": {
+    "biolip": 21
+  },
+  "exact_sequence_overlap_matches": [
+    {
+      "sequence_id": "seq_39c4e546cf7ffd7418233d27825088e991bb44401664fc3647e4a67ebba2c8dc",
+      "length": 371,
+      "example_rows": [
+        {
+          "row_index": 1,
+          "pdb_id": "5jar",
+          "chain": "A",
+          "ligand_code": "6HV"
+        }
+      ],
+      "test_members": [
+        {
+          "split": "test",
+          "sample_key": "biolip:5jad_A_BS01_FB2",
+          "source": "biolip",
+          "sample_id": "5jad_A_BS01_FB2",
+          "pdb_id": "5jad",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jah_A_BS01_6HQ",
+          "source": "biolip",
+          "sample_id": "5jah_A_BS01_6HQ",
+          "pdb_id": "5jah",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jal_A_BS01_6HO",
+          "source": "biolip",
+          "sample_id": "5jal_A_BS01_6HO",
+          "pdb_id": "5jal",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jan_A_BS01_6HP",
+          "source": "biolip",
+          "sample_id": "5jan_A_BS01_6HP",
+          "pdb_id": "5jan",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jao_A_BS02_6HX",
+          "source": "biolip",
+          "sample_id": "5jao_A_BS02_6HX",
+          "pdb_id": "5jao",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jap_A_BS01_6HZ",
+          "source": "biolip",
+          "sample_id": "5jap_A_BS01_6HZ",
+          "pdb_id": "5jap",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jar_A_BS01_6HV",
+          "source": "biolip",
+          "sample_id": "5jar_A_BS01_6HV",
+          "pdb_id": "5jar",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jas_A_BS01_6HW",
+          "source": "biolip",
+          "sample_id": "5jas_A_BS01_6HW",
+          "pdb_id": "5jas",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jat_A_BS01_6HR",
+          "source": "biolip",
+          "sample_id": "5jat_A_BS01_6HR",
+          "pdb_id": "5jat",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5jau_A_BS01_6HU",
+          "source": "biolip",
+          "sample_id": "5jau_A_BS01_6HU",
+          "pdb_id": "5jau",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5lyy_A_BS01_7BJ",
+          "source": "biolip",
+          "sample_id": "5lyy_A_BS01_7BJ",
+          "pdb_id": "5lyy",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5lz2_A_BS01_7BX",
+          "source": "biolip",
+          "sample_id": "5lz2_A_BS01_7BX",
+          "pdb_id": "5lz2",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5lz4_A_BS01_7BW",
+          "source": "biolip",
+          "sample_id": "5lz4_A_BS01_7BW",
+          "pdb_id": "5lz4",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5lz5_A_BS01_7K4",
+          "source": "biolip",
+          "sample_id": "5lz5_A_BS01_7K4",
+          "pdb_id": "5lz5",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5lz7_A_BS01_7BK",
+          "source": "biolip",
+          "sample_id": "5lz7_A_BS01_7BK",
+          "pdb_id": "5lz7",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5lz8_A_BS01_7BP",
+          "source": "biolip",
+          "sample_id": "5lz8_A_BS01_7BP",
+          "pdb_id": "5lz8",
+          "component_id": "423"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:5yea_B_BS01_8U9",
+          "source": "biolip",
+          "sample_id": "5yea_B_BS01_8U9",
+          "pdb_id": "5yea",
+          "component_id": "423"
+        }
+      ]
+    },
+    {
+      "sequence_id": "seq_4d74297b0e89c60a329d36f0609b946c62603e4e6081d5393a5feef42e3175c3",
+      "length": 226,
+      "example_rows": [
+        {
+          "row_index": 34,
+          "pdb_id": "5v1b",
+          "chain": "A",
+          "ligand_code": "8UY"
+        }
+      ],
+      "test_members": [
+        {
+          "split": "test",
+          "sample_key": "biolip:5v1b_A_BS02_8UY",
+          "source": "biolip",
+          "sample_id": "5v1b_A_BS02_8UY",
+          "pdb_id": "5v1b",
+          "component_id": "267"
+        }
+      ]
+    },
+    {
+      "sequence_id": "seq_ab4245c2c26bec21fbd22645c69c402cb897cfd47760e20f31a4d9bcbfc3c89f",
+      "length": 260,
+      "example_rows": [
+        {
+          "row_index": 14,
+          "pdb_id": "2bjh",
+          "chain": "A",
+          "ligand_code": "FER"
+        }
+      ],
+      "test_members": [
+        {
+          "split": "test",
+          "sample_key": "biolip:2bjh_A_BS01_FER",
+          "source": "biolip",
+          "sample_id": "2bjh_A_BS01_FER",
+          "pdb_id": "2bjh",
+          "component_id": "1232"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:2bjh_B_BS01_FER",
+          "source": "biolip",
+          "sample_id": "2bjh_B_BS01_FER",
+          "pdb_id": "2bjh",
+          "component_id": "1232"
+        },
+        {
+          "split": "test",
+          "sample_key": "biolip:2bjh_C_BS01_FER",
+          "source": "biolip",
+          "sample_id": "2bjh_C_BS01_FER",
+          "pdb_id": "2bjh",
+          "component_id": "1232"
+        }
+      ]
+    }
+  ],
+  "strict_si30_certified": false,
+  "inference_submitted": false,
+  "limitation": "Exact matches to public training examples only; released checkpoint full supervised training membership is not published/verified. Not a full SI audit; no prediction scores used.",
+  "input_sha256": {
+    "/hpc2hdd/home/shuang886/PLC/external_baselines/libre/source/e9151a85bab2d05b67b953bc55a74c780aa2bf24/data/train/train_example.csv": "b044d2421b1d44ea2efcd3ee75d9f116d2005198d88f10f683b7cbed39e7e16b",
+    "/hpc2hdd/home/shuang886/PLC/experiments/joint_global_si30_gfgf_20261017/split/candidate_split.tsv": "9c383bf439c1d4effd8c6f6c4e24a4795c33710bafb41a9e60bffe7bdee94a61",
+    "/hpc2hdd/home/shuang886/PLC/experiments/biolip_feature_expansion_20261015/qc_pool/sequences.jsonl": "1bb255d779f091f6b8f40f4898bbc4c58cc6c3cf498d8871b7ad8f2bccfdfcca"
+  },
+  "asset_verification": {
+    "checkpoint_sha256": "ba40bdf78ba4e596e7429e56d2c955c42b6debc67fb159a7438dfe6b9993c871",
+    "strict_state_dict_load": true,
+    "state_dict_entries": 68,
+    "downstream_parameter_count": 1348481,
+    "safe_tensor_load": true,
+    "new_model_inference": false,
+    "new_downloads": false,
+    "current_upstream_revision_matches_pinned": true
+  },
+  "paper": {
+    "doi": "10.1021/acs.jcim.5c02883",
+    "pmcid": "PMC13080968",
+    "xml_sha256": "52d687b9ea0662267a035d237abf698214147ce576a8bf44401dede4522ac435",
+    "verified_via": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC13080968/fullTextXML",
+    "reported_training_redundancy_threshold": 0.9,
+    "reported_test_structural_filter": "Exclude Foldseek similarity >0.4 to training; also exclude shared PDB IDs",
+    "strict_cross_set_si30_reported": false
+  },
+  "pdb_or_exact_sequence_overlap_test_rows": 23,
+  "full_inference_ready": false,
+  "feasibility": "Existing checkpoint and engine reusable; new joint-test input/residue-axis adapter and complete chemistry acceptance still required."
+}
