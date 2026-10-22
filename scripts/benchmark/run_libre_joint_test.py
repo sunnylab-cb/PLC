@@ -174,7 +174,7 @@ def prepare_one(task):
                  str(label_path): qc["labels_sha256"]}
         result = dict(sample_id=sid, source=sample["source"], protein_key=sample["pdb_id"],
                       n_residues=n, segments=segments, smiles=smiles,
-                      graph_x=graph.x.cpu(), graph_edge_index=graph.edge_index.cpu(),
+                      graph_x=graph.x.cpu().numpy(), graph_edge_index=graph.edge_index.cpu().numpy(),
                       input_sha256=files, axis_sha256=qc["axis_sha256"])
         result["input_id"] = fingerprint(dict(files=files, axis=qc["axis_sha256"], smiles=smiles))
         return result, None
@@ -222,6 +222,9 @@ def prepare(args):
             if error:
                 failed.append(error)
             else:
+                # Avoid retaining two multiprocessing shared-memory FDs per row.
+                row["graph_x"] = torch.from_numpy(row["graph_x"])
+                row["graph_edge_index"] = torch.from_numpy(row["graph_edge_index"])
                 ready.append(row)
             if i % 250 == 0 or i == len(tasks):
                 progress = dict(processed=i, requested=len(tasks), accepted=len(ready), failed=len(failed),

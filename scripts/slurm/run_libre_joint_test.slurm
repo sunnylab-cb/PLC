@@ -19,7 +19,7 @@ BASE="/hpc2hdd/home/shuang886/PLC"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 export PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-cd "${WORK}/code_v1"
+cd "${CODE_ROOT:-${WORK}/code_v1}"
 exec 9>"${WORK}/${PHASE}.lock"
 flock -n 9 || { echo "Duplicate phase already running" >&2; exit 2; }
 if [[ "${PHASE}" == prepare ]]; then

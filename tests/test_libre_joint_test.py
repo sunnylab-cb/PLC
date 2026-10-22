@@ -109,6 +109,8 @@ def test_prepare_native_chemistry_and_no_silent_repair(tmp_path, monkeypatch):
     result, error = run.prepare_one((sample, [0, 1, 1, 2], str(tmp_path)))
     assert error is None and result["n_residues"] == 4 and result["smiles"] == "CCO"
     assert result["graph_x"].shape == (3, 40)
+    assert isinstance(result["graph_x"], np.ndarray)
+    assert isinstance(result["graph_edge_index"], np.ndarray)
     torch.save(dict(ligand_path=str(sdf), coords_original=xyz+1), ligand_path)
     result, error = run.prepare_one((sample, [0, 1, 1, 2], str(tmp_path)))
     assert result is None and error["stage"] == "ligand" and "geometry" in error["error"]
