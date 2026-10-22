@@ -129,6 +129,28 @@ def worker_init(source):
     graph_from_smiles = smiles_to_data
 
 
+def official_ligand_graph(mol):
+    from rdkit import Chem
+    smiles = Chem.MolToSmiles(Chem.RemoveHs(mol), canonical=True, isomericSmiles=True)
+    parsed = Chem.MolFromSmiles(smiles)
+    require(parsed is not None, "Cannot parse canonical native ligand")
+    heavy_identity = lambda m: Counter((a.GetAtomicNum(), a.GetIsotope())
+                                       for a in m.GetAtoms() if a.GetAtomicNum() > 1)
+    require(heavy_identity(mol) == heavy_identity(parsed), "SMILES changed heavy-atom coverage")
+    graph = graph_from_smiles(smiles)
+    # RDKit preserves explicit H needed for stereochemistry; the official graph
+    # includes those nodes. Its node count need not equal the heavy-atom count.
+    nodes = parsed.GetNumAtoms()
+    require(graph.x.shape == (nodes, 40) and bool(torch.isfinite(graph.x).all()),
+            "Official graph has changed atom coverage or invalid features")
+    require(graph.edge_index.ndim == 2 and graph.edge_index.shape[0] == 2,
+            "Invalid official graph edges")
+    if graph.edge_index.numel():
+        require(int(graph.edge_index.min()) >= 0 and int(graph.edge_index.max()) < nodes,
+                "Official graph edge out of bounds")
+    return smiles, graph
+
+
 def prepare_one(task):
     sample, saved_labels, sdf_root = task
     sid = sample["sample_id"]
@@ -161,15 +183,7 @@ def prepare_one(task):
         native = torch.as_tensor(ligand["coords_original"]).numpy()
         require(xyz.shape == native.shape and np.allclose(xyz, native, rtol=0, atol=.002),
                 "SDF heavy-atom order/geometry differs from label ligand")
-        smiles = Chem.MolToSmiles(Chem.RemoveHs(mol), canonical=True, isomericSmiles=True)
-        graph = graph_from_smiles(smiles)
-        require(graph.x.shape == (len(heavy), 40) and bool(torch.isfinite(graph.x).all()),
-                "Official graph has changed atom coverage or invalid features")
-        require(graph.edge_index.ndim == 2 and graph.edge_index.shape[0] == 2,
-                "Invalid official graph edges")
-        if graph.edge_index.numel():
-            require(int(graph.edge_index.min()) >= 0 and int(graph.edge_index.max()) < len(heavy),
-                    "Official graph edge out of bounds")
+        smiles, graph = official_ligand_graph(mol)
         files = {str(sdf): sha(sdf), str(ligand_path): sha(ligand_path),
                  str(label_path): qc["labels_sha256"]}
         result = dict(sample_id=sid, source=sample["source"], protein_key=sample["pdb_id"],

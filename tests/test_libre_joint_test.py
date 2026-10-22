@@ -129,3 +129,22 @@ def test_no_training_search_or_overlap_filter():
         if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "load":
             assert any(k.arg == "weights_only" and isinstance(k.value, ast.Constant) and k.value.value is True
                        for k in node.keywords)
+
+
+def test_official_graph_retains_stereochemical_explicit_hydrogen(monkeypatch):
+    Chem = pytest.importorskip("rdkit.Chem")
+    mol = Chem.MolFromSmiles("[H]/N=C(\\N)NCCCCN")
+    heavy = sum(a.GetAtomicNum() > 1 for a in mol.GetAtoms())
+    nodes = mol.GetNumAtoms()
+    assert nodes == heavy + 1
+    graph = SimpleNamespace(x=torch.ones(nodes, 40), edge_index=torch.tensor([[0, nodes-1], [1, 0]]))
+    monkeypatch.setattr(run, "graph_from_smiles", lambda s: graph, raising=False)
+    smiles, result = run.official_ligand_graph(mol)
+    assert "[H]" in smiles and result.x.shape == (heavy + 1, 40)
+    graph.x = torch.ones(heavy, 40)
+    with pytest.raises(ValueError, match="atom coverage"):
+        run.official_ligand_graph(mol)
+    graph.x = torch.ones(nodes, 40)
+    graph.edge_index[0, 1] = nodes
+    with pytest.raises(ValueError, match="out of bounds"):
+        run.official_ligand_graph(mol)
