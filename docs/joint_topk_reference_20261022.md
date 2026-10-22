@@ -150,4 +150,3 @@ Before submission, 21 targeted tests passed, including sklearn metric
 parity, fixed-budget rounding, exhaustive tie expectation, no input mutation,
 reference-control reproduction and overwrite refusal. Slurm shell syntax
 passed. Full-population control and hash checks passed in the completed job.
-
