@@ -1,4 +1,18 @@
-# PLC status as of 2026-10-21
+# PLC status as of 2026-10-22
+
+## 2026-10-22 Reference-Only TEST Collected
+
+Job13244903 COMPLETED, exit0:0, on October21 at10:25:41 UTC+8, elapsed36m50s.
+All17,395 TEST rows and6,539,679 residues are present in real/shuffle/zero;
+all three modes have zero nonfinite predictions and identical label axes.
+For the locked epoch25 checkpoint at its fixed VAL gate0.553555,
+overall real F1/MCC=.595887/.578981, AUPRC/AUROC=.615422/.950212;
+shuffle F1=.484521, zero F1=.336419. PDBbind real F1=.621448,
+BioLiP=.592692; their real-shuffle gaps are.088080/.114415.
+These are pooled-residue metrics, not legacy batch-averaged F1_c0.
+**Reference only: no TEST-driven iteration, model/threshold selection, or
+new experiment recommendation.** No new job was submitted in this check.
+See [complete fixed-protocol results](joint_reference_test_20261021.md#completed-results-verified-2026-10-22).
 
 ## 2026-10-21 Reference-Only TEST Submitted
 

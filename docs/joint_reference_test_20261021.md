@@ -70,3 +70,107 @@ compatibility and preparation tests: **23 passed**; Slurm shell syntax passed.
 
 Training results and comparison caveats are recorded in
 [the completed VAL report](joint_global_si30_results_20261021.md).
+
+## Completed Results, Verified 2026-10-22
+
+Slurm reports COMPLETED, exit0:0, from2026-10-21 09:48:51 to10:25:41
+(UTC+8), elapsed36m50s. Stderr is empty and stdout ends with
+`REFERENCE_TEST_COMPLETE`. The user queue was empty at this inspection.
+No new training, reevaluation, checkpoint selection or threshold sweep was
+launched while collecting these results.
+
+Protocol SHA256 matches the preregistered value. All three per-mode JSONs
+match the final summary. Each mode covers17,395 rows and6,539,679 residues,
+including262,533 class0 positives; nonfinite-residue count is0. Residue/label
+axis SHA256 is identical across modes:
+`b7055cdf39b9e0568e1995a9a82d411de350724d835f686b1e64786714c48b21`.
+
+### Fixed VAL Gate Metrics
+
+All F1/MCC/P/R below pool residues within the stated population and use the
+locked VAL gate0.5535550117492676, not a threshold fitted on TEST. AUPRC and
+AUROC are global ranking metrics. These are one seed and one shuffle draw;
+no seed variance or significance claim is implied.
+
+| Population | Mode | F1 | MCC | Precision | Recall | AUPRC | AUROC |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| all | real | 0.595887 | 0.578981 | 0.564499 | 0.630972 | 0.615422 | 0.950212 |
+| all | shuffle | 0.484521 | 0.462469 | 0.466491 | 0.504001 | 0.451392 | 0.911189 |
+| all | zero | 0.336419 | 0.380408 | 0.696219 | 0.221797 | 0.471618 | 0.925836 |
+| pdbbind | real | 0.621448 | 0.608982 | 0.611823 | 0.631380 | 0.660390 | 0.961091 |
+| pdbbind | shuffle | 0.533368 | 0.517958 | 0.524057 | 0.543015 | 0.536703 | 0.934230 |
+| pdbbind | zero | 0.365230 | 0.416565 | 0.751331 | 0.241252 | 0.514689 | 0.947750 |
+| biolip | real | 0.592692 | 0.575037 | 0.558832 | 0.630919 | 0.609112 | 0.948306 |
+| biolip | shuffle | 0.478276 | 0.455063 | 0.459298 | 0.498891 | 0.439933 | 0.907094 |
+| biolip | zero | 0.332637 | 0.375509 | 0.688935 | 0.219248 | 0.465972 | 0.922114 |
+
+| Population | Rows | Real-shuffle F1 | Real-zero F1 | Real sample-macro F1 |
+| --- | --- | --- | --- | --- |
+| all | 17395 | 0.111366 | 0.259468 | 0.551983 |
+| pdbbind | 1649 | 0.088080 | 0.256218 | 0.611280 |
+| biolip | 15746 | 0.114415 | 0.260054 | 0.545773 |
+
+### Other Preregistered Metrics
+
+| Population | Real F1@0.5 | Real MCC@0.5 | Real global argmax F1 | Real global argmax MCC |
+| --- | --- | --- | --- | --- |
+| all | 0.593724 | 0.577887 | 0.586024 | 0.570774 |
+| pdbbind | 0.619732 | 0.607602 | 0.616483 | 0.604590 |
+| biolip | 0.590479 | 0.573971 | 0.582261 | 0.566382 |
+
+Class0 is one of three softmax classes: argmax(class0) is not the same
+rule as p(class0)>=0.5. These global values are also not the legacy
+batch-averaged VAL F1_c0. Sample-macro weights every ligand row equally,
+not every protein equally, and is not interchangeable with pooled F1.
+
+| Fraction | Real macro precision | Real macro recall |
+| --- | --- | --- |
+| L/20 (5%) | 0.522942 | 0.553765 |
+| L/10 (10%) | 0.367705 | 0.718326 |
+| L/5 (20%) | 0.221668 | 0.832494 |
+
+### Descriptive Interpretation Only
+
+- Real outperforms within-source shuffled ligand input in both sources,
+  supporting sensitivity to the matched ligand under this fixed protocol.
+  This does not prove correct same-protein multi-pocket assignment, nor
+  certify that shuffled ligands are biologically incompatible.
+- Zero reduces overall recall from0.630972 to0.221797 while precision rises
+  from0.564499 to0.696219. Its F1 gap combines lost input information with
+  an out-of-distribution intervention and threshold sensitivity; a larger
+  zero gap is not intrinsically better ligand recognition. Overall zero
+  AUPRC (.471618) exceeds shuffle AUPRC (.451392) despite lower gated F1,
+  so ranking and fixed-threshold behavior should not be conflated.
+- The same selected checkpoint's logged VAL global F1/MCC at its gate are
+  .606903/.590500 versus TEST .595887/.578981; AUPRC is .625655 versus
+  .615422. These are descriptive holdout differences, not a matched
+  generalization experiment; VAL is selection-biased and its logged ranking
+  metrics excluded a small nonfinite subset, unlike the complete TEST run.
+- The fixed gate changes overall TEST pooled F1 from.593724 at0.5 to.595887,
+  but sample-macro F1 from.553922 to.551983. Both rules were preregistered;
+  this observation must not be used to choose a different threshold.
+- The PDBbind and BioLiP subsets differ, and neither is the previous
+  PDBbind-only holdout. These results cannot establish the causal gain
+  from adding BioLiP or be ranked directly against historical split scores.
+  The split certifies global SI<0.30, not local/domain independence or
+  COACH420/HOLO4K dehomology.
+
+No experimental recommendation is derived from these TEST results.
+Any further development decisions must be justified independently on TRAIN/VAL.
+
+### Resource Record and Archive
+
+| Mode | Evaluation/summary seconds | Peak allocated GiB | Peak reserved GiB |
+| --- | --- | --- | --- |
+| real | 893.86 | 3.943 | 11.957 |
+| shuffle | 538.33 | 3.943 | 11.959 |
+| zero | 326.39 | 3.943 | 11.959 |
+
+These are batch8 BF16 **inference** peaks, not training peaks or evidence
+that a larger training batch fits. Slurm batch MaxRSS is47,085,004 KiB
+(44.90 GiB). The total job includes startup, integrity checks and I/O.
+
+The [raw aggregate JSON](results/joint_reference_test_20261021.json) preserves
+all reported metrics and the reference-only policy. Per-sample predictions
+and the detailed protocol remain at the remote evaluation root; they were
+not downloaded or used for a new optimization pass.
