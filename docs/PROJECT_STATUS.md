@@ -1,5 +1,17 @@
 # PLC status as of 2026-10-22
 
+## 2026-10-22 Fixed Top-K Reference Diagnostics Completed
+
+CPU job13260590 COMPLETED 0:0 in64 seconds, without new inference or training.
+All17,395 saved TEST rows pass identity/hash/control checks. Prespecified
+Top-20 pooled real F1/MCC=.563148/.548118; shuffle F1=.478709, zero=.485921,
+giving real-shuffle/zero gaps=.084438/.077227. Original fixed-VAL-gate real
+F1 remains.595887. Zero's gated F1=.336419 at only4.81 predictions/row;
+its Top-20 result shows the zero deficit is not purely lost ranking.
+All fixed and length-based budgets are reported; **no best-K selection,
+TEST-driven iteration or current-model LiBRe superiority claim**.
+See [protocol, all budgets and limitations](joint_topk_reference_20261022.md).
+
 ## 2026-10-22 Reference-Only TEST Collected
 
 Job13244903 COMPLETED, exit0:0, on October21 at10:25:41 UTC+8, elapsed36m50s.
