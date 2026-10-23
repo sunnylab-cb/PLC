@@ -1,5 +1,99 @@
 # Released LiBRe Versus Latest PLC Joint TEST
 
+## Completed Matched Comparison: 2026-10-23
+
+GPU job **13272845** finished all **16,486 accepted rows** at04:35:25 UTC+8,
+after12m08s wall time. Slurm reports FAILED(1:0) because the runner deliberately
+exits nonzero for incomplete original-cohort coverage:909 BioLiP inputs failed
+native-SDF sanitization before inference. This is **not an OOM or an interrupted
+prediction run**. summary.json has traversal_complete=true, complete=false;
+there are16,486 unique per-row prediction files, with no additional inference
+failures. CUDA peak allocated/reserved memory was2.915/3.809 GiB (not total GPU
+process memory). No replacement job is needed.
+
+The cohort is1,649 PDBbind +14,837 BioLiP rows,6,181,200 residues and248,186
+positive residues. Both models use precisely these rows, labels and residue
+axes. PDBbind coverage is complete; BioLiP coverage is partial. The released
+checkpoint's possible training overlap was accepted, not used for filtering.
+
+### Main Results
+
+F1 and MCC below are pooled-residue metrics, not legacy training F1_c0 or
+sample-macro averages. Native thresholds remain fixed: PLC's existing VAL
+gate0.5535550117492676 and LiBRe's official p>0.6. Top20 was the prespecified
+equal-budget primary comparison, not selected after observing TEST scores.
+
+| Source | Model | Native F1 | Native MCC | Top20 F1 | Top20 MCC | AUPRC (AP) | AUROC |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| All matched | PLC |0.594912|0.577970|0.562365|0.547368|0.614588|0.949701|
+| All matched | LiBRe |0.423227|0.438794|0.469208|0.448652|0.457398|0.923496|
+| PDBbind | PLC |0.621448|0.608982|0.603521|0.590569|0.660390|0.961091|
+| PDBbind | LiBRe |0.375604|0.435311|0.484445|0.467338|0.385830|0.958787|
+| BioLiP | PLC |0.591380|0.573631|0.557294|0.541997|0.607775|0.947569|
+| BioLiP | LiBRe |0.432666|0.441731|0.467331|0.446230|0.484298|0.918228|
+
+All-matched PLC minus LiBRe: native F1+0.171685, native MCC+0.139175,
+Top20 F1+0.093157, Top20 MCC+0.098715, AP+0.157190 and AUROC+0.026204.
+Sample-macro native F1 is0.551122 versus0.411326; sample-macro Top20 F1 is
+0.534880 versus0.447704. The direction is not an artifact of choosing pooled
+rather than sample-macro aggregation. Samples are ligand rows, not equally
+weighted proteins or homology clusters.
+
+### All Prespecified Ranking Budgets
+
+| Rule | PLC pooled F1 | LiBRe pooled F1 | PLC minus LiBRe |
+| --- | ---: | ---: | ---: |
+| Top10 |0.489282|0.394987|+0.094295|
+| Top20 |0.562365|0.469208|+0.093157|
+| Top40 |0.449213|0.411665|+0.037548|
+| Top80 |0.288022|0.276857|+0.011164|
+| ceil(L/20) |0.516640|0.429416|+0.087224|
+| ceil(L/10) |0.435181|0.393859|+0.041321|
+| ceil(L/5) |0.291625|0.279019|+0.012605|
+
+The common p>=0.5 control gives pooled F1/MCC0.592686/0.576820 for PLC and
+0.406346/0.428093 for LiBRe. All budgets, sample-macro values and tie-aware
+controls are retained in the [unaltered result JSON](results/libre_joint_test_20261023.json).
+At Top20, uniform tie expectation changes LiBRe overall F1 from0.469208 to
+0.469101, too small to account for the observed gap.
+
+Do not claim a win at every budget in every subset. On PDBbind, LiBRe has
+slightly higher pooled F1 at Top80 (0.341029 vs0.333019), ceil(L/10)
+(0.377517 vs0.376810), and ceil(L/5) (0.253039 vs0.241305). Those were
+predeclared controls and are not a reason to select a different K on TEST.
+
+### Interpretation and Claim Boundary
+
+At the native thresholds, LiBRe predicts38.79 residues per sample versus
+PLC16.85, with precision/recall0.29375/0.75681 versus0.56323/0.63037.
+The broad prediction pattern is especially pronounced in PDBbind:70.60
+predictions per sample and recall0.90680, versus PLC19.03 and0.63138.
+This supports a precision/coverage tradeoff in this evaluation, not a
+conclusion that LiBRe cannot identify binding regions.
+
+Native-threshold differences do not fully explain the result: the fixed
+Top20 comparison, average precision and sample-macro metrics also favor
+PLC. The defensible claim is that **the current frozen PLC model has higher
+observed residue-prediction performance than the released LiBRe checkpoint
+on this matched internal TEST cohort under the stated protocol**.
+
+This is not an equal-training-data architecture comparison or a universal
+SOTA claim. Training corpora, preprocessing and target definitions differ;
+LiBRe receives chainwise sequence context, whereas PLC also uses structure.
+Multi-chain evaluation can predict several equivalent sites for LiBRe;
+this experiment does not identify which cause explains its PDBbind behavior.
+There is one evaluated PLC checkpoint and one released LiBRe checkpoint,
+no seed-level superiority test or cluster-bootstrap confidence interval.
+The result does not overturn earlier external COACH420/HOLO4K findings.
+No model, threshold, budget or new training experiment is selected using
+these TEST outcomes.
+
+Verification: prepared-data, failure-manifest, protocol and evaluation-code
+hashes match their locked records; prediction counts and both models'
+sample/residue/positive/Top20-prediction denominators agree by source.
+Local downloaded summary matches remote SHA256:
+7e1b9e465fd6f095fb0cd3b6d2c95279f3740647eacea6d2feb20f7a90a64b0c.
+
 ## User-Approved Scope
 
 On 2026-10-23 the user explicitly clarified: evaluate the released LiBRe

@@ -1,5 +1,21 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 LiBRe Matched-TEST Comparison Finished
+
+Job13272845 traversed all16,486 accepted rows at04:35:25 UTC+8 in12m08s.
+FAILED(1:0) is the deliberate partial-coverage exit for909 preflight BioLiP
+SDF failures, not OOM; all accepted predictions and final metrics are saved.
+Same-subset pooled PLC vs released LiBRe: native F1.594912/.423227,
+MCC.577970/.438794, AP.614588/.457398, AUROC.949701/.923496.
+Prespecified equal-budget Top20 F1.562365/.469208 (+.093157) and
+MCC.547368/.448652; sample-macro Top20 F1.534880/.447704.
+PDBbind Top20 F1.603521/.484445; BioLiP.557294/.467331. LiBRe is slightly
+higher at some wide PDBbind budgets, so this is not an all-metrics win.
+Hashes, shared denominators and16,486 prediction-file identities verified.
+This supports higher observed PLC performance on the matched internal TEST,
+not universal SOTA or equal-data architecture superiority. No TEST-driven
+iteration or new jobs. See [complete results and limitations](libre_joint_test_20261023.md#completed-matched-comparison-2026-10-23).
+
 ## 2026-10-23 LiBRe Same-TEST Evaluation Submitted
 
 User explicitly accepts released-checkpoint overlap and requests direct
