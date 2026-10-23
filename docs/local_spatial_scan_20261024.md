@@ -83,3 +83,10 @@ full tiny-model co-attention + checkpoint backward now passes. Related suite:
 profiling. The immutable replacement root is
 `/hpc2hdd/home/shuang886/PLC/experiments/local_spatial_scan_u_20261024`.
 New training still requires all four matching GPU smoke passes.
+
+Replacement snapshot: `6cdd171`, pushed to master. New smoke array:
+`13290479_[0-3]`; new training array: `13290512_[0-3]`, with
+`afterok:13290479` and `kill-on-invalid-dep=yes`. Verified both arrays are on
+`i64m1tga800u`, one GPU per task. At verification all smoke tasks were queued
+for priority and full training was waiting on dependency. No new accuracy or
+GPU-memory result is available yet.

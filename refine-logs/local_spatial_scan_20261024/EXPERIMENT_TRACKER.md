@@ -1,15 +1,15 @@
 # Local spatial scanning experiment tracker
 
-Date: 2026-10-24. G0/S0/S1/T1 approved; replacement -u submission in progress.
+Date: 2026-10-24. G0/S0/S1/T1 resubmitted on -u after checkpoint replay fix.
 The detailed definitions and decision gates are in [the plan](EXPERIMENT_PLAN.md).
 
 | ID | System | Purpose | Seed | Stage | Status |
 | --- | --- | --- | --- | --- | --- |
 | R0 | Full V11m13 GFGF | Matched mainline control | 44;43/45 if needed | Confirmation | Planned; old run is reference only |
-| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | Old smoke failed; checkpoint replay fixed, awaiting -u submission |
-| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | Old pending task cancelled; awaiting -u submission |
-| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | Old pending task cancelled; awaiting -u submission |
-| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | Old pending task cancelled; awaiting -u submission |
+| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | Smoke 13290479_0 queued; train 13290512_0 dependency |
+| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | Smoke 13290479_1 queued; train 13290512_1 dependency |
+| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | Smoke 13290479_2 queued; train 13290512_2 dependency |
+| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | Smoke 13290479_3 queued; train 13290512_3 dependency |
 | M0 | S1 uniform4 | Same expert-bank capacity control | 44 | After local evidence | Deferred |
 | M1 | S1 learned moe4 | Ligand-dependent routing | 44 | After local evidence | Deferred |
 | M2 | S1 learned moe4 balance | Balance ablation | 44 | After local evidence | Deferred |
@@ -47,3 +47,13 @@ parameters or hyperparameters. 82 CPU tests pass, including output and
 gradient equivalence with dropout. New root:
 `/hpc2hdd/home/shuang886/PLC/experiments/local_spatial_scan_u_20261024`.
 Default partition now `i64m1tga800u`, still one GPU/task.
+
+- Replacement snapshot: `6cdd171`, pushed to `plc/master`.
+- Archive SHA256: `27e66f5e9eb0053f40ff7ca97e04453e3a46b6d5d18c03ccb98c1265d360196a`.
+- Smoke array: `13290479_[0-3]`, `PENDING (Priority)` at verification.
+- Training array: `13290512_[0-3]`, `PENDING (Dependency)`, `afterok:13290479`.
+- Both arrays use `i64m1tga800u`, one GPU/task, concurrency4, 8 CPUs/100G RAM.
+- Same configs except experiment output root; labels, features, normalization,
+  seed, batch, loss, optimizer and gradient-checkpointing policy unchanged.
+- No successful GPU smoke yet. The cancelled UE jobs will not write into the
+  replacement root. Full training must still pass all four smoke checks.
