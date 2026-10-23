@@ -1345,18 +1345,28 @@ class PocketGVPFusionV11(nn.Module):
             )
 
             if self.config['use_gradient_checkpointing'] and self.training:
-                h_prot_updated = checkpoint(
-                    cross_attn_layer.prot_to_lig,
-                    h_prot_fused, h_lig_fused,
-                    protein_mask, ligand_mask_with_global,
-                    use_reentrant=False
-                )
-                h_lig_updated = checkpoint(
-                    cross_attn_layer.lig_to_prot,
-                    h_lig_fused, h_prot_updated,
-                    ligand_mask_with_global, protein_mask,
-                    use_reentrant=False
-                )
+                if hasattr(cross_attn_layer, 'forward_pair'):
+                    # Co-attention produces both streams together. Replaying
+                    # its cache-consuming half separately is not safe.
+                    h_prot_updated, h_lig_updated = checkpoint(
+                        cross_attn_layer.forward_pair,
+                        h_prot_fused, h_lig_fused,
+                        protein_mask, ligand_mask_with_global,
+                        use_reentrant=False
+                    )
+                else:
+                    h_prot_updated = checkpoint(
+                        cross_attn_layer.prot_to_lig,
+                        h_prot_fused, h_lig_fused,
+                        protein_mask, ligand_mask_with_global,
+                        use_reentrant=False
+                    )
+                    h_lig_updated = checkpoint(
+                        cross_attn_layer.lig_to_prot,
+                        h_lig_fused, h_prot_updated,
+                        ligand_mask_with_global, protein_mask,
+                        use_reentrant=False
+                    )
             else:
                 h_prot_updated = cross_attn_layer.prot_to_lig(
                     q=h_prot_fused, kv=h_lig_fused,

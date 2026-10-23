@@ -64,3 +64,22 @@ checks all four successful smoke manifests against code/config/input hashes.
 At submission reporting G0 smoke was running, the other smoke tasks queued,
 and all full training tasks waiting on dependency. No GPU peak or accuracy
 result is yet claimed. Follow the tracker for job-to-arm mapping.
+
+## Move To U
+
+The user requested resubmission on `i64m1tga800u`. Before migration G0 smoke
+failed at backward: the V12 co-attention adapter's `lig_to_prot` consumed a
+ligand-output cache that was already cleared, and could not independently
+replay under checkpointing. This was not an OOM or a training-score result.
+The remaining old smoke tasks and dependent training array were cancelled;
+their original source snapshot/logs are retained.
+
+The fix adds a stateless joint protein/ligand update and checkpoints that
+single call. Non-checkpointed behavior, parameters, config, loss and dataset
+are unchanged. Output/input-gradient/parameter-gradient parity against the
+old sequential path passes with dropout0/.15 and two stacked blocks; the
+full tiny-model co-attention + checkpoint backward now passes. Related suite:
+82 tests passed. Smoke phase logging now distinguishes data loading from
+profiling. The immutable replacement root is
+`/hpc2hdd/home/shuang886/PLC/experiments/local_spatial_scan_u_20261024`.
+New training still requires all four matching GPU smoke passes.

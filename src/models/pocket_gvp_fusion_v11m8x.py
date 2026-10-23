@@ -180,6 +180,28 @@ class _V12CoAttentionAsV11CrossBlock(nn.Module):
             zero_init_co_attention_residuals(self.block)
         self._pending_lig = None
 
+    def forward_pair(
+        self,
+        h_prot: torch.Tensor,
+        h_lig: torch.Tensor,
+        prot_mask: Optional[torch.Tensor] = None,
+        lig_mask: Optional[torch.Tensor] = None,
+    ):
+        """Stateless joint update for activation-checkpoint replay."""
+        h_prot, h_lig = self.block(
+            h_prot=h_prot,
+            h_lig=h_lig,
+            unimol_embed=None,
+            prot_mask=prot_mask,
+            lig_mask=lig_mask,
+            prot_coords=None,
+            lig_coords=None,
+            position_ids=None,
+        )
+        if lig_mask is not None:
+            h_lig = h_lig.masked_fill(~lig_mask.unsqueeze(-1), 0.0)
+        return h_prot, h_lig
+
     def prot_to_lig(
         self,
         q: torch.Tensor,

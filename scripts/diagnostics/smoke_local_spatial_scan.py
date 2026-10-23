@@ -61,6 +61,7 @@ def main():
     p.add_argument("--steps", type=int, default=100)
     args = p.parse_args()
     root, name = args.experiment, args.variant
+    print("LOCAL_SCAN_SMOKE_PHASE", name, "verify_inputs", flush=True)
     verify(root)
     if not torch.cuda.is_available():
         raise RuntimeError("A Slurm GPU allocation is required")
@@ -76,6 +77,7 @@ def main():
         groups = [[r["sample_id"] for r in rows if r["source"] == source and r["split"] == split]
                   for source in ("pdbbind", "biolip")]
         return [groups[i % 2][i // 2] for i in range(n)]
+    print("LOCAL_SCAN_SMOKE_PHASE", name, "load_train_batch", flush=True)
     batch = training_batch(cfg, balanced("train", cfg["training"]["batch_size"]))
     model = trainer.create_model(cfg, device)
     if not all(p.requires_grad for p in model.parameters()):
@@ -93,18 +95,21 @@ def main():
             device=device, epoch=6, class_weights=torch.tensor(t["class_weights"], device=device), writer=writer, **kwargs)
     torch.cuda.reset_peak_memory_stats()
     started = time.monotonic()
+    print("LOCAL_SCAN_SMOKE_PHASE", name, "profile_train", args.steps, flush=True)
     metrics = train([batch] * args.steps)
     torch.cuda.synchronize()
     elapsed = time.monotonic() - started
     if not all(math.isfinite(x) for x in metrics.values()):
         raise RuntimeError("Non-finite production TRAIN loss/metrics")
     profile_peak = torch.cuda.max_memory_allocated() / 2**30
+    print("LOCAL_SCAN_SMOKE_PHASE", name, "cap_stress", flush=True)
     stress = cap_batch(batch)
     stress_metrics = train([stress])
     if not all(math.isfinite(x) for x in stress_metrics.values()):
         raise RuntimeError("Non-finite cap-sized TRAIN loss/metrics")
     stress_peak = torch.cuda.max_memory_allocated() / 2**30
     del stress
+    print("LOCAL_SCAN_SMOKE_PHASE", name, "validation", flush=True)
     ids = balanced("val", 4)
     allowed = inspect.signature(PocketDatasetV8).parameters
     ds = PocketDatasetV8(**{k: v for k, v in cfg["data"].items() if k in allowed},

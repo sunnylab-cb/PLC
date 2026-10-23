@@ -147,7 +147,7 @@ def test_train_loop_only_adds_logging_not_loss():
     assert ast.dump(restored, include_attributes=False) == ast.dump(original, include_attributes=False)
 
 
-@pytest.mark.parametrize("gradient_checkpointing,coattention", [(False, True), (True, False)])
+@pytest.mark.parametrize("gradient_checkpointing,coattention", [(False, True), (True, False), (True, True)])
 def test_original_model_eval_state_dict_and_train_hook(gradient_checkpointing, coattention):
     from test_libre_transfer_training import tiny_config
     from src.models.pocket_gvp_fusion_v11m13 import PocketGVPFusionV11m13

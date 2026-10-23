@@ -3,10 +3,10 @@
 # Exact expanded joint GLOBAL-SI30 data, fixed <5A labels, seed44 FROM SCRATCH.
 # STAGE=smoke profiles real TRAIN loss/backward, cap-sized stress, and real VAL.
 # STAGE=train requires ALL FOUR matching smoke passes. No TEST/HOLO inference.
-# One GPU per array task, -ue only; no torch.compile or new feature extraction.
+# One GPU per array task, -u by default; no torch.compile or feature extraction.
 # Best F1 + best finite loss only. Early stopping uses VAL F1, patience30.
 #SBATCH --job-name=localscan
-#SBATCH --partition=i64m1tga800ue
+#SBATCH --partition=i64m1tga800u
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
