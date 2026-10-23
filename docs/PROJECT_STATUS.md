@@ -1,5 +1,19 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 Strict VAL Chain-Context Followup Submitted
+
+CPU13281235 ->one UE GPU13281236 ->CPU13281237 submitted for17,395 strict VAL
+pairs (PDBbind1,697/BioLiP15,698). Keep epoch25, TRAIN-normalized inputs,
+production caps1800/256, BF16/batch2 and fixed gate. Compare full context with
+all-chain inference stitched to the same axis, without TEST/external forwards
+or any training/threshold search. Report source, chain count and multi-chain
+contact strata so already-single-chain BioLiP does not hide PDBbind effects.
+Per user request, future reports explicitly include F1 AND MCC at0.5 and
+fixed VAL gate, with sample-macro/pooled distinction, alongside Top20/AP/AUROC.
+The completed HOLO report now has an explicit threshold-MCC supplement.
+71 local tests and remote af3 smoke passed; code04703f4 pushed; initially
+pending with no new VAL scores. See [protocol/jobs](joint_val_chain_context_20261023.md).
+
 ## 2026-10-23 HOLO4K Chain-Context Diagnostic Complete
 
 Jobs13280632/33/34 all COMPLETED0:0. GPU inference19m05s, CPU summary6m49s;

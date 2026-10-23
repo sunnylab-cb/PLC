@@ -57,5 +57,19 @@ Local verification:71 tests pass, including VAL-only membership, threshold MCC
 versus Top20 MCC, RSA field slicing, no-contact chain retention, exact-axis
 checks, and existing benchmark/reference regressions. Slurm syntax check passed.
 
-No jobs or validation scores at protocol creation; submission details will
-be appended after successful remote submission.
+## Submission
+
+Immutable code commit: `04703f4`, pushed to `plc/master`.
+Archive SHA256: `70f7a30fb59e4d3c82780bac9d7b607ea3b38132bf14b4524fbbc165def87e8e`.
+Remote af3 CPU import/splitting/fixed-threshold-MCC smoke passed; that
+environment has no pytest, while the71-test local BIO suite passed.
+
+| Phase | Job | Partition | Initial State |
+| --- | --- | --- | --- |
+| VAL manifest and integrity audit | 13281235 | i64m512ue | Pending/Priority |
+| Paired full/chain inference | 13281236 | i64m1tga800ue, one GPU | Pending/afterok:13281235 |
+| Source/chain-stratified summary | 13281237 | i64m512ue | Pending/afterok:13281236 |
+
+No validation scores are available at submission. A failed dependency blocks
+and cancels its downstream job; do not silently drop samples or retune the
+protocol if either input or inference validation fails.
