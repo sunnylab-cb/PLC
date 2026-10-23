@@ -70,7 +70,47 @@ the successful internal reference run. CPU QC precedes GPU inference; matched
 comparison rechecks per-row residue keys, coordinates, labels, identities and
 native prediction/CSV agreement against the cached LiBRe inputs.
 
-## Submission
+## Completed Results (2026-10-23)
+
+Both jobs completed successfully: CPU13279553 in17m26s and GPU13279554
+in24m47s. All7245 requested PLC rows passed input QC and prediction checks.
+Comparison uses the same7238 rows /3424 protein keys as frozen LiBRe; the
+seven prior LiBRe chemical-input exclusions remain excluded for both models.
+Residue keys, coordinates, labels and native CSV metrics agree per row.
+
+| Matched HOLO4K metric | Latest joint PLC | Released LiBRe |
+| --- | ---: | ---: |
+| Top20 sample-mean F1 |0.354668|0.404402|
+| Top20 sample-mean MCC |0.336147|0.390166|
+| Top20 protein-mean-of-ligand-mean F1 |0.478915|0.527826|
+| Top20 pooled-residue F1 |0.353884|0.413399|
+| Native-threshold sample-mean F1 |0.368942|0.386316|
+| Native-threshold sample-mean MCC |0.348798|0.426072|
+| Native-threshold protein-mean-of-ligand-mean F1 |0.498348|0.491151|
+| Native-threshold pooled-residue F1 |0.368300|0.331220|
+| Pooled average precision |0.248721|0.334489|
+| Pooled AUROC |0.838507|0.943814|
+
+PLC native threshold is its original VAL gate0.553555; LiBRe uses its
+released FP32 p>0.6. These produce20.89 versus87.94 predicted contacts per
+row, so native pooled F1 alone must not be used to claim better ranking.
+Fixed Top20 still favors LiBRe on both sample- and protein-balanced means.
+LiBRe's uniform-cutoff-tie expected Top20 sample F1 is0.404411, effectively
+unchanged; its advantage is not explained by arbitrary tied-residue ordering.
+
+The old October10 PLC Top20 sample F1 was0.322387 on the same7238 rows.
+The latest joint checkpoint reaches0.354668 (about+0.0323), reducing the
+observed LiBRe gap from0.082015 to0.049734. This is a checkpoint/cohort
+comparison, **not a controlled causal estimate of adding BioLiP**, and the
+known accession overlap prevents calling it clean external generalization.
+
+All fixed budgets, precision/recall, MCC, tie controls and protein-best
+summaries are retained in the unaltered [result JSON](results/joint_holo_reference_20261023.json).
+The follow-up [nonshared-PDB analysis](joint_holo_nonshared_20261023.md)
+keeps this full result and additionally excludes shared accessions using
+metadata alone. It does not modify these predictions or select new thresholds.
+
+## Submission History
 
 Submitted **2026-10-23 11:27 UTC+8**:
 

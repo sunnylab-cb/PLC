@@ -1,5 +1,27 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 Joint HOLO4K And Nonshared-PDB Analysis Complete
+
+CPU13279553 and GPU13279554 both COMPLETED, exit0:0. Latest joint epoch25
+has7245 successful PLC predictions and7238 exactly matched LiBRe rows.
+Top20 sample F1/MCC: PLC.354668/.336147, LiBRe.404402/.390166;
+protein-balanced Top20 F1.478915/.527826. Native sample F1.368942/.386316.
+Old PLC Top20 sample F1 was.322387: observed gain about+.0323, but external
+accession overlap prevents a clean generalization or causal data-gain claim.
+User requested nonshared proteins. CPU13280188 COMPLETED 0:0 in4m05s;
+all14476 prediction hashes/axes/labels verified and full scores reproduced.
+Primary noTRAIN+VAL cohort:3215 pairs /1528 proteins. Top20 sample F1/MCC
+PLC.306322/.284673 versus LiBRe.382451/.367583; protein-balanced Top20
+F1.406499/.498795; native sample F1.316193/.385165. Excluding all internal
+splits gives2558 pairs, Top20 sample F1.303579/.383738. Both models use
+identical rows and fixed thresholds/budgets, with all four cohorts saved.
+The gap widens after filtering; this is not a causal leakage estimate
+because subset difficulty/composition also changes. The analysis removes
+direct accession reuse only, not homologous/identical sequences or LiBRe
+training overlap; no training changes or benchmark-driven selection.
+See [completed full results](joint_holo_reference_20261023.md#completed-results-2026-10-23)
+and [nonshared-PDB results](joint_holo_nonshared_20261023.md#completed-results).
+
 ## 2026-10-23 Latest Joint HOLO4K Reference Submitted
 
 User requested latest epoch25 HOLO4K inference and asked about external
