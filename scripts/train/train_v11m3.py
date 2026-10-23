@@ -2544,10 +2544,11 @@ def main():
             if scaler is not None:
                 latest_checkpoint['scaler_state_dict'] = scaler.state_dict()
 
-            torch.save(latest_checkpoint, exp_dir / 'checkpoint_latest.pt')
+            if train_cfg.get('save_latest_checkpoint', True):
+                torch.save(latest_checkpoint, exp_dir / 'checkpoint_latest.pt')
 
             # 2. Save periodic backup every N epochs
-            if (epoch + 1) % train_cfg['save_every'] == 0:
+            if train_cfg['save_every'] > 0 and (epoch + 1) % train_cfg['save_every'] == 0:
                 backup_checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': model.module.state_dict() if world_size > 1 else model.state_dict(),

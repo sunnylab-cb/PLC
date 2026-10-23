@@ -184,7 +184,7 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
                             value = value.detach().float().mean().item()
                         writer.add_scalar(f'Health/{key}', float(value), global_step)
                 for key, value in outputs.items():
-                    if key.startswith('esm_mlc_weight_'):
+                    if key.startswith(('esm_mlc_weight_', 'scan_')):
                         if torch.is_tensor(value):
                             value = value.detach().float().mean().item()
                         writer.add_scalar(f'Health/{key}', float(value), global_step)
