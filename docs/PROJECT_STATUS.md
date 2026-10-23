@@ -1,5 +1,19 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 Latest Joint HOLO4K Reference Submitted
+
+User requested latest epoch25 HOLO4K inference and asked about external
+isolation. **Neither COACH420 nor HOLO4K was excluded** from the rebuilt
+joint cohort; only internal TRAIN/VAL/TEST global SI30 is guaranteed.
+Exact accession audit:122/299 COACH protein keys and1665/3430 HOLO protein
+keys share a PDB ID with TRAIN (not a full pairwise-SI or identical-pair audit).
+CPU13279553 is RUNNING; dependent one-A80013279554 is submitted to
+i64m1tga800ue. Fixed VAL gate and Top20, BF16/batch2, uncapped atoms,
+joint TRAIN-only ligand/raw-spatial normalization, existing LiBRe predictions.
+50 tests passed and68 model/data files match training. No external score yet;
+this is an overlap-uncertified reference, not clean external generalization.
+See [isolation audit and evaluation protocol](joint_holo_reference_20261023.md).
+
 ## 2026-10-23 LiBRe Matched-TEST Comparison Finished
 
 Job13272845 traversed all16,486 accepted rows at04:35:25 UTC+8 in12m08s.
