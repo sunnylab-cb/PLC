@@ -129,6 +129,41 @@ def _normalize_ligand_features(atom_features: torch.Tensor, norm: Optional[Dict]
     return out
 
 
+def _load_cohort_norm(path: Path) -> tuple[Dict, Dict]:
+    """Apply the frozen internal-cohort recipe, never fit benchmark statistics."""
+    stats = json.loads(Path(path).read_text())
+    if "TRAIN only" not in stats["fit_scope"] or not stats["train_keys"]:
+        raise ValueError("Expected frozen TRAIN-only cohort statistics")
+    norms = {}
+    for name, dim in (("ligand", 109), ("spatial", 89)):
+        block = stats[name]
+        mean = torch.tensor(block["mean"], dtype=torch.float32)
+        std = torch.tensor(block["std"], dtype=torch.float32)
+        if mean.shape != (dim,) or std.shape != (dim,) or bool((std < 0).any()):
+            raise ValueError(f"Invalid {name} normalization shape/std")
+        require_finite(mean, name + " mean")
+        require_finite(std, name + " std")
+        norms[name] = dict(path=str(path), mean=mean, std=std)
+    dims = [int(d) for d in stats["ligand"]["norm_dims"]]
+    if len(set(dims)) != len(dims) or any(d < 0 or d >= 109 for d in dims):
+        raise ValueError("Invalid ligand normalization dimensions")
+    norms["ligand"]["dims"] = dims
+    return norms["ligand"], norms["spatial"]
+
+
+def _normalize_spatial_raw(protein: Dict, norm: Dict) -> torch.Tensor:
+    if "spatial_scalar_raw_features" not in protein:
+        raise ValueError("Raw spatial features required; do not renormalize existing z-scores")
+    raw = torch.as_tensor(protein["spatial_scalar_raw_features"]).float()
+    require_finite(raw, "raw spatial features")
+    if raw.ndim != 2 or raw.shape[1] != 89:
+        raise ValueError("Expected raw spatial features [N,89]")
+    # Exactly matches preprocess_internal_cohort.py, including near-zero std.
+    std = norm["std"].clone()
+    std[std < 1e-8] = 1.0
+    return (raw - norm["mean"]) / std
+
+
 def _atom_crop_bounds(n_atoms: int, max_atoms: int, policy: str) -> tuple[int, int]:
     n_atoms = int(n_atoms)
     max_atoms = int(max_atoms)
@@ -205,6 +240,7 @@ class BenchmarkV11Dataset(Dataset):
         residue_coverage: str = "protein",
         tag_protein_root: Optional[Path] = None,
         nonfinite_policy: str = "error",
+        spatial_norm: Optional[Dict] = None,
     ) -> None:
         if tag_mode not in ("aggregate", "per_ligand"):
             raise ValueError(f"unknown tag_mode: {tag_mode}")
@@ -224,6 +260,7 @@ class BenchmarkV11Dataset(Dataset):
         self.tag_protein_root = tag_protein_root
         self.nonfinite_policy = nonfinite_policy
         self.ligand_norm = ligand_norm
+        self.spatial_norm = spatial_norm
         self.spatial_clamp_dims = [int(d) for d in (spatial_clamp_dims or [])]
         clamp_range = spatial_clamp_range or [-5.0, 5.0]
         if len(clamp_range) != 2:
@@ -432,7 +469,8 @@ class BenchmarkV11Dataset(Dataset):
         lig = self._apply_ligand_mode(lig)
 
         phys = prot["physchem_features"].float()
-        scalar = prot["spatial_scalar_features"].float()
+        scalar = (prot["spatial_scalar_features"].float() if self.spatial_norm is None
+                  else _normalize_spatial_raw(prot, self.spatial_norm))
         vector = prot["spatial_vector_features"].float()
         ca = prot["ca_coords"].float()
         gvp_vectors = _compute_gvp_vectors(prot["all_atom_coords"], ca)
@@ -1053,6 +1091,7 @@ def run_dataset(
     spatial_clamp_dims: Optional[List[int]] = None,
     spatial_clamp_range: Optional[List[float]] = None,
     atom_truncation_policy: str = "head",
+    spatial_norm: Optional[Dict] = None,
 ) -> Dict:
     tag_name = (
         f"{dataset_name}_aggregate_pdb_dmin.pt"
@@ -1084,6 +1123,7 @@ def run_dataset(
         residue_coverage=args.residue_coverage,
         tag_protein_root=_as_path(args.benchmark_root, args.tag_protein_root),
         nonfinite_policy=args.nonfinite_policy,
+        spatial_norm=spatial_norm,
     )
     if args.preflight_only:
         return preflight_dataset(ds, args, out_dir)
@@ -1237,6 +1277,8 @@ def main() -> None:
         help="use val_contact_gate stored in the selected checkpoint",
     )
     parser.add_argument("--feature-stats", default=None, help="Training feature stats for ligand V5 normalization")
+    parser.add_argument("--train-cohort-stats", type=Path, default=None,
+                        help="Frozen train_only_stats.json; normalize raw spatial and ligand features")
     parser.add_argument("--no-ligand-normalization", action="store_true")
     parser.add_argument("--no-spatial-clamp", action="store_true")
     parser.add_argument("--amp", action="store_true")
@@ -1262,11 +1304,20 @@ def main() -> None:
         ckpt = safe_tensor_load(args.checkpoint)
         resolve_contact_threshold(args, ckpt)
         config = load_config_from_checkpoint_or_yaml(ckpt, args.config)
-    stats_path = _resolve_feature_stats_path(args, config)
-    ligand_norm = _load_ligand_norm(stats_path, enabled=not args.no_ligand_normalization)
+    spatial_norm = None
+    if args.train_cohort_stats:
+        if args.feature_stats or args.no_ligand_normalization or args.no_spatial_clamp:
+            parser.error("Cohort stats cannot be mixed with legacy stats or disabled normalization/clamp")
+        stats_path = args.train_cohort_stats
+        ligand_norm, spatial_norm = _load_cohort_norm(stats_path)
+    else:
+        stats_path = _resolve_feature_stats_path(args, config)
+        ligand_norm = _load_ligand_norm(stats_path, enabled=not args.no_ligand_normalization)
     data_cfg = config.get("data", {})
     spatial_clamp_dims = [] if args.no_spatial_clamp or not data_cfg.get("use_spatial_clamp", False) else data_cfg.get("spatial_clamp_dims", [])
     spatial_clamp_range = data_cfg.get("spatial_clamp_range", [-5.0, 5.0])
+    if spatial_norm is not None and (spatial_clamp_dims != [62, 76, 78, 79] or spatial_clamp_range != [-5.0, 5.0]):
+        raise ValueError("Cohort spatial normalization requires the training clamp recipe")
     if ligand_norm is not None:
         print(f"Ligand normalization: {ligand_norm['path']} dims={len(ligand_norm['dims'])}")
     else:
@@ -1296,6 +1347,7 @@ def main() -> None:
             spatial_clamp_dims=spatial_clamp_dims,
             spatial_clamp_range=spatial_clamp_range,
             atom_truncation_policy=args.atom_truncation_policy,
+            spatial_norm=spatial_norm,
         )
 
     meta = {
@@ -1309,6 +1361,7 @@ def main() -> None:
         "class0_logit_bias": args.class0_logit_bias,
         "contact_threshold": args.contact_threshold,
         "feature_stats": str(stats_path) if stats_path else None,
+        "spatial_normalization": "raw_to_train_only_zscore" if spatial_norm is not None else "cached",
         "ligand_normalization": None if ligand_norm is None else {"path": ligand_norm["path"], "n_dims": len(ligand_norm["dims"]), "dims": ligand_norm["dims"]},
         "spatial_clamp_dims": spatial_clamp_dims,
         "spatial_clamp_range": spatial_clamp_range,

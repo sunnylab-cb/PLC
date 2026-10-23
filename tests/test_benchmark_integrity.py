@@ -219,7 +219,8 @@ def test_v11m13_mask_forwarding_preserves_all_valid_predictions():
 
 
 @pytest.mark.parametrize("coverage,expected", [("protein", 3), ("legacy_budget", 2)])
-def test_dataset_keeps_canonical_axis_and_collates_masks(tmp_path, coverage, expected):
+@pytest.mark.parametrize("cohort_normalization", [False, True])
+def test_dataset_keeps_canonical_axis_and_collates_masks(tmp_path, coverage, expected, cohort_normalization):
     root = tmp_path
     for name in ("protein/demo", "esm/demo", "ligand/demo"):
         (root / name).mkdir(parents=True)
@@ -227,6 +228,8 @@ def test_dataset_keeps_canonical_axis_and_collates_masks(tmp_path, coverage, exp
             "spatial_scalar_features": torch.zeros(3, 89),
             "spatial_vector_features": torch.zeros(3, 8, 3), "ca_coords": torch.zeros(3, 3),
             "all_atom_coords": [torch.zeros(3, 3) for _ in range(3)]}
+    prot["spatial_scalar_raw_features"] = torch.full((3, 89), 7.)
+    prot["spatial_scalar_raw_features"][:, 62] = 100.
     torch.save(prot, root / "protein/demo/1abc.pt")
     torch.save({**metadata([1, 3]), "embeddings": torch.tensor([[1.], [3.]])}, root / "esm/demo/1abc.pt")
     torch.save({"atom_features": torch.ones(2, 109), "coords": torch.zeros(2, 3),
@@ -235,11 +238,15 @@ def test_dataset_keeps_canonical_axis_and_collates_masks(tmp_path, coverage, exp
     torch.save({"1abc_LIG_A1": {**metadata([1, 2, 3]), "distances": torch.tensor([3., 9., 4.])}}, root / "tags.pt")
     ds = BenchmarkV11Dataset(root, "demo", root / "tags.pt", root / "protein", root / "esm",
                             None, root / "ligand", tag_mode="per_ligand",
-                            residue_alignment="keys", residue_coverage=coverage)
+                            residue_alignment="keys", residue_coverage=coverage,
+                            spatial_norm=dict(mean=torch.ones(89), std=torch.full((89,), 2.)) if cohort_normalization else None,
+                            spatial_clamp_dims=[62, 76, 78, 79])
     sample = ds[0]
     assert sample["n_residues"] == expected
     assert sample["esm"][:, 0].tolist() == [1., 0., 3.][:expected]
     assert sample["labels"].tolist() == [0, 2, 0][:expected]
+    assert bool((sample["protein_spatial_scalar"][:, 0] == (3. if cohort_normalization else 0.)).all())
+    assert bool((sample["protein_spatial_scalar"][:, 62] == (5. if cohort_normalization else 0.)).all())
     batch = benchmark_collate([sample])
     assert batch["esm_valid_mask"][0].tolist() == [True, False, True][:expected]
     assert batch["input_qc"][0]["tag_axis"]["verified"]
