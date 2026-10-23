@@ -1,5 +1,24 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 HOLO4K Chain-Context Diagnostic Complete
+
+Jobs13280632/33/34 all COMPLETED0:0. GPU inference19m05s, CPU summary6m49s;
+7,245 PLC pairs /17,604 chain-ligand inputs successful. Same-axis global Top20
+sample F1/MCC improves full PLC.354668/.336147 ->chain.377242/.359943;
+LiBRe.404402/.390166. NoTRAIN+VAL shared-PDB cohort3,215 pairs improves
+.306322/.284673 ->.323659/.302795, still below LiBRe.382451/.367583.
+Native full-cohort sample F1 improves.368942 ->.413344, but predictions nearly
+double20.89 ->41.32 residues and zero-contact-chain FPR rises2.225% ->6.471%.
+Native pooled F1 slightly declines.368300 ->.365131; AP barely changes
+.248721 ->.251861 despite AUROC.838507 ->.900400. Thus not an all-metrics win.
+Oracle-known-chain Top20 also improves on identical cropped axes: full cohort
+.411405 ->.463550 (LiBRe.508900), noTRAIN+VAL.354850 ->.402815 (LiBRe.488214).
+Single-chain mean probability difference.000247; parent metrics and hashes
+verified. Context mismatch contributes, but chain assignment alone does not
+explain all remaining gaps. No model/threshold selection from external TEST;
+next potential check belongs on strict VAL. Raw JSON and analysis saved in
+[chain-context results](joint_holo_chain_context_20261023.md#completed-results).
+
 ## 2026-10-23 HOLO4K Chain-Context Diagnostic Submitted
 
 Frozen joint GFGF seed44 epoch25, same TRAIN statistics and VAL gate, no
