@@ -52,3 +52,15 @@ cross-chain edge masks, singleton neighborhoods, unchanged data config.
 The real GPU smoke additionally uses the production BF16 loss and FP16 VAL,
 100 cached TRAIN steps, and a synthetic 1800-residue cap stress batch. Its
 timing excludes data loading and must not be reported as a full-epoch ETA.
+
+## Submission
+
+Implementation snapshot `eaa5100` is pushed to `plc/master`; 61 CPU tests pass.
+HPC root: `/hpc2hdd/home/shuang886/PLC/experiments/local_spatial_scan_20261024`.
+Smoke array `13289651_[0-3]`; scratch training array `13289792_[0-3]` depends
+on the entire smoke array succeeding. Both use one GPU/task on
+`i64m1tga800ue`, at most four concurrent tasks. The training script additionally
+checks all four successful smoke manifests against code/config/input hashes.
+At submission reporting G0 smoke was running, the other smoke tasks queued,
+and all full training tasks waiting on dependency. No GPU peak or accuracy
+result is yet claimed. Follow the tracker for job-to-arm mapping.
