@@ -139,6 +139,23 @@ per such chain rise5.60 ->16.29. The same pattern holds without TRAIN/VAL
 shared accessions:2.189% ->6.209%,6.01 ->17.04 predicted residues. These
 chains stayed in inference and primary metrics; their increase is not hidden.
 
+#### Fixed-Threshold MCC Supplement
+
+At the user's request, future result summaries must explicitly pair F1 with
+MCC at both0.5 and the previously frozen VAL gate, separating sample-macro
+and residue-pooled values. Do not substitute Top20 MCC for threshold MCC.
+PLC native threshold here is0.5535550117492676; LiBRe native isFP32 p>0.6.
+Neither threshold was fitted on HOLO4K.
+
+| Cohort / model | MCC@0.5 macro | MCC@0.5 pooled | Native MCC macro | Native MCC pooled |
+| --- | ---: | ---: | ---: | ---: |
+| All / full PLC | 0.349784 | 0.349958 | 0.348798 | 0.348596 |
+| All / chain PLC | 0.412944 | 0.362647 | 0.411317 | 0.362769 |
+| All / LiBRe | 0.418355 | 0.386683 | 0.426072 | 0.395072 |
+| No TRAIN+VAL / full PLC | 0.295452 | 0.294444 | 0.292346 | 0.291452 |
+| No TRAIN+VAL / chain PLC | 0.347172 | 0.306796 | 0.343215 | 0.304763 |
+| No TRAIN+VAL / LiBRe | 0.414631 | 0.393894 | 0.420615 | 0.401678 |
+
 ### Conditional On Known Binding Chain
 
 These are oracle-chain diagnostics, not blind localization. The original
