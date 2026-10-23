@@ -1,5 +1,19 @@
 # PLC status as of 2026-10-23
 
+## 2026-10-23 HOLO4K Chain-Context Diagnostic Submitted
+
+Frozen joint GFGF seed44 epoch25, same TRAIN statistics and VAL gate, no
+retraining/tuning. CPU13280632 prepares an all-chain manifest, GPU13280633
+(one GPU, i64m1tga800ue) independently predicts each observed chain for every
+ligand, and CPU13280634 summarizes after successful inference. Primary scores
+stitch back onto the original capped residue axis and apply global Top20.
+Separately report oracle GT-positive-chain metrics with cropped full-context
+controls, zero-contact-chain false positives, and single-chain numerical
+controls. Cached V4/ESM are sliced, not re-extracted in isolated chains.
+Full matched and fixed nonshared cohorts are retained; no external SI30 claim.
+Code74c6489 pushed; 67 local tests and remote af3 smoke passed. Initially
+pending; no new scores yet. See [protocol and jobs](joint_holo_chain_context_20261023.md).
+
 ## 2026-10-23 Joint HOLO4K And Nonshared-PDB Analysis Complete
 
 CPU13279553 and GPU13279554 both COMPLETED, exit0:0. Latest joint epoch25

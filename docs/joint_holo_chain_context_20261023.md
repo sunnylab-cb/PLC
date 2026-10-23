@@ -62,5 +62,19 @@ when atom and residue counts coincide, zero-contact chain retention,
 case-sensitive/noncontiguous chain slicing, exact stitching, global budget,
 and matched-axis conditional metrics. Slurm syntax check passed.
 
-Job IDs and outcomes will be appended after submission/collection. No new
-chain-context performance results are available at protocol creation.
+## Submission
+
+Immutable evaluation commit: `74c6489` (pushed to public `plc/master`).
+Archive SHA256: `e7ef6892b08fd19ac8b8aa8d9fd601534292839b9df97b53a09c4c10cd448f99`.
+Remote `af3` has no `pytest`; a CPU-only import/split/stitch/conditional-metric
+smoke test passed there. The 67-test suite passed locally in `BIO`.
+
+| Phase | Job | Partition | Initial State |
+| --- | --- | --- | --- |
+| Freeze chain manifest | 13280632 | i64m512ue | Pending/Priority |
+| All-chain inference | 13280633 | i64m1tga800ue, one GPU | Pending/afterok:13280632 |
+| Matched summary | 13280634 | i64m512ue | Pending/afterok:13280633 |
+
+All phases use independent locks. Invalid dependencies cancel downstream
+jobs; no expensive inference proceeds after failed preparation. There are
+no new chain-context performance results at submission time.
