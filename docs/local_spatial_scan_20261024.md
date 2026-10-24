@@ -129,3 +129,11 @@ reproduced the original Half overflow before the fix. Smoke now prints profile
 and stress metrics before VAL so a later failure cannot hide VRAM measurements.
 Fresh immutable U deployment and job IDs are recorded in the tracker. Full
 training remains gated on all four matching real-GPU smoke passes.
+
+AMP-fixed snapshot `91079ad` was pushed and deployed under
+`/hpc2hdd/home/shuang886/PLC/experiments/local_spatial_scan_ampfix_u_20261024`.
+New smoke `13312382_[0-3]` and dependent scratch training `13312384_[0-3]`
+are both on `i64m1tga800u`, one GPU/task. At 2026-10-24 23:52 CST, smoke was
+Priority pending and training was Dependency pending. Input/config verification
+passed; old/new configs differ only in the output directory. No full-training
+results are available yet.
