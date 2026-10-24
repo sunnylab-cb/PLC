@@ -3,7 +3,9 @@ import copy
 import pytest
 import torch
 
-from src.models.pocket_local_spatial_scan import PocketLocalSpatialScan, local_neighbors
+from src.models.pocket_local_spatial_scan import (
+    PocketLocalSpatialScan, _masked_attention_weights, local_neighbors,
+)
 from scripts.diagnostics.prepare_local_spatial_scan import make_configs, VARIANTS
 
 
@@ -54,6 +56,55 @@ def test_forward_backward_checkpoint_roundtrip(variant):
     plain = net(**x)["logits"]
     net.checkpoint = True
     torch.testing.assert_close(plain, net(**x)["logits"])
+
+
+@pytest.mark.parametrize("variant", VARIANTS[1:])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("training", [False, True])
+def test_autocast_forward_and_checkpoint_backward(variant, dtype, training):
+    net = model(variant).train(training)
+    x = inputs()
+    x["ligand_mask"][1].zero_()
+    x["protein_coords"][0, 0] = float("nan")
+    with torch.set_grad_enabled(training), torch.autocast("cpu", dtype=dtype):
+        out = net(**x)
+        loss = out["logits"].float().square().mean() + out["pred_dist"].float().mean()
+    assert torch.isfinite(out["logits"]).all()
+    assert torch.isfinite(out["pred_dist"]).all()
+    if training:
+        loss.backward()
+        grads = [p.grad for p in net.parameters() if p.grad is not None]
+        assert grads and all(torch.isfinite(g).all() for g in grads)
+        assert net.atom_k.weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("triangle", [False, True])
+@pytest.mark.parametrize("scale", [1.0, 400.0])
+def test_autocast_attention_uses_fp32_and_masks_empty_keys(dtype, triangle, scale):
+    torch.manual_seed(19)
+    prefix, width = ((2, 4), 16) if triangle else ((2,), 128)
+    q = (torch.randn(*prefix, 3, width) * scale).to(dtype).requires_grad_()
+    key = (torch.randn(*prefix, 5, width) * scale).to(dtype).requires_grad_()
+    mask = torch.tensor([[True, False, True, False, True], [False] * 5])[:, None]
+    bias = torch.randn(*prefix, 3, 5).to(dtype).requires_grad_() if triangle else None
+    if triangle:
+        mask = mask[:, None]
+    scores = (q.float() @ key.float().transpose(-2, -1)) / (width ** 0.5)
+    if bias is not None:
+        scores = scores + bias.float()
+    ref = scores.masked_fill(~mask, torch.finfo(torch.float32).min).softmax(-1).masked_fill(~mask, 0)
+    with torch.autocast("cpu", dtype=dtype):
+        weights = _masked_attention_weights(q, key, mask, bias)
+    assert weights.dtype == torch.float32
+    torch.testing.assert_close(weights, ref, rtol=0, atol=0)
+    assert torch.isfinite(weights).all() and weights[1].eq(0).all()
+    torch.testing.assert_close(weights[0].sum(-1), torch.ones_like(weights[0].sum(-1)))
+    weights.square().sum().backward()
+    assert torch.isfinite(q.grad).all() and torch.isfinite(key.grad).all()
+    assert q.grad[1].eq(0).all() and key.grad[1].eq(0).all()
+    if bias is not None:
+        assert torch.isfinite(bias.grad).all()
 
 
 @pytest.mark.parametrize("variant", VARIANTS[1:])

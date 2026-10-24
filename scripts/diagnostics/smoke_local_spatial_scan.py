@@ -102,12 +102,21 @@ def main():
     if not all(math.isfinite(x) for x in metrics.values()):
         raise RuntimeError("Non-finite production TRAIN loss/metrics")
     profile_peak = torch.cuda.max_memory_allocated() / 2**30
+    print("LOCAL_SCAN_PROFILE", json.dumps(dict(variant=name,
+        parameters=sum(p.numel() for p in model.parameters()),
+        profile_steps=args.steps, profile_seconds=elapsed,
+        train_shape=list(batch["protein_mask"].shape),
+        cached_batch_pairs_per_second=len(batch["pdb_ids"]) * args.steps / elapsed,
+        peak_allocated_gib=profile_peak, train_metrics=metrics)), flush=True)
     print("LOCAL_SCAN_SMOKE_PHASE", name, "cap_stress", flush=True)
     stress = cap_batch(batch)
     stress_metrics = train([stress])
     if not all(math.isfinite(x) for x in stress_metrics.values()):
         raise RuntimeError("Non-finite cap-sized TRAIN loss/metrics")
     stress_peak = torch.cuda.max_memory_allocated() / 2**30
+    print("LOCAL_SCAN_CAP_STRESS", json.dumps(dict(variant=name,
+        cap_stress_length=1800, cap_stress_peak_allocated_gib=stress_peak,
+        cap_stress_metrics=stress_metrics)), flush=True)
     del stress
     print("LOCAL_SCAN_SMOKE_PHASE", name, "validation", flush=True)
     ids = balanced("val", 4)

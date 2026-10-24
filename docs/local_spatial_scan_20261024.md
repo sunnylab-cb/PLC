@@ -90,3 +90,42 @@ Replacement snapshot: `6cdd171`, pushed to master. New smoke array:
 `i64m1tga800u`, one GPU per task. At verification all smoke tasks were queued
 for priority and full training was waiting on dependency. No new accuracy or
 GPU-memory result is available yet.
+
+## U Smoke Results And AMP Fix
+
+Observed after the first U array finished (snapshot `6cdd171`):
+
+| Arm | Job | Slurm state | Completed phases | Failure |
+| --- | --- | --- | --- | --- |
+| G0 | 13290479_0 | COMPLETED | 100 TRAIN steps, cap stress, FP16 VAL, strict CKPT load | None |
+| S0 | 13290479_1 | FAILED | 100 TRAIN steps, cap stress | FP16 atom-readout mask overflow |
+| S1 | 13290479_2 | FAILED | 100 TRAIN steps, cap stress | Same |
+| T1 | 13290479_3 | FAILED | 100 TRAIN steps, cap stress | Same |
+
+Dependent training `13290512_[0-3]` was cancelled automatically and never
+started. None of these failures was an OOM. The prior G0 co-attention replay
+fix passed real GPU training. Do not interpret the local failures as negative
+architecture results or the tiny smoke VAL subset as generalization evidence.
+
+G0 has 23,650,742 parameters. On an A800-80GB, 100 repetitions of the same
+16-row TRAIN batch (padded length420) took 168.53 seconds, 9.494 cached-batch
+pairs/second, peak allocated VRAM3.886GiB. Synthetic length1800 stress peaked
+at31.591GiB; ligand sizes were unchanged from that TRAIN batch. These numbers
+exclude data loading and do not bound the cost of every possible full-size
+protein/ligand batch. The local arms did not persist final JSON profiles because
+they failed during VAL; their logs show finite TRAIN steps and completed stress.
+
+Root cause: `.float()` on Q/K does not prevent autocast from running their
+matmul in FP16. Filling those scores with `-1e9` raises a Half overflow during
+the legacy FP16 VAL path. Both local atom readout and triangle score calculation
+now explicitly disable autocast for FP32 matmul/masking/softmax. Fully masked
+rows return zero weights. Value projections/readout remain mixed precision.
+No parameters, dataset, label, split, optimizer or loss recipe changed.
+
+102 CPU regression tests pass, including 20 new FP16/BF16 cases covering all
+three local arms in TRAIN/checkpoint backward and EVAL, all-masked keys, missing
+coordinates, large attention scores and an exact FP32 reference. The new test
+reproduced the original Half overflow before the fix. Smoke now prints profile
+and stress metrics before VAL so a later failure cannot hide VRAM measurements.
+Fresh immutable U deployment and job IDs are recorded in the tracker. Full
+training remains gated on all four matching real-GPU smoke passes.

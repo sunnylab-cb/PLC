@@ -1,15 +1,15 @@
 # Local spatial scanning experiment tracker
 
-Date: 2026-10-24. G0/S0/S1/T1 resubmitted on -u after checkpoint replay fix.
+Date: 2026-10-24. G0 passed U smoke; local arms need the tested FP16 AMP fix.
 The detailed definitions and decision gates are in [the plan](EXPERIMENT_PLAN.md).
 
 | ID | System | Purpose | Seed | Stage | Status |
 | --- | --- | --- | --- | --- | --- |
 | R0 | Full V11m13 GFGF | Matched mainline control | 44;43/45 if needed | Confirmation | Planned; old run is reference only |
-| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | Smoke 13290479_0 queued; train 13290512_0 dependency |
-| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | Smoke 13290479_1 queued; train 13290512_1 dependency |
-| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | Smoke 13290479_2 queued; train 13290512_2 dependency |
-| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | Smoke 13290479_3 queued; train 13290512_3 dependency |
+| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | Smoke 13290479_0 passed; uniform AMP-fix recheck pending |
+| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | Smoke 13290479_1 failed FP16 VAL; fix tested locally |
+| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | Smoke 13290479_2 failed FP16 VAL; fix tested locally |
+| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | Smoke 13290479_3 failed FP16 VAL; fix tested locally |
 | M0 | S1 uniform4 | Same expert-bank capacity control | 44 | After local evidence | Deferred |
 | M1 | S1 learned moe4 | Ligand-dependent routing | 44 | After local evidence | Deferred |
 | M2 | S1 learned moe4 balance | Balance ablation | 44 | After local evidence | Deferred |
@@ -57,3 +57,23 @@ Default partition now `i64m1tga800u`, still one GPU/task.
   seed, batch, loss, optimizer and gradient-checkpointing policy unchanged.
 - No successful GPU smoke yet. The cancelled UE jobs will not write into the
   replacement root. Full training must still pass all four smoke checks.
+
+## U Outcome And AMP Repair
+
+The queue statements above are historical submission-time observations. Final
+states for `13290479`: G0 COMPLETED (17m38s); S0 FAILED (18m12s); S1 FAILED
+(12m38s); T1 FAILED (3m23s). `13290512_[0-3]` was automatically cancelled before
+starting. All local arms completed BF16 TRAIN100 and synthetic cap stress,
+then failed at FP16 VAL atom readout: `masked_fill(-1e9)` on Half scores.
+No OOM, full-training epoch, or full-VAL model comparison exists for this batch.
+
+G0 GPU profile: 23,650,742 parameters, 168.53s/100 cached TRAIN steps,
+9.494pairs/s, 3.886GiB allocated peak at16x420; length1800 stress31.591GiB
+with the same ligands. Smoke VAL uses only four rows and is not a model score.
+
+Fix: explicit autocast-disabled FP32 QK/mask/softmax shared by atom readout and
+triangle attention, finite all-masked rows. AMP value paths remain enabled.
+102 local tests passed, including the regression that failed before the fix
+and 20 new mixed-precision cases. Early profile/stress log records now survive
+a later validation failure. No data or training-recipe change. A fresh source
+snapshot/root is required; previous failed runs remain immutable for audit.

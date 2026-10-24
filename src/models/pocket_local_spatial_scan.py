@@ -24,6 +24,17 @@ def normalize_vectors(v):
     return v / scale.clamp_min(1.0).to(v.dtype).unsqueeze(-1)
 
 
+def _masked_attention_weights(q, key, key_mask, bias=None):
+    # Casting operands alone does not keep matmul in FP32 under autocast.
+    with torch.autocast(device_type=q.device.type, enabled=False):
+        scores = (q.float() @ key.float().transpose(-2, -1)) / (q.shape[-1] ** 0.5)
+        if bias is not None:
+            scores = scores + bias.float()
+        # A finite sentinel followed by masking gives zero for all-masked rows.
+        weights = scores.masked_fill(~key_mask, torch.finfo(scores.dtype).min).softmax(-1)
+        return weights.masked_fill(~key_mask, 0.0)
+
+
 @torch.no_grad()
 def local_neighbors(coords, batch_ids, chains, positions, radius=12.0, k=32, chunk=128):
     """Center + k-1 neighbors; exact distance ties use ascending input index.
@@ -137,10 +148,7 @@ class LocalTriangleBlock(nn.Module):
         q, key, value = (t.transpose(1, 2) for t in (q, key, value))
         distances = (neighbor_xyz[:, :, None] - neighbor_xyz[:, None, :]).float().norm(dim=-1)
         bias = self.bias(rbf_encode(distances, D_max=24.0, num_rbf=16)).permute(0, 3, 1, 2)
-        scores = (q.float() @ key.float().transpose(-2, -1)) / 4.0 + bias.float()
-        # Finite sentinel plus explicit mask also handles a center with no keys.
-        weights = scores.masked_fill(~valid[:, None, None], -1e9).softmax(-1)
-        weights = weights * valid[:, None, None]
+        weights = _masked_attention_weights(q, key, valid[:, None, None], bias)
         read = (weights.to(value.dtype) @ value).transpose(1, 2).reshape(count, n, 64)
         z = self.pair_norm(z + self.drop(self.out(read)))
         pooled = (z * valid[..., None]).sum(1) / valid.sum(-1).clamp_min(1)[:, None]
@@ -222,9 +230,7 @@ class PocketLocalSpatialScan(nn.Module):
     def _read(self, h, z, ligand_mask, context):
         q, key, value = self.atom_q(h), self.atom_k(z), self.atom_v(z)
         if z.shape[1]:
-            scores = (q.float() @ key.float().transpose(-2, -1)) / (128 ** 0.5)
-            weights = scores.masked_fill(~ligand_mask[:, None], -1e9).softmax(-1)
-            weights = weights * ligand_mask[:, None]
+            weights = _masked_attention_weights(q, key, ligand_mask[:, None])
             read = weights.to(value.dtype) @ value
         else:
             read = q * 0
