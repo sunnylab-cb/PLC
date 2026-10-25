@@ -1,15 +1,15 @@
 # Local spatial scanning experiment tracker
 
-Date: 2026-10-24. AMP fix deployed; new U smoke/train arrays submitted.
+Updated: 2026-10-25. All four AMP-fixed smokes passed; full training is running.
 The detailed definitions and decision gates are in [the plan](EXPERIMENT_PLAN.md).
 
 | ID | System | Purpose | Seed | Stage | Status |
 | --- | --- | --- | --- | --- | --- |
 | R0 | Full V11m13 GFGF | Matched mainline control | 44;43/45 if needed | Confirmation | Planned; old run is reference only |
-| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | Smoke 13312382_0 queued; train 13312384_0 dependency |
-| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | Smoke 13312382_1 queued; train 13312384_1 dependency |
-| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | Smoke 13312382_2 queued; train 13312384_2 dependency |
-| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | Smoke 13312382_3 queued; train 13312384_3 dependency |
+| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | 13312384_0 RUNNING epoch6; VAL through epoch5 |
+| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | 13312384_1 RUNNING epoch3; VAL through epoch2 |
+| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | 13312384_2 RUNNING epoch3; VAL through epoch2 |
+| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | 13312384_3 RUNNING epoch3; VAL through epoch2 |
 | M0 | S1 uniform4 | Same expert-bank capacity control | 44 | After local evidence | Deferred |
 | M1 | S1 learned moe4 | Ligand-dependent routing | 44 | After local evidence | Deferred |
 | M2 | S1 learned moe4 balance | Balance ablation | 44 | After local evidence | Deferred |
@@ -95,3 +95,61 @@ snapshot/root is required; previous failed runs remain immutable for audit.
   Smoke limit2h; training limit7d. Training starts fresh, not from smoke weights.
 - No active old tasks, no lost full-training progress, no TEST inference.
   At this observation the replacement smoke had not started; no new score claimed.
+
+## 2026-10-25 Running Check
+
+Observed around 12:40 CST. All `13312382_[0-3]` COMPLETED with exit0;
+the last smoke ended04:23:40. Full training `13312384_[0-3]` started at
+04:41:04 / 04:46:05 / 04:46:05 / 05:46:09 respectively. All four are RUNNING
+on `i64m1tga800u`, GPUs allocated by Slurm. No OOM/traceback/non-finite-logit
+error found. No job was cancelled, resumed or reconfigured in this check.
+
+Latest completed full-VAL metrics (not TEST, not smoke):
+
+| Arm | Completed VAL epoch | Legacy F1_c0 | Pooled F1@0.5 | Pooled MCC@0.5 | Pooled AUPRC | Pooled AUROC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 5 | 0.5551 | 0.5926 | 0.5755 | 0.5956 | 0.9493 |
+| S0 | 2 | 0.4548 | 0.4777 | 0.4553 | 0.4421 | 0.9218 |
+| S1 | 2 | 0.4462 | 0.4784 | 0.4593 | 0.4394 | 0.9224 |
+| T1 | 2 | 0.4523 | 0.4728 | 0.4506 | 0.4406 | 0.9177 |
+
+Best and last legacy F1 coincide so far. G0 epoch1..5 F1:
+0.4503,0.5021,0.5317,0.5368,0.5551; AUPRC:
+0.4453,0.5235,0.5613,0.5745,0.5956. Local epoch1->2 F1:
+S0 0.4128->0.4548; S1 0.4171->0.4462; T1 0.4131->0.4523.
+Same-epoch2 G0 is F1=0.5021, AUPRC=0.5235, MCC@0.5=0.5161.
+Thus the early local deficit is not only unequal epoch progress. However,
+local arms are still within the shared five-epoch warmup; no final rejection
+or generalization claim is justified. Architecture and parameter counts also
+differ, so these are not isolated locality ablations.
+
+Source coverage is complete at each VAL: PDBbind1697 + BioLiP15698 rows.
+At epoch2, PDBbind pooled AUPRC is G0/S0/S1/T1 =
+0.5091/0.3676/0.3611/0.3791; BioLiP = 0.5255/0.4518/0.4499/0.4488.
+The early gap is larger on PDBbind. G0 epoch5 PDBbind/BioLiP AUPRC is
+0.6201/0.5920 and MCC@0.5 is0.5903/0.5733.
+
+All logged TRAIN batch losses and total-gradient norms were finite. Recent
+200 logged pre-clip gradient norms, median (max): G0 1.278(12.818),
+S0 3.221(17.402), S1 3.180(10.337), T1 3.945(19.232). All recent local
+samples exceed clip1; G0 fraction is78.5%. This is stronger clipping pressure,
+not proof of divergence or a causal explanation for the score gap. Local
+ESM/spatial/ligand/atom-QKV modules have nonzero gradient logs. Preserve the
+common recipe during this early comparison; do not tune from TEST.
+
+Measured resources (A800; smoke cached TRAIN batch16x420, then synthetic
+length1800 with unchanged ligands; these are not live full-training peaks):
+
+| Arm | Parameters | Smoke peak GiB | Cap-stress peak GiB | Full VAL-to-VAL interval hours |
+| --- | ---: | ---: | ---: | ---: |
+| G0 | 23,650,742 | 3.886 | 31.591 | 1.36-1.42 |
+| S0 | 1,617,796 | 0.191 | 0.827 | 2.61 |
+| S1 | 1,787,044 | 0.193 | 0.829 | 3.06 |
+| T1 | 1,067,460 | 0.182 | 0.819 | 2.49 |
+
+Local arms save substantial activation memory on this stress case but are
+not faster end-to-end at the current implementation/batch. Timing includes
+data loading, training, VAL and saving, with only one local interval observed.
+Do not extrapolate the short cached-batch profile to a full-epoch ETA. Current
+evidence supports waiting for more VAL rounds, not declaring a winning local
+operator, changing batch sizes, or expanding MoE yet.

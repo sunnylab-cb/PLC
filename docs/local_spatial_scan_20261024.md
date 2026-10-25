@@ -4,6 +4,15 @@ User-approved scope: G0/S0/S1/T1, seed44 from scratch. MoE deferred.
 Architecture: [experiment plan](../refine-logs/local_spatial_scan_20261024/EXPERIMENT_PLAN.md).
 Deployment: [tracker](../refine-logs/local_spatial_scan_20261024/EXPERIMENT_TRACKER.md).
 
+Latest check, 2026-10-25: all four AMP-fixed GPU smokes passed; training
+`13312384_[0-3]` is RUNNING on U. G0 is training epoch6 (VAL epoch5 F1=0.5551,
+AUPRC=0.5956, pooled MCC@0.5=0.5755). Local arms are training epoch3 (VAL
+epoch2 F1 S0/S1/T1=0.4548/0.4462/0.4523). G0 at the same epoch2 had
+F1=0.5021: no early local accuracy win yet, but the local arms remain within
+warmup. No OOM/non-finite-gradient error observed. Detailed same-epoch,
+source-separated, gradient and measured-memory records are in the tracker.
+Historical deployment states below are retained rather than overwritten.
+
 | Arm | Operator | Protein mixing | Ligand dependence |
 | --- | --- | --- | --- |
 | G0_small_global | V11m13 GFGF, d_model256 | Original global stack | Original group_rescompat path |
