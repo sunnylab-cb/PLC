@@ -1,15 +1,15 @@
 # Local spatial scanning experiment tracker
 
-Updated: 2026-10-25. All four AMP-fixed smokes passed; full training is running.
+Updated: 2026-10-27. Four runs active after about58h; local arms have plateaued.
 The detailed definitions and decision gates are in [the plan](EXPERIMENT_PLAN.md).
 
 | ID | System | Purpose | Seed | Stage | Status |
 | --- | --- | --- | --- | --- | --- |
 | R0 | Full V11m13 GFGF | Matched mainline control | 44;43/45 if needed | Confirmation | Planned; old run is reference only |
-| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | 13312384_0 RUNNING epoch6; VAL through epoch5 |
-| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | 13312384_1 RUNNING epoch3; VAL through epoch2 |
-| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | 13312384_2 RUNNING epoch3; VAL through epoch2 |
-| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | 13312384_3 RUNNING epoch3; VAL through epoch2 |
+| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | 13312384_0 RUNNING epoch42; VAL through epoch41 |
+| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | 13312384_1 RUNNING epoch23; VAL through epoch22 |
+| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | 13312384_2 RUNNING epoch18; VAL through epoch17 |
+| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | 13312384_3 RUNNING epoch22; VAL through epoch21 |
 | M0 | S1 uniform4 | Same expert-bank capacity control | 44 | After local evidence | Deferred |
 | M1 | S1 learned moe4 | Ligand-dependent routing | 44 | After local evidence | Deferred |
 | M2 | S1 learned moe4 balance | Balance ablation | 44 | After local evidence | Deferred |
@@ -153,3 +153,89 @@ data loading, training, VAL and saving, with only one local interval observed.
 Do not extrapolate the short cached-batch profile to a full-epoch ETA. Current
 evidence supports waiting for more VAL rounds, not declaring a winning local
 operator, changing batch sizes, or expanding MoE yet.
+
+## 2026-10-27 Running Check
+
+Observed around15:00-15:10 CST. All four jobs remain RUNNING on their original
+U nodes after57-58h. No OOM/traceback/non-finite-VAL-logit failure; live batch
+counters advance. Metrics below are full strict VAL, not TEST or benchmark.
+S0 completed epoch22 during the inspection; its newest metrics are from stdout,
+while the detailed TB extraction covered epoch21.
+
+| Arm | Best F1 epoch | Best legacy F1 | AUPRC at best-F1 | MCC@0.5 at best-F1 | Last completed epoch | Last F1 | Tail5 F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 32 | 0.601547 | 0.632418 | 0.601795 | 41 | 0.590308 | 0.588688 |
+| S0 | 13 | 0.532672 | 0.538215 | 0.535717 | 22 | 0.5304 | about0.5258 |
+| S1 | 12 | 0.542662 | 0.546915 | 0.545221 | 17 | 0.529617 | 0.530639 |
+| T1 | 18 | 0.505269 | 0.500022 | 0.511106 | 21 | 0.501921 | 0.499380 |
+
+Do not mix independent metric maxima: G0 epoch35 AUPRC=0.635647 and
+MCC@0.5=0.602771 exceed their epoch32 values, but the retained best-F1
+checkpoint is epoch32. At that checkpoint, pooled F1@0.5=0.617032, its
+VAL-selected gate=0.534020, and F1@gate=0.617601. Thus this score is not
+mainly a threshold-tuning gain. All source VAL counts remain1697/15698.
+
+### Interpretation
+
+- Global width reduction is the strongest signal so far. The historical
+  full-width same-cohort run had best F1=0.588257, AUPRC=0.625655 and
+  MCC@0.5=0.589897 at epoch25. G0 best-F1 improves these by approximately
+  0.013290/0.006763/0.011898. This is a single-seed candidate, not a final
+  claim: stopping policy differs, and historical ranking logs sometimes
+  excluded nonfinite residues whereas the new VAL hook rejects nonfinite
+  valid-residue logits. Re-evaluate under a common denominator for confirmation.
+- G0's recent F1 oscillates around0.589 rather than holding0.602; its latest
+  score is0.01124 below best. Keep the best checkpoint, not the last. TRAIN
+  loss falls0.1272->0.1178 from epoch32->41 with no sustained VAL gain.
+- The local gap is no longer only warmup or unequal training progress.
+  At the common epoch17, F1 G0/S0/S1/T1 =
+  0.5825/0.5302/0.5296/0.4957; AUPRC =
+  0.6222/0.5332/0.5356/0.4905. These small local trunks also remove deep
+  fusion/late-delta components and are not parameter-matched, so this does
+  not disprove spatial locality or prove that global attention is necessary.
+- Conditioning has a modest best-score advantage S1-minus-S0=0.009990,
+  AUPRC+0.008699, but not a consistent same-epoch advantage. T1 is the
+  weakest tested replacement. No evidence justifies adding MoE on top now.
+- Current evidence favors retaining G0 as a candidate and, if pursuing
+  locality later, testing a bounded local residual within a retained global
+  trunk instead of removing the trunk. No new experiment was submitted here.
+
+Source metrics at each arm's own best-F1 checkpoint, not same epoch:
+
+| Arm | PDBbind AUPRC | BioLiP AUPRC | PDBbind MCC@0.5 | BioLiP MCC@0.5 |
+| --- | ---: | ---: | ---: | ---: |
+| G0 | 0.685824 | 0.624981 | 0.637967 | 0.596820 |
+| S0 | 0.524595 | 0.540683 | 0.519555 | 0.537769 |
+| S1 | 0.544186 | 0.547968 | 0.543287 | 0.545396 |
+| T1 | 0.497236 | 0.500545 | 0.508807 | 0.511178 |
+
+### Health And Timing
+
+All sampled TRAIN losses are finite. G0 has6 nonfinite total-gradient entries
+among35,959 logged observations; local streams have0 among19,118/15,414/18,886
+respectively. Counts refer to sampled log points, not every optimizer update.
+G0's most recent200 total-gradient observations are finite; all later full-VAL
+passes accepted finite valid-residue logits. The trainer enables GradScaler
+and unscales before clipping; it has nonfinite-step protection but does not
+persist a skipped-update counter. Do not call the entire G0 run numerically
+clean or infer an exact number of skipped updates from these sampled logs.
+
+Direct event-stream inspection locates the six NaN norm samples at one-based
+epoch/batch27/3580,28/1540,30/8100,33/3840,35/7730,41/5110. Protein and
+ligand modules both have nonfinite norms at these steps; this is not merely
+an isolated total-norm display issue or evidence identifying one faulty
+branch. Exact root cause is not established by scalar logs alone.
+
+| Arm | Last200 pre-clip norm median | Last200 maximum | Fraction above clip1 | Recent VAL-to-VAL hours |
+| --- | ---: | ---: | ---: | ---: |
+| G0 | 0.786 | 7.882 | 31.5% | 1.34-1.39 |
+| S0 | 1.798 | 18.555 | 98.0% | 2.65 |
+| S1 | 1.658 | 19.410 | 97.5% | 3.23-3.84 |
+| T1 | 2.051 | 12.748 | 99.5% | 2.91-3.07 |
+
+Local ESM/spatial/ligand/atom-QKV gradients remain nonzero. Median neighborhood
+size is about26, with40-41% cap hits, no missing-coordinate or isolated-node
+median signal. This is a diagnostic, not proof the neighbor cap causes the
+performance gap. Large memory savings still do not imply faster full epochs.
+No live job, optimizer, batch, F1 early-stop rule, or data was changed. The
+remaining runs continue under the existing F1-patience30 policy.
