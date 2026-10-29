@@ -348,3 +348,62 @@ hit TIMEOUT before its F1 patience expires; its existing best-F1 checkpoint
 is already on disk. No extension, restart, cancellation or resumed run was
 requested or performed. Preserve this distinction when reporting finished
 versus early-stopped versus time-limited runs.
+
+## Live Utilization Audit, 2026-10-29 21:54-21:57 CST
+
+Read-only Slurm overlapping steps sampled only each allocation's assigned GPU,
+once per second for30s per arm. NVIDIA reports the cgroup-visible card as index0,
+not the physical index shown by `scontrol`. No extra GPU was allocated and no
+training process/config/checkpoint was changed. `sstat` lacks GPU TRES here.
+
+| Arm | GPU busy mean (min-max) | Device memory GiB | Mean power W | TRAIN main CPU cores | Loader CPU cores combined | Recent seconds/batch | Pairs/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 67.0% (32-91) | 23.80 | 202.5 | 1.09 | 1.93 | 0.549 | 29.13 |
+| S0 | 30.6% (0-42) | 1.60 | 81.1 | 1.04 | 1.03 | 1.060 | 15.09 |
+| S1 | 25.8% (0-41) | 1.77 | 79.8 | 1.04 | 0.77 | 1.238 | 12.92 |
+| T1 | 29.9% (0-37) | 1.83 | 70.0 | 1.05 | 1.12 | 0.965 | 16.58 |
+
+Memory is live NVML device usage, including allocator reservations/context,
+NOT peak allocated memory over training. GPU busy time is NOT FLOP occupancy.
+All devices are A800 80GiB, power limit400W. Throughput uses differences between
+the last31 logged batch timestamps (300 batches) at batch16, not the30s GPU
+window, and includes training-loop/data/logging costs but not full VAL.
+Current TRAIN epochs are82/43/34/43, respectively. G0 completed VAL81 with
+F1=0.599846, best0.602434 and patience29/30. New sequence controls still have
+no measured training utilization while their smoke remains queued.
+
+### CPU Allocation Is Already Eight Cores
+
+Each task requests `--cpus-per-task=8`; frozen configs use `num_workers=8`,
+pin_memory=true, prefetch_factor=2 and default persistent workers. Both S0's
+TRAIN parent and a loader worker were checked with `sched_getaffinity`: all
+eight allocated CPUs31-38 are allowed. The monitor's `-c1` is a separate
+read-only overlapping step, not a change to the original allocation. A main
+process consuming about100% CPU means about one core's worth of runtime; it
+does not imply only one core was requested or allowed. The8 loader workers
+parallelize loading, not Python model dispatch.
+
+### Speedup Candidates, Not Yet Validated Gains
+
+- Local arms repeatedly dispatch two spatial blocks in chunks of128 centers,
+  with per-chunk activation checkpointing; neighbor search also loops over
+  proteins/chunks and stable-sorts distances. Batched larger chunks512/1024
+  are a promising isolated benchmark without changing batch16, radius12 orK32.
+  Dropout RNG layout can change with chunking, so identical trajectories must
+  not be promised even when deterministic operator results match.
+- Existing TRAIN metrics synchronize multiple scalar counts each batch;
+  gradient logging additionally reads per-parameter finite flags/norms every10
+  batches. Batched reductions/transfers can retain the same diagnostic values
+  while reducing host/device synchronization. Do not remove gradient safeguards.
+- Test checkpoint-on/off on cached TRAIN batches and cap1800 stress separately.
+  Local memory headroom is large, but live reserved memory does not establish
+  an unchecked no-checkpoint peak. Do not disable G0 checkpointing blindly.
+- CPU telemetry supports host-dispatch/serialization as a candidate bottleneck,
+  not exclusive attribution. Workers sometimes show D state; zero `/proc/io`
+  read_bytes on shared storage does not rule out network/filesystem waits.
+  A timed `next(loader)` and CUDA trace are still needed for causal attribution.
+  The existing optional performance monitor starts its data timer after iterator
+  retrieval and synchronizes each stage, so it is not an unbiased loader-wait
+  measurement and was not enabled during live sampling.
+- No torch.compile, batch/LR change, extra CPU allocation, restart or new
+  training submission was performed. No speedup factor has yet been measured.
