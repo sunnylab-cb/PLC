@@ -184,3 +184,62 @@ def test_config_controls_preserve_dataset(tmp_path):
         assert cfg["training"]["save_every"] == 0
     assert configs[VARIANTS[0]]["model"]["d_model"] == 256
     assert "protein_hybrid_pattern" not in configs[VARIANTS[1]]["model"]
+
+
+@pytest.mark.parametrize("variant", VARIANTS[1:])
+def test_chunk_size_preserves_deterministic_outputs_and_gradients(variant):
+    net = model(variant).train()
+    x = inputs(n=11)
+    expected, expected_grad = None, None
+    for chunk in (3, 5, 128, 512, 1024):
+        net.chunk = chunk
+        net.zero_grad(set_to_none=True)
+        out = net(**x)
+        (out["logits"].square().mean() + out["pred_dist"].mean()).backward()
+        values = {k: out[k].detach().clone() for k in ("logits", "pred_dist")}
+        grads = {k: p.grad.detach().clone() for k, p in net.named_parameters() if p.grad is not None}
+        if expected is None:
+            expected, expected_grad = values, grads
+        for key in values:
+            torch.testing.assert_close(values[key], expected[key], atol=3e-5, rtol=3e-5)
+        assert grads.keys() == expected_grad.keys()
+        for key in grads:
+            torch.testing.assert_close(grads[key], expected_grad[key], atol=3e-5, rtol=3e-4)
+
+
+def test_invalid_chunk_rejected():
+    with pytest.raises(ValueError, match="scan_chunk"):
+        PocketLocalSpatialScan(dict(scan_variant="S0_local_gvp", scan_chunk=0))
+
+
+def test_batched_stats_preserve_actual_cpu_training_steps():
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/train"))
+    import train_local_spatial_scan as trainer
+    batch = inputs()
+    batch["protein_vectors"] = batch.pop("protein_gvp_vectors")
+    batch["pdb_ids"] = ["train_a", "train_b"]
+    batch["labels"] = torch.arange(14).reshape(2, 7) % 3
+    states, reports, metrics = [], [], []
+    for fast in (False, True):
+        cfg = dict(model=model("S0_local_gvp").config,
+                   training=dict(batched_local_stats=fast))
+        torch.manual_seed(44)
+        net = trainer.create_model(cfg, torch.device("cpu"))
+        optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4)
+        log = {}
+        writer = SimpleNamespace(add_scalar=lambda k, v, step: log.setdefault(k, []).append(float(v)))
+        metrics.append(trainer.base.train_epoch(net, [batch]*2, optimizer, torch.tensor([9., 7., 1.]),
+            gamma=2., gradient_clip=1., device=torch.device("cpu"), epoch=6, writer=writer,
+            log_every=1, use_amp=False))
+        states.append({k: v.detach().clone() for k, v in net.state_dict().items()})
+        reports.append(log)
+    trainer.base.compute_metrics = trainer._original_compute_metrics
+    assert metrics[0] == metrics[1]
+    assert reports[0].keys() == reports[1].keys()
+    for k in reports[0]:
+        assert reports[0][k] == pytest.approx(reports[1][k], rel=2e-6, abs=1e-8)
+    for k in states[0]:
+        torch.testing.assert_close(states[0][k], states[1][k], rtol=0, atol=0)

@@ -20,10 +20,12 @@ sys.path[:0] = [str(ROOT), str(Path(__file__).resolve().parent)]
 import train_v11m13 as shared
 from src.models.pocket_local_spatial_scan import PocketLocalSpatialScan
 from src.metrics.metrics import compute_contact_probability_metrics, compute_binary_metrics_at_threshold
+from src.utils.batched_training_stats import compute_metrics_batched
 
 base = shared.base
 _original_evaluate = base.evaluate
 _original_grad_stats = base.compute_gradient_stats
+_original_compute_metrics = base.compute_metrics
 _metadata = {}
 
 
@@ -39,6 +41,10 @@ def create_model(config, device, use_gradient_checkpointing=None, use_compile=No
         c["use_gradient_checkpointing"] = use_gradient_checkpointing
     model = (shared.PocketGVPFusionV11m13(c) if c["scan_variant"] == "G0_small_global"
              else PocketLocalSpatialScan(c)).to(device)
+    model._batched_local_stats = bool(t.get("batched_local_stats", False))
+    if model._batched_local_stats and c["scan_variant"] == "G0_small_global":
+        raise ValueError("Batched local statistics are not implemented for G0")
+    base.compute_metrics = compute_metrics_batched if model._batched_local_stats else _original_compute_metrics
     if config.get("scan_metadata_file"):
         with open(config["scan_metadata_file"]) as handle:
             _metadata = {r["sample_id"]: r for r in csv.DictReader(handle, delimiter="\t")}

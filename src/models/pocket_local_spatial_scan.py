@@ -164,6 +164,8 @@ class PocketLocalSpatialScan(nn.Module):
         if self.variant not in ("S0_local_gvp", "S1_cond_gvp", "T1_cond_triangle"):
             raise ValueError(self.variant)
         self.chunk = int(config.get("scan_chunk", 128))
+        if self.chunk <= 0:
+            raise ValueError("scan_chunk must be positive")
         self.checkpoint = config.get("use_gradient_checkpointing", True)
         p = config.get("dropout", 0.15)
         self.esm_proj = nn.Sequential(nn.Linear(config.get("d_esm", 1280), 128), nn.LayerNorm(128))

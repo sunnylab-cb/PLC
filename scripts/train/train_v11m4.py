@@ -64,23 +64,28 @@ def _patch_v11m3_source_for_v11m4(source: str) -> str:
             if writer is not None and is_main_process() and (batch_idx + 1) % log_every == 0:
                 global_step = epoch * len(dataloader) + batch_idx
 
-                # 梯度统计（true pre-clipping norm）
-                total_norm = 0.0
-                for p in model.parameters():
-                    if p.grad is not None:
-                        grad = p.grad.detach()
-                        vals = grad.coalesce()._values() if grad.is_sparse else grad
-                        if torch.isfinite(vals).all():
-                            param_norm = torch.linalg.vector_norm(vals.float(), ord=2)
-                            total_norm += param_norm.item() ** 2
-                        else:
-                            total_norm = float("nan")
-                            break
-                total_norm = total_norm ** 0.5 if math.isfinite(total_norm) else total_norm
+                _stats_model = model.module if isinstance(model, DDP) else model
+                if getattr(_stats_model, '_batched_local_stats', False):
+                    from src.utils.batched_training_stats import local_gradient_report_batched
+                    total_norm, grad_stats = local_gradient_report_batched(_stats_model)
+                else:
+                    # 梯度统计（true pre-clipping norm）
+                    total_norm = 0.0
+                    for p in model.parameters():
+                        if p.grad is not None:
+                            grad = p.grad.detach()
+                            vals = grad.coalesce()._values() if grad.is_sparse else grad
+                            if torch.isfinite(vals).all():
+                                param_norm = torch.linalg.vector_norm(vals.float(), ord=2)
+                                total_norm += param_norm.item() ** 2
+                            else:
+                                total_norm = float("nan")
+                                break
+                    total_norm = total_norm ** 0.5 if math.isfinite(total_norm) else total_norm
+                    grad_stats = compute_gradient_stats(model)
                 writer.add_scalar('Train/grad_norm', total_norm, global_step)
 
                 # 组件级梯度统计
-                grad_stats = compute_gradient_stats(model)
                 for key, value in grad_stats.items():
                     writer.add_scalar(f'Gradients/{key}', value, global_step)
 
