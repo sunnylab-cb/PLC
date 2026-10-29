@@ -91,3 +91,16 @@ Entrypoints:
 - `scripts/diagnostics/profile_local_scan_speed.py`
 - `scripts/slurm/run_local_scan_speed.slurm`
 - `src/utils/batched_training_stats.py`
+
+## Deployment
+
+Submitted2026-10-29 23:29 CST as job **13402625**, `localscan_speed`, on
+`i64m1tga800u`. Confirmed one GPU,8 CPUs,100G and4h limit. At23:29 it is
+PENDING(Priority); no GPU timing results exist yet. The af3 environment's
+entrypoint import/argument dry run passed.
+
+- Root: `/hpc2hdd/home/shuang886/PLC/experiments/local_scan_speed_u_20261029`
+- Immutable source: `code_v1`, commit `9e9f56b`, pushed to `plc/master`.
+- Archive SHA256: `0d216501127823b027932d24683feae00b3c72af89d58d853131be70bc815bc7`
+- Outputs: `speed_profile.json`, `logs/profile_13402625.out`, `logs/profile_13402625.err`.
+- Original LocalScan and queued sequence-context task snapshots were not changed.
