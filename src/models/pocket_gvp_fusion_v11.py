@@ -842,6 +842,16 @@ class PocketGVPFusionV11(nn.Module):
             hybrid_pattern=c.get('protein_hybrid_pattern'),
             gdn_backend=c.get('protein_gdn_backend', 'fla'),
         )
+        context_operator = c.get('protein_context_operator', 'hybrid')
+        if context_operator != 'hybrid':
+            from .protein_sequence_context import ProteinSequenceContext
+            # Construct the legacy stack first, then isolate replacement RNG so
+            # every unchanged module starts identically in same-seed controls.
+            with torch.random.fork_rng(devices=[]):
+                self.protein_context_encoder = ProteinSequenceContext(
+                    c['d_model'], context_operator, dropout=c['dropout'],
+                    max_ca_step=c.get('protein_context_max_ca_step', 4.5),
+                )
 
         # Module 5: 3D Ligand Encoder
         # V10m4: ligand edge = chemical bond features (6D) + RBF(atom distance, 8 bins)

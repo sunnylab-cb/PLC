@@ -54,15 +54,16 @@ def cap_batch(batch, length=1800):
     return result
 
 
-def main():
+def main(variants=VARIANTS, verifier=verify, trainer_module=trainer):
+    trainer = trainer_module
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--experiment", required=True, type=Path)
-    p.add_argument("--variant", choices=VARIANTS, required=True)
+    p.add_argument("--variant", choices=variants, required=True)
     p.add_argument("--steps", type=int, default=100)
     args = p.parse_args()
     root, name = args.experiment, args.variant
     print("LOCAL_SCAN_SMOKE_PHASE", name, "verify_inputs", flush=True)
-    verify(root)
+    verifier(root)
     if not torch.cuda.is_available():
         raise RuntimeError("A Slurm GPU allocation is required")
     torch.set_num_threads(4)
@@ -133,8 +134,7 @@ def main():
     for key in ("f1_c0", "auprc_c0_global", "mcc_c0_at_0_5_global"):
         if not math.isfinite(vm[key]):
             raise RuntimeError(f"Non-finite VAL metric: {key}")
-    cls = trainer.shared.PocketGVPFusionV11m13 if name == "G0_small_global" else trainer.PocketLocalSpatialScan
-    clone = cls(cfg["model"])
+    clone = trainer.create_model(cfg, torch.device("cpu"))
     clone.load_state_dict({k: v.detach().cpu() for k, v in model.state_dict().items()}, strict=True)
     report = dict(passed=True, variant=name, parameters=sum(p.numel() for p in model.parameters()),
         provenance_sha256=sha256(root / "prepared/provenance.json"), gpu=torch.cuda.get_device_name(),
@@ -144,7 +144,7 @@ def main():
         peak_allocated_gib=profile_peak, cap_stress_peak_allocated_gib=stress_peak,
         cap_stress_length=1800, test_forward_used=False,
         note="Cached-batch timing excludes data loading; not a full-epoch ETA. Smoke weights discarded.")
-    verify(root)
+    verifier(root)
     (root / "smoke").mkdir(exist_ok=True)
     (root / "smoke" / f"{name}.json").write_text(json.dumps(report, indent=2) + "\n")
     print("LOCAL_SCAN_SMOKE_PASSED", json.dumps(report), flush=True)
