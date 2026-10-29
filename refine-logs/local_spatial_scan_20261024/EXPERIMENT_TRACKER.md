@@ -1,15 +1,15 @@
 # Local spatial scanning experiment tracker
 
-Updated: 2026-10-27. Four runs active after about58h; local arms have plateaued.
+Updated: 2026-10-29. Four runs active after110-111h; G0 approaches F1 early stop.
 The detailed definitions and decision gates are in [the plan](EXPERIMENT_PLAN.md).
 
 | ID | System | Purpose | Seed | Stage | Status |
 | --- | --- | --- | --- | --- | --- |
 | R0 | Full V11m13 GFGF | Matched mainline control | 44;43/45 if needed | Confirmation | Planned; old run is reference only |
-| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | 13312384_0 RUNNING epoch42; VAL through epoch41 |
-| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | 13312384_1 RUNNING epoch23; VAL through epoch22 |
-| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | 13312384_2 RUNNING epoch18; VAL through epoch17 |
-| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | 13312384_3 RUNNING epoch22; VAL through epoch21 |
+| G0 | Width256 global | Capacity control, same depth | 44 | Pilot | 13312384_0 RUNNING epoch81; VAL through epoch80 |
+| S0 | Static local GVP | Shared local baseline with ligand readout | 44 | Pilot | 13312384_1 RUNNING epoch43; VAL through epoch42 |
+| S1 | Ligand-conditioned local GVP | Conditional spatial operator | 44 | Pilot | 13312384_2 RUNNING epoch34; VAL through epoch33 |
+| T1 | Local triangle pair attention | Alternative local geometry | 44 | Pilot | 13312384_3 RUNNING epoch42; VAL through epoch41 |
 | M0 | S1 uniform4 | Same expert-bank capacity control | 44 | After local evidence | Deferred |
 | M1 | S1 learned moe4 | Ligand-dependent routing | 44 | After local evidence | Deferred |
 | M2 | S1 learned moe4 balance | Balance ablation | 44 | After local evidence | Deferred |
@@ -239,3 +239,112 @@ median signal. This is a diagnostic, not proof the neighbor cap causes the
 performance gap. Large memory savings still do not imply faster full epochs.
 No live job, optimizer, batch, F1 early-stop rule, or data was changed. The
 remaining runs continue under the existing F1-patience30 policy.
+
+## 2026-10-29 Running Check
+
+Observed around20:00-20:10 CST using Slurm, stdout and streamed TB scalar
+events. All four jobs are still RUNNING on `i64m1tga800u`, one GPU each;
+elapsed time110-111h. Batch counters advance and every arm has a nonempty
+`best_f1_c0_model.pt`. No OOM/traceback/nonfinite-valid-logit failure was
+found in training stdout. No new jobs, cancellations, model edits or TEST
+inference were performed. The table is full strict VAL, not TEST.
+
+| Arm | Best F1 epoch | Best legacy F1 | AUPRC at best-F1 | MCC@0.5 at best-F1 | Last VAL epoch | Last F1 | Tail5 F1 | Tail10 F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 52 | 0.602434 | 0.633018 | 0.601489 | 80 | 0.597837 | 0.594995 | 0.595766 |
+| S0 | 23 | 0.535962 | 0.541701 | 0.541136 | 42 | 0.513418 | 0.523794 | 0.525569 |
+| S1 | 24 | 0.549606 | 0.555632 | 0.551574 | 33 | 0.543076 | 0.534627 | 0.537157 |
+| T1 | 18 | 0.505269 | 0.500022 | 0.511106 | 41 | 0.501559 | 0.497539 | 0.496043 |
+
+Legacy F1 is the existing batch-averaged argmax selector. AUPRC/MCC and the
+next table pool valid residues; they are not sample-macro scores. All metrics
+in the next table refer to each arm's own retained best-F1 epoch, not separate
+metric maxima. G0's independent AUPRC maximum is0.637481 at epoch73; that
+epoch is not its retained best-F1 checkpoint and must not be combined with
+epoch52 F1 as if they described one model.
+
+| Arm | Pooled F1@0.5 | Pooled AUROC | Joint VAL gate | Pooled F1@gate | Pooled MCC@gate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| G0 | 0.617114 | 0.952915 | 0.532531 | 0.617842 | 0.601813 |
+| S0 | 0.559858 | 0.939339 | 0.473276 | 0.560592 | 0.541983 |
+| S1 | 0.569531 | 0.941320 | 0.510618 | 0.569696 | 0.551556 |
+| T1 | 0.526788 | 0.930651 | 0.569823 | 0.532322 | 0.512851 |
+
+Source-stratified values at these same best-F1 epochs, recovered from
+`LOCAL_SCAN_VAL` stdout records. Each VAL contains PDBbind1697 and BioLiP15698
+rows, with1,064,222 and5,919,785 valid residues respectively. The positive
+counts are33,517 and247,172. Source thresholds below are fixed0.5.
+
+| Arm | PDBbind AUPRC | BioLiP AUPRC | PDBbind MCC | BioLiP MCC | PDBbind sample F1 | BioLiP sample F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 0.686120 | 0.625746 | 0.640456 | 0.596192 | 0.640468 | 0.574008 |
+| S0 | 0.553304 | 0.540514 | 0.548376 | 0.539965 | 0.526732 | 0.493957 |
+| S1 | 0.561321 | 0.555387 | 0.557623 | 0.550673 | 0.528047 | 0.507177 |
+| T1 | 0.497236 | 0.500545 | 0.508807 | 0.511178 | 0.496542 | 0.476854 |
+
+### Trend Interpretation
+
+- G0's best F1 improved only0.000887 since the Oct27 check, although tail5
+  improved from0.588688 to0.594995. This is a plateau with somewhat better
+  late consistency, not a new large gain. TRAIN loss falls0.108016->0.084895
+  from best epoch52 to80 while F1 falls0.602434->0.597837 and AUPRC
+  falls0.633018->0.630511. Best checkpoints remain preferable to last weights.
+- Relative to the historical full-width reference, G0's numerical best-F1
+  gain is0.014177, with AUPRC+0.007363 and MCC@0.5+0.011592. Preserve the
+  earlier caveats: one seed, different early-stop budgets, and historical
+  nonfinite-residue handling. This is not a matched confirmation experiment.
+- S1 retains a modest local-operator advantage over S0: best F1+0.013644,
+  AUPRC+0.013930 and MCC+0.010438. At common epoch33, F1 G0/S0/S1/T1 is
+  0.582272/0.529924/0.543076/0.495256. Thus unequal epoch counts alone do
+  not explain the local deficit. S1-minus-S0 at that epoch is0.013152, but
+  this single-seed observation is not a ligand-dependency measurement.
+- S0's latest F1 is0.022544 below its best; S1 is0.006530 below best;
+  T1 has not beaten epoch18. Local TRAIN losses continue falling, but these
+  curves do not show sustained VAL catch-up. The tested small replacement
+  trunks are weak candidates; this does not reject locality in general or
+  prove global attention is indispensable, because capacity and retained
+  fusion components differ. Keep MoE deferred; any later local probe should
+  first preserve the successful global trunk rather than replace it.
+
+### Gradient Audit
+
+Each total-gradient stream is sampled, not a complete optimizer-update log.
+All four now contain some nonfinite entries; the earlier zero counts for
+local arms described Oct27 only. Recent median/max/clip fractions below use
+finite entries among the last200 observations. Norms are measured pre-clip.
+
+| Arm | Logged norms | Nonfinite norms | Nonfinite in last200 | Recent median | Recent max | Finite fraction above clip1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 69,753 | 18 | 0 | 1.368 | 16.451 | 79.5% |
+| S0 | 36,586 | 9 | 1 | 1.999 | 9.804 | 99.0% |
+| S1 | 28,955 | 2 | 0 | 1.776 | 11.951 | 98.0% |
+| T1 | 36,250 | 6 | 0 | 2.464 | 18.282 | 100.0% |
+
+Latest sampled nonfinite epochs: G0 epoch79, S0 epoch43, S1 epoch33,
+T1 epoch41. Successful later VAL passes and advancing steps argue against
+persistent weight corruption, but no arm is wholly numerically clean.
+GradScaler protection exists; skipped-update counts were not persisted and
+cannot be reconstructed exactly from these samples. The cause and its
+contribution to score gaps are not established. No mid-run precision,
+optimizer, clipping or architecture change was made.
+
+### Conditional Finish Estimates
+
+F1 remains the early-stop monitor, patience30. Median of the last five
+VAL-to-VAL intervals is used below, including training/VAL/I/O. Estimates
+start around20:10 CST on Oct29 and assume no new best and similar throughput;
+any improved F1 can reset patience. They are not scheduler guarantees.
+
+| Arm | Current TRAIN epoch | Completed VAL epoch | Patience used | Hours/epoch | Stop epoch without improvement | Remaining to early stop |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| G0 | 81 | 80 | 28/30 | 1.42 | 82 | about2-3h |
+| S0 | 43 | 42 | 19/30 | 2.64 | 53 | about28-30h |
+| S1 | 34 | 33 | 9/30 | 3.13 | 54 | about64-66h |
+| T1 | 42 | 41 | 23/30 | 2.44 | 48 | about15-17h |
+
+Slurm permits only about56-58h more at this observation. G0/S0/S1 end limits
+are Nov1 04:41/04:46/04:46 CST and T1 Nov1 05:46 CST. In particular, S1 may
+hit TIMEOUT before its F1 patience expires; its existing best-F1 checkpoint
+is already on disk. No extension, restart, cancellation or resumed run was
+requested or performed. Preserve this distinction when reporting finished
+versus early-stopped versus time-limited runs.

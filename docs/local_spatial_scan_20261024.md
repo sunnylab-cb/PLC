@@ -4,17 +4,21 @@ User-approved scope: G0/S0/S1/T1, seed44 from scratch. MoE deferred.
 Architecture: [experiment plan](../refine-logs/local_spatial_scan_20261024/EXPERIMENT_PLAN.md).
 Deployment: [tracker](../refine-logs/local_spatial_scan_20261024/EXPERIMENT_TRACKER.md).
 
-Latest check, 2026-10-27: all four jobs `13312384_[0-3]` remain RUNNING on U,
-after about58h. G0 is in epoch42, S0 epoch23, S1 epoch18, T1 epoch22.
-Best VAL F1 G0/S0/S1/T1 = 0.601547/0.532672/0.542662/0.505269, selected
-at epoch32/13/12/18 respectively. At G0's best-F1 checkpoint, pooled
-AUPRC=0.632418 and MCC@0.5=0.601795. Local arms have passed warmup and show
-plateaus rather than a catch-up trend. G0 is a promising width-reduction
-candidate versus the historical full-width F1=0.588257, not yet a multi-seed
-or fixed-denominator causal claim. G0 has six historical nonfinite gradient
-log entries; recent logged gradients are finite. Details, source-stratified
-scores and qualifications are in the tracker. No TEST or external inference
-was run, and no active training configuration was modified.
+Latest check, 2026-10-29 around20:00 CST: all four jobs `13312384_[0-3]`
+remain RUNNING on U after110-111h. G0 is in epoch81, S0 epoch43, S1 epoch34,
+T1 epoch42. Best VAL F1 G0/S0/S1/T1 = 0.602434/0.535962/0.549606/0.505269,
+selected at epoch52/23/24/18 respectively. At G0's best-F1 checkpoint,
+pooled AUPRC=0.633018 and MCC@0.5=0.601489. Local arms remain below G0
+with no sustained catch-up. G0 is a promising width-reduction candidate
+versus the historical full-width F1=0.588257, not yet a multi-seed or
+fixed-denominator causal claim. F1 patience counters are28/19/9/23 of30;
+G0 could stop in2-3h without another best. S1 may reach the seven-day wall
+limit before its patience expires. Best-F1 checkpoints exist for all arms.
+Sampled nonfinite gradient counts are now18/9/2/6; the latest200 samples
+contain0/1/0/0 respectively. No OOM or nonfinite-valid-logit failure was
+found, but no arm is wholly numerically clean. Details, source-stratified
+scores and conditional timing are in the tracker. No TEST or external
+inference was run, and no active training configuration was modified.
 Historical deployment states below are retained rather than overwritten.
 
 | Arm | Operator | Protein mixing | Ligand dependence |
