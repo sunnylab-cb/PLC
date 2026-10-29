@@ -5,6 +5,12 @@ This is a targeted follow-up to [LocalScan](local_spatial_scan_20261024.md),
 not a replacement of the whole protein/ligand architecture.
 Deployment and job states: [tracker](../refine-logs/sequence_context_controls_20261029/EXPERIMENT_TRACKER.md).
 
+Submitted20:54 CST: smoke `13400657_[0-2]`, dependent training `13400659_[0-2]`.
+Both use `i64m1tga800u`, one GPU/task. At verification smoke was Priority
+pending and training Dependency pending, not yet running. Snapshot `b4221db`;
+105 CPU tests passed and real production config/initialization parity with G0
+was checked on HPC. Existing LocalScan jobs were not cancelled or restarted.
+
 ## Question And Controls
 
 Does the already contextualized ESM/GVP representation need the additional
