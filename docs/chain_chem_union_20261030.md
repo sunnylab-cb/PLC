@@ -101,4 +101,37 @@ cannot be compared numerically as though it were the same benchmark.
 Slurm: CPU i64m512u; GPU i64m1tga800u, one GPU and8 CPUs per task. Existing jobs
 are not cancelled or modified. Preparation errors block dependent training.
 
-Job IDs and measured manifest coverage will be appended after submission.
+## Submitted 2026-10-31 00:00 CST
+
+Code commit7e9f59f is pushed to plc/master. Immutable remote snapshot:
+`/hpc2hdd/home/shuang886/PLC/experiments/chain_chem_union_20261030/code_v1`.
+Archive SHA256:
+`8f36687e196d647f335f0ef2584f4fa6c9ace33b3635202cd3a60805615178b2`.
+Historical preparation-cache symlinks were excluded when unpacking; all
+src/scripts/tests regular source files remain in the fixed snapshot.
+
+| Job | Work | Initial State |
+| --- | --- | --- |
+| 13423574 | Joint union labels, strict-membership audit, CPU loader QC | Pending/Priority |
+| 13423575 | Frozen G0 TRAIN/VAL gap and full/chain comparison | Pending/Priority |
+| 13423576 | Custom HOLO4K chain/chemistry-union CPU preflight | Pending/Priority |
+| 13423577_0 | union_base, GPU smoke then scratch training | Pending/afterok:13423574 |
+| 13423577_1 | union_wd010, GPU smoke then scratch training | Pending/afterok:13423574 |
+| 13423577_2 | union_drop020, GPU smoke then scratch training | Pending/afterok:13423574 |
+
+The dependency was verified with scontrol: each array task requests exactly
+one GPU and8 CPUs, not three GPUs per task. All use -u partitions. Existing
+LocalScan and sequence-context runs remain untouched.
+
+Validation:39 local tests passed (union chemistry/axes/distances, production
+dataset view, source-proportional TRAIN sampling, fixed-threshold MCC, and
+existing contact-label/chain/checkpoint regressions). Shell syntax and Python
+compilation checks passed. Remote af3 imports, eight real BioLiP parent rows,
+canonical chemistry, label/geometry alignment and three config generators
+passed CPU smoke. Full-cohort QC/GPU smoke have NOT yet run at this snapshot.
+
+Frozen G0 was verified as epoch52 (stored epoch51), VAL gate
+0.5325314998626709. Its inference diagnostic imports the original training
+snapshot, since the current repository has subsequently added front-encoder
+alternatives. Final manifest coverage and new-task performance are pending;
+submission is not evidence of a successful training run.
