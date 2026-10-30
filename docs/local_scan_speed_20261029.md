@@ -104,3 +104,51 @@ entrypoint import/argument dry run passed.
 - Archive SHA256: `0d216501127823b027932d24683feae00b3c72af89d58d853131be70bc815bc7`
 - Outputs: `speed_profile.json`, `logs/profile_13402625.out`, `logs/profile_13402625.err`.
 - Original LocalScan and queued sequence-context task snapshots were not changed.
+
+## 2026-10-30 Result: GPU Gate Failed Before Timing
+
+Checked at about21:58 CST. Job13402625 ran09:35:33-09:38:17 and exited
+FAILED(1:0), not OUT_OF_MEMORY. The failure is in the S0 ten-step
+legacy-versus-batched statistics replay, at the full weight comparison:
+
+```text
+rtol=1e-5, atol=1e-6
+mismatched elements in the reported tensor: 42351 / 163840 (25.8%)
+maximum absolute difference: 0.0003909748047590256
+```
+
+`speed_profile.json` contains `passed:false`, empty `parity`, `runs`,
+`cap_stress` and `summary`. Therefore there is NO valid throughput, speedup,
+or stress-test VRAM result. The6.5s/6.3s printed ten-step replay durations
+are not benchmark measurements. Earlier parity subchecks did not persist
+their individual results before this exception; do not claim a complete GPU pass.
+
+GPU aggregation nondeterminism is a hypothesis, not a confirmed cause.
+The GVP path uses `torch_geometric.utils.scatter(..., reduce="mean")`;
+independent stochastic optimizer trajectories are not sufficient to isolate
+whether read-only diagnostics caused the difference. In particular, CPU
+bitwise tests do not establish GPU trajectory equality. No tolerance has
+been relaxed and no optimization has been enabled in existing training runs.
+
+### Independent Diagnostic
+
+Added `scripts/diagnostics/audit_local_scan_parity.py` and
+`scripts/slurm/run_local_scan_parity_audit.slurm`. This uses one GPU,8 CPUs,
+30min maximum on `i64m1tga800u`, with the same original TRAIN batch:
+
+1. Four ten-update replays: legacy A, legacy B, batched A, legacy C. Require
+   bitwise identical initial states and identical initial RNG states. Record
+   every pairwise final-weight difference using the ORIGINAL tolerances.
+2. On one shared set of finite tensors/gradients, compare metric dictionaries
+   and gradient statistics and check that weights, gradients, inputs and RNG
+   are not mutated. This separates helper equivalence from replay variance.
+3. Persist intermediate results. Neither legacy self-variance nor a completed
+   diagnostic automatically approves the speed optimization.
+
+Local verification:61 related CPU tests passed, including a negative test
+that deliberately mutates a gradient and must be rejected. Python compilation
+and Slurm shell syntax pass. No TEST/VAL forward or checkpoint is involved.
+
+At22:12 CST, follow-up GPU submission is NOT complete: repeated SSH attempts
+were reset by the remote host after the successful status/log collection.
+No follow-up job ID is claimed. The original speed matrix remains gated.
