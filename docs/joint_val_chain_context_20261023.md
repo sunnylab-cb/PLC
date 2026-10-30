@@ -70,6 +70,32 @@ environment has no pytest, while the71-test local BIO suite passed.
 | Paired full/chain inference | 13281236 | i64m1tga800ue, one GPU | Pending/afterok:13281235 |
 | Source/chain-stratified summary | 13281237 | i64m512ue | Pending/afterok:13281236 |
 
-No validation scores are available at submission. A failed dependency blocks
-and cancels its downstream job; do not silently drop samples or retune the
-protocol if either input or inference validation fails.
+## Recovered Results (2026-10-30)
+
+All three stages completed. The summary was recovered from
+`results/summary.json`; SHA256
+`8bdac6dde5df7abdba14232efedde9d2f9e8e6443ea52bc4bf4225b3c8bde962`.
+Protocol SHA256:
+`0478c2056eb745c072d508e51cf988e762241d598e30863345b8c81c91e66476`.
+The GPU pass processed17,395 original pairs and19,165 chains in1,636.90s;
+peak allocated/reserved memory1.260/2.525GiB. This is the OLD full-width joint
+epoch25 checkpoint, not the newer width256 G0 epoch52 checkpoint.
+
+| Strict VAL stratum | Pairs | Full Top20 F1 | Chain Top20 F1 | Full MCC | Chain MCC | Full gate F1 | Chain gate F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| All | 17395 | .550023 | .538660 | .536137 | .524268 | .566515 | .556240 |
+| PDBbind | 1697 | .602390 | .486098 | .587711 | .466215 | .617072 | .511768 |
+| BioLiP | 15698 | .544362 | .544342 | .530562 | .530544 | .561049 | .561048 |
+| Multichain | 950 | .555496 | .347695 | .548136 | .331018 | .572993 | .384767 |
+| Multiple contact chains | 356 | .484277 | .323728 | .473041 | .304234 | .503939 | .358217 |
+
+F1/MCC in this table are sample means; MCC columns use the Top20 rule, NOT a
+fixed probability threshold. Full versus chain pooled AUPRC is .625319/.572673
+overall, .667141/.394072 for PDBbind and .619736/.619735 for BioLiP.
+
+Conclusion: independently inferring chains is not a universal improvement on
+the original per-copy task. The already-chain BioLiP numerical control is
+unchanged; multichain PDBbind loses substantial signal. Do not impose universal
+full/chain consistency on interface-containing cases. The subsequently approved
+chain/exact-chemical union protocol is a NEW task/label definition, not evidence
+that the old model becomes universally better when chain context is removed.
