@@ -55,13 +55,13 @@ pass or selection is performed.
 Experiment root on HPC2:
 `/hpc2hdd/home/shuang886/PLC/experiments/chainwise_esm_fullcomplex_20261101`.
 
-| Stage | Resources | Depends On | Purpose |
-|---|---|---|---|
-| Inventory | i64m512u,16 CPU | None | Validate frozen inputs; deduplicate chains; prepare unchanged G0 config |
-| ESM extraction/reassembly | i64m1tga800u,1 GPU,8 CPU | Inventory | Chainwise ESM2 and complete-complex reconstruction |
-| Frozen VAL cache swap | i64m1tga800u,1 GPU,8 CPU | Extraction | Two complete-complex forwards differing only in ESM features |
-| Scratch G0 | i64m1tga800u,1 GPU,8 CPU | Extraction | 100-step smoke, then unchanged G0 scratch recipe |
-| Background audit | i64m512u,32 CPU | Inventory | Structural-background analysis of existing full-complex predictions |
+| Stage | Job | Resources | Depends On | Purpose |
+|---|---|---|---|---|
+| Inventory | 13445710 | i64m512u,16 CPU | None | Validate frozen inputs; deduplicate chains; prepare unchanged G0 config |
+| ESM extraction/reassembly | 13445711 | i64m1tga800u,1 GPU,8 CPU | Inventory | Chainwise ESM2 and complete-complex reconstruction |
+| Frozen VAL cache swap | 13445712 | i64m1tga800u,1 GPU,8 CPU | Extraction | Two complete-complex forwards differing only in ESM features |
+| Scratch G0 | 13445713 | i64m1tga800u,1 GPU,8 CPU | Extraction | 100-step smoke, then unchanged G0 scratch recipe |
+| Background audit | 13445714 | i64m512u,32 CPU | Inventory | Structural-background analysis of existing full-complex predictions |
 
 The frozen swap is a distribution-shift diagnostic, not evidence of retrained
 performance. Scratch does not depend on the direction of that diagnostic's F1.
@@ -95,4 +95,13 @@ The inspected task0 failed during DataLoader worker creation with
 `OSError: [Errno12] Cannot allocate memory`. No restart was requested or performed.
 Other already running LocalScan/sequence-context jobs are left untouched.
 
-New job IDs will be recorded after submission and queue verification.
+Submitted on 2026-11-01 from immutable commit `1d76d97`. Initial queue check:
+inventory pending Priority; all four descendants pending Dependency. No new
+GPU result is available yet. All descendants use `afterok` and fail closed if
+their dependency fails; unrelated jobs are not cancelled.
+
+Deployment archive SHA256:
+`6218ccb59c5b0508af4081cba719becee6014f3d3f183f5972b24e2f7a62640b`.
+Remote `deployment.json` and `jobs.json` retain deployment and submission
+provenance. The remote shell prints a startup warning that breaks rsync/SFTP;
+the same archive was transferred through SSH stdin and verified before unpacking.
