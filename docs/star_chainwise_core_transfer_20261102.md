@@ -57,5 +57,20 @@ placement first.
 
 ## Submission
 
-Transfer job IDs and progress will be recorded after submission. Original
-HPC extraction/VAL/training jobs remain13468090/13468091/13468092.
+Submitted on2026-11-02, using immutable transfer code commit`278a67a`:
+
+| Stage | Job | Partition | Last observed status |
+| --- | --- | --- | --- |
+| Base inventory and available cached inputs |13477555|i64m512u|RUNNING oncpu1-54; protein inventory173,948 verified |
+| Final ESM fill and checksum/coverage verification |13477556|i64m512u|PENDING, afterok:13477555:13468090 |
+
+Both jobs request one CPU node,2CPUs and16GiB, no GPU. The initial status above
+is not a transfer-complete or training-ready claim. ESM extraction13468090
+is still PENDING(Priority); original HPC frozenVAL/scratch training jobs
+13468091/13468092 remain PENDING(Dependency), unchanged.
+
+HPC transfer ledger, plans, phase status and logs:
+`/hpc2hdd/home/shuang886/PLC/experiments/chainwise_core_star_export_20261102`.
+The deployed archive SHA256 is
+`a0026f8853621662c61c84f3b256b5e5f31d016739c9b96bc761d57001afd1fe`.
+Core-bundle and existing chain/context tests:44passed. GPU smoke has NOT run.
