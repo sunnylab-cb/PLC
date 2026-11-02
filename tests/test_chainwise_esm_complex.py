@@ -1,6 +1,8 @@
 from argparse import Namespace
 import csv
 import json
+import pickle
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -11,6 +13,7 @@ import yaml
 from preparation.protein.esm2_chainwise_complex import (
     RECIPE, VARIANT, chain_parts, residue_keys, seq_hash, stitch_embeddings,
     validate_cache, window_starts, prepare, finalize, verify,
+    load_local_esm2,
 )
 from scripts.diagnostics.audit_chain_background import atom_element, geometry_background, bucket_metrics
 from scripts.diagnostics.recompute_joint_topk_reference import sha, write_json
@@ -79,6 +82,47 @@ def test_cache_recipe_and_weights_required():
         wrong = dict(d, **{key: bad})
         with pytest.raises(ValueError):
             validate_cache(wrong, "A", {"weights_sha256": "abc"})
+
+
+def test_esm2_namespace_is_scoped_not_unrestricted_loading(tmp_path, monkeypatch):
+    weights = tmp_path / "esm2.pt"
+    torch.save(dict(cfg=Namespace(layers=33), weight=torch.ones(2)), weights)
+    original_safe = set(torch.serialization.get_safe_globals())
+    def loader(path):
+        return torch.load(path, weights_only=True), "alphabet"
+    monkeypatch.setitem(sys.modules, "esm", SimpleNamespace(
+        pretrained=SimpleNamespace(load_model_and_alphabet_local=loader)))
+    value, alphabet = load_local_esm2(weights)
+    assert value["cfg"].layers == 33 and alphabet == "alphabet"
+    assert set(torch.serialization.get_safe_globals()) == original_safe
+    # Unrelated custom classes remain rejected, even inside the helper.
+    torch.save(dict(cfg=SimpleNamespace(layers=33)), weights)
+    with pytest.raises(pickle.UnpicklingError):
+        load_local_esm2(weights)
+    assert set(torch.serialization.get_safe_globals()) == original_safe
+
+
+def test_retry_preserves_frozen_code_and_argv(tmp_path, monkeypatch):
+    from scripts.diagnostics import retry_chainwise_esm_extract as compat
+    script = tmp_path / "code_v1/preparation/protein/esm2_chainwise_complex.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# frozen test fixture\n")
+    (tmp_path / "prepared").mkdir()
+    write_json(tmp_path / "prepared/manifest.json", {"extraction_script_sha256": sha(script)})
+    original_argv = sys.argv
+    original_safe = set(torch.serialization.get_safe_globals())
+    seen = []
+    def run(path, run_name):
+        seen.append((path, run_name, list(sys.argv)))
+        assert Namespace in torch.serialization.get_safe_globals()
+    monkeypatch.setattr(compat.runpy, "run_path", run)
+    compat.retry(tmp_path)
+    assert seen == [(str(script), "__main__", [str(script), "extract", "--experiment", str(tmp_path)])]
+    assert sys.argv is original_argv
+    assert set(torch.serialization.get_safe_globals()) == original_safe
+    script.write_text("# changed fixture\n")
+    with pytest.raises(ValueError, match="Frozen extractor changed"):
+        compat.retry(tmp_path)
 
 
 def atom_record(chains=("A", "B")):

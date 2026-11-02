@@ -105,3 +105,56 @@ Deployment archive SHA256:
 Remote `deployment.json` and `jobs.json` retain deployment and submission
 provenance. The remote shell prints a startup warning that breaks rsync/SFTP;
 the same archive was transferred through SSH stdin and verified before unpacking.
+
+## 2026-11-02 Status And Recovery
+
+| Original job | Outcome | Wall Time | Interpretation |
+|---|---|---|---|
+| 13445710 inventory | COMPLETED | 6m39s | 19,018 PDBbind caches inspected |
+| 13445711 extraction | FAILED | 24s | PyTorch2.9.1 weights-only loader rejected `argparse.Namespace`; not OOM |
+| 13445712 frozen VAL | CANCELLED | Not started | Failed `afterok` dependency |
+| 13445713 scratch | CANCELLED | Not started | Failed `afterok` dependency |
+| 13445714 CPU background | COMPLETED | 2m17s | 1,050/1,050 queries, zero failures |
+
+Inventory found10,090 multichain complexes: TRAIN8,219 / VAL950 / TEST921.
+They reduce to6,178 unique chain sequences and1,766,776 residues;41 chains
+exceed1022 residues. No new VAL or training score is available yet.
+
+The weight-file inspection reports only `argparse.Namespace` as an unsupported
+global; the contact-regression file reports none. The fix allowlists only that
+known configuration class in a scoped context, without unrestricted pickle
+loading. The original snapshot/manifest remain untouched: the versioned retry
+launcher runs the hash-checked original extractor under that context, then the
+original finalizer. Only extraction and its two GPU descendants need resubmission.
+No change to checkpoint weights, feature recipe, G0 architecture, labels or split.
+Local regression including compatibility and provenance checks:39 passed.
+
+## Completed Background Audit
+
+Raw source-hashed summary, protocol and per-query records:
+`docs/results/chainwise_esm_background_20261102.json`.
+
+Population: all950 multichain PDBbind VAL queries, plus50 single-chain PDBbind
+and50 single-chain BioLiP controls. The table below excludes controls and uses
+the original G0 **full-complex predictions**, with residue-pooled metrics at0.5.
+These are not the new model's performance and not sample-macro F1.
+
+| Multichain residue subset | Residues | Positive labels | FPR | FNR | F1 | MCC |
+|---|---:|---:|---:|---:|---:|---:|
+| Nearest other-chain heavy atom >6A | 647,374 | 14,050 | 0.9567% | 35.2811% | 0.6228 | 0.6145 |
+| Nearest other-chain heavy atom <=6A | 162,753 | 4,861 | 1.7879% | 41.2055% | 0.5422 | 0.5287 |
+| Isolated-minus-complex SASA <=10A^2 | 697,462 | 15,548 | 1.0038% | 35.8889% | 0.6161 | 0.6074 |
+| Isolated-minus-complex SASA >10A^2 | 112,665 | 3,363 | 1.8636% | 41.0348% | 0.5372 | 0.5239 |
+
+In these multichain queries,25.70% of positive-label residue observations are
+within6A of another chain;17.78% lose over10A^2 of SASA when the other chains
+are included. All100 single-chain controls have zero SASA difference.
+
+This supports treating cross-chain surroundings as relevant context, not
+automatically negative background: such regions contain genuine contact labels
+and are harder for the existing model. It does NOT establish that chainwise ESM
+will improve F1, nor that removing chains causally explains the error gap.
+Other-chain proximity is not equivalent to inaccessibility; an interface region
+can still form part of a binding pocket. Keep full-complex model input and wait
+for the controlled ESM swap and scratch comparison rather than hard-masking
+occluded/interface residues.

@@ -238,9 +238,16 @@ def atomic_save(data, path):
     tmp.replace(path)
 
 
+def load_local_esm2(weight):
+    import esm
+    # The trusted ESM2 checkpoint contains its configuration as a Namespace.
+    # Keep weights-only loading enabled; do not allow arbitrary pickle globals.
+    with torch.serialization.safe_globals([argparse.Namespace]):
+        return esm.pretrained.load_model_and_alphabet_local(str(weight))
+
+
 @torch.inference_mode()
 def extract(args):
-    import esm
     root = args.experiment
     manifest = load_manifest(root)
     if not torch.cuda.is_available():
@@ -250,7 +257,7 @@ def extract(args):
     weight = Path(manifest["weights"])
     if sha(weight) != manifest["weights_sha256"]:
         raise ValueError("Changed ESM2 weights")
-    model, alphabet = esm.pretrained.load_model_and_alphabet_local(str(weight))
+    model, alphabet = load_local_esm2(weight)
     model = model.float().eval().to("cuda")
     converter = alphabet.get_batch_converter()
 
