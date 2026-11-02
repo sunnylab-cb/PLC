@@ -129,6 +129,19 @@ original finalizer. Only extraction and its two GPU descendants need resubmissio
 No change to checkpoint weights, feature recipe, G0 architecture, labels or split.
 Local regression including compatibility and provenance checks:39 passed.
 
+Recovery submitted2026-11-02 from commit `b5088fc`:
+
+| Stage | New Job | Initial Status |
+|---|---|---|
+| Compatible ESM2 extraction + original finalizer | 13468090 | PENDING Priority |
+| Original full-complex frozen VAL comparison | 13468091 | PENDING afterok:13468090 |
+| Original full-complex G0 scratch | 13468092 | PENDING afterok:13468090 |
+
+All three use `i64m1tga800u`, one GPU and eight CPUs each. The compatibility
+runner is versioned under `compat_b5088fc`; the original `code_v1` is untouched.
+Remote `jobs_retry_namespace_20261102.json` records the exact submission commands.
+Actual GPU extraction success remains to be verified after the retry starts.
+
 ## Completed Background Audit
 
 Raw source-hashed summary, protocol and per-query records:
