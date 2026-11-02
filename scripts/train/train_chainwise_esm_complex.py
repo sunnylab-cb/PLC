@@ -20,9 +20,11 @@ def load_smoke():
     return smoke
 
 
-def install(experiment):
-    manifest = json.loads((experiment / "prepared/manifest.json").read_text())
-    old = Path(manifest["training"]) / "code_v1"
+def install(experiment, training_code=None):
+    if training_code is None:
+        manifest = json.loads((experiment / "prepared/manifest.json").read_text())
+        training_code = Path(manifest["training"]) / "code_v1"
+    old = Path(training_code)
     sys.path[:0] = [str(old), str(old / "scripts/train"), str(old / "scripts/diagnostics")]
     import train_local_spatial_scan as trainer
     original = trainer.source_metrics
