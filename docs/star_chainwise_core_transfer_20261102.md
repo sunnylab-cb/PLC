@@ -73,4 +73,34 @@ HPC transfer ledger, plans, phase status and logs:
 `/hpc2hdd/home/shuang886/PLC/experiments/chainwise_core_star_export_20261102`.
 The deployed archive SHA256 is
 `a0026f8853621662c61c84f3b256b5e5f31d016739c9b96bc761d57001afd1fe`.
-Core-bundle and existing chain/context tests:44passed. GPU smoke has NOT run.
+Core-bundle and existing chain/context tests:44passed.
+
+## Completion and Star GPU Launch (2026-11-03)
+
+- Base13477555 completed2026-11-02 19:55:52; final13477556 completed
+  2026-11-03 02:09:07, both exit0. Star receipt has checksum_verified=true,
+  and provenance has complete=true for173,948 samples. No weights transferred.
+- Future transfers must NOT use CPU/Slurm jobs; use direct rsync/scp with
+  logged background execution, as recorded in AGENTS.md. The two old transfer
+  jobs were allowed to finish, not replaced.
+- Star now enforces GPU access through Slurm. The manual GPU-index launcher
+  above is not the current launch path; use
+  `scripts/slurm/run_chainwise_core_star.slurm`, preserving Slurm device mapping.
+- User authorized critical smoke followed by core training. Smoke2839 uses
+  account labcritical, QoS critical, one GPU,8CPUs,64GiB,1hour. CUDA initialization
+  succeeded on an otherwise idle A100-SXM4-80GB; smoke result still pending at
+  this record's creation.
+- Train2840 uses account lab, QoS background, one GPU,8CPUs,64GiB,72hours,
+  afterok:2839 and kill-on-invalid-dep. No automatic requeue or resume; this is
+  an independent seed44 scratch run with the original full-complex G0 recipe.
+  HPC's existing training is not cancelled. Treat this as same-seed cross-host
+  replication, not another independent seed for statistics.
+- Smoke checks100 TRAIN steps, gradients via CheckedAdamW, cap1800 stress,
+  finite VAL F1/AUPRC/MCC and strict state-dict reload. TEST is not forwarded.
+  Smoke parameters are discarded before the independent training process.
+- Logs are `logs/star_smoke_2839.{out,err}` and
+  `logs/star_train_2840.{out,err}` under the Star bundle root. The launch script
+  is deployed outside the hash-frozen code trees, under `launch/`.
+- A72hour time limit is not a convergence guarantee. If training reaches this
+  limit or is preempted, inspect saved results before deciding how to continue;
+  no automatic scratch restart is enabled.
