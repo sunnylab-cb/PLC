@@ -16,19 +16,19 @@
 #SBATCH --no-requeue
 set -euo pipefail
 BUNDLE="${BUNDLE:-/data1/PLC/experiments/chainwise_esm_core_20261102}"
-PYTHON=/home/husrcf/anaconda3/envs/gpsite_full/bin/python
+PYTHON="${BUNDLE}/runtime/torch291/bin/python"
 : "${PHASE:?Set PHASE=smoke or train}"
 [[ "${PHASE}" == smoke || "${PHASE}" == train ]] || exit 2
 exec 9>/data1/PLC/core_training.lock
 flock -n 9 || { printf 'Another core training task holds the lock.\n'; exit 2; }
 # Keep Slurm's device mapping; never override CUDA_VISIBLE_DEVICES here.
-export PYTHONPATH="${BUNDLE}/code_v1:${BUNDLE}/deps:${PYTHONPATH:-}"
+export PYTHONPATH="${BUNDLE}/code_v1:${BUNDLE}/deps"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 printf 'STAR_CORE phase=%s job=%s devices=%s\n' "${PHASE}" "${SLURM_JOB_ID}" "${CUDA_VISIBLE_DEVICES:-unset}"
 nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv
-"${PYTHON}" -c 'import torch; assert torch.cuda.is_available(), "CUDA unavailable inside allocation"; assert torch.cuda.device_count() == 1, "Exactly one visible GPU required"; print("CUDA", torch.__version__, torch.cuda.get_device_name(0))'
+"${PYTHON}" -c 'import torch, triton; assert torch.__version__ == "2.9.1+cu126" and triton.__version__ == "3.5.1", "Unexpected runtime"; assert torch.cuda.is_available(), "CUDA unavailable inside allocation"; assert torch.cuda.device_count() == 1, "Exactly one visible GPU required"; print("CUDA", torch.__version__, torch.cuda.get_device_name(0), "Triton", triton.__version__, triton.__file__)'
 if [[ "${PHASE}" == smoke ]]; then
     "${PYTHON}" -u "${BUNDLE}/code_v1/scripts/train/train_chainwise_core.py" --bundle "${BUNDLE}" --smoke --steps 100
 else

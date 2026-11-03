@@ -104,3 +104,56 @@ Core-bundle and existing chain/context tests:44passed.
 - A72hour time limit is not a convergence guarantee. If training reaches this
   limit or is preempted, inspect saved results before deciding how to continue;
   no automatic scratch restart is enabled.
+
+### Runtime Retry
+
+Smoke2839 failed in FLA0.4.1 `prepare_wy_repr_bwd_kernel` with Triton3.2.0:
+`arith.mulf op requires the same encoding for all operands and results`, then
+`PassManager::run failed`. This was a compiler failure, not OOM; train2840 was
+automatically cancelled without running. HPC uses torch2.9.1/Triton3.5.1.
+
+Installed Triton3.5.0 with `pip --no-deps --target` into bundle
+`runtime/triton350`, without changing shared gpsite_full or frozen model/deps.
+The launcher prepends this isolated runtime and checks/prints its version.
+Torch remains2.6.0+cu124; this is not an exact HPC environment clone and must
+pass the full GPU smoke before use. Retry smoke2841 uses critical and one GPU.
+Upstream FLA's current CUDA requirements also call for newer Triton:
+https://github.com/fla-org/flash-linear-attention/blob/main/pyproject.toml
+That moving upstream requirement is context, not proof of this pinned runtime's
+compatibility; the actual smoke result is decisive.
+
+Retry2841 also failed before completing a step: torch2.6's Inductor import
+expects `AttrsDescriptor`, removed in Triton3.5. The overlay is therefore NOT a
+working runtime and is no longer on the launcher PYTHONPATH. No train retry was
+submitted for this failed smoke.
+
+Preparing `runtime/torch291` as a separate venv with shared non-torch Python
+packages and its own official torch2.9.1+cu126/Triton3.5.1 pair. The launcher
+checks exact versions and removes inherited PYTHONPATH to prevent the failed
+overlay leaking in. The frozen model/data/source verification remains unchanged.
+
+Installed matched runtime successfully: torch2.9.1+cu126, Triton3.5.1,
+pyg_lib0.6.0+pt29cu126, torch_scatter2.1.2+pt29cu126,
+torch_cluster1.6.3+pt29cu126; torch-geometric2.8.0 remains inherited.
+torchvision0.24.1+cu126 and torchaudio2.9.1+cu126 were also installed in the
+venv to remove inherited torch2.6 pins. Core CPU imports pass; smoke2842
+successfully initializes CUDA on the A100. No public environment was changed.
+`pip check` now only reports inherited hatch-cython build-tool dependencies
+(cython/hatch/hatchling), not training-runtime conflicts; these are not used by
+the already-built wheel training path and were left untouched.
+
+### Passed Smoke and Training
+
+- Smoke2842 COMPLETED, exit0, elapsed6m24s. Report:
+  `smoke/G0_chainwise_esm_complex.json` in the Star bundle, passed=true.
+- All100 TRAIN updates passed; ordinary batch shape16x420, profile141.66s
+  including first-use overhead, peak allocated3.85GiB. Cached-batch throughput
+  is11.29pairs/s and is NOT a full-epoch throughput or ETA.
+- Cap1800 stress batch passed, peak allocated31.57GiB. VAL finite F1/AUPRC/MCC
+  checks and strict CPU state-dict reload passed; TEST not used.
+- Formal scratch training2843 submitted with afterok:2842, background QoS,
+  account lab, one A100 GPU,8CPUs,64GiB,72hour limit, no requeue/resume.
+  Log paths: `logs/star_train_2843.out` and `logs/star_train_2843.err`.
+- Successful runtime is the isolated torch291 venv, NOT gpsite_full directly
+  or the failed triton350 overlay. Smoke weights are discarded; model code,
+  data, normalization, split and seed44 training recipe remain unchanged.
