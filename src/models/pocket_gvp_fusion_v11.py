@@ -679,6 +679,8 @@ class PocketGVPFusionV11(nn.Module):
         'use_chain_rope': None,
         'use_chain_edge': None,
         'chain_gap_size': 1000,
+        'gvp_chain_boundary_fix': False,
+        'coattn_chain_position_fix': False,
         # V10m8: Distance regression auxiliary head
         'use_dist_aux': False,
         # V11: Ligand internal self-attention (0 = disabled, backward compat)
@@ -1154,6 +1156,7 @@ class PocketGVPFusionV11(nn.Module):
                     k=c['gvp_k_neighbors'], radius=c['gvp_radius'],
                     num_rbf=gvp_rbf_bins, rbf_dmax=gvp_rbf_dmax,
                     chain_ids=chain_b if self._use_chain_edge else None,
+                    respect_chain_boundaries=c.get('gvp_chain_boundary_fix', False),
                 )
                 edge_index_list.append(ei_b + node_offset)
                 edge_s_list.append(es_b)
@@ -1354,7 +1357,23 @@ class PocketGVPFusionV11(nn.Module):
                 blocks=lig_attn_res_blocks, partial=h_lig_fused
             )
 
-            if self.config['use_gradient_checkpointing'] and self.training:
+            if c.get('coattn_chain_position_fix', False):
+                if position_ids is None or not hasattr(cross_attn_layer, 'forward_pair'):
+                    raise ValueError("Co-attention chain position fix requires chain RoPE and forward_pair")
+                if self.config['use_gradient_checkpointing'] and self.training:
+                    h_prot_updated, h_lig_updated = checkpoint(
+                        cross_attn_layer.forward_pair,
+                        h_prot_fused, h_lig_fused,
+                        protein_mask, ligand_mask_with_global,
+                        position_ids=position_ids, use_reentrant=False,
+                    )
+                else:
+                    h_prot_updated, h_lig_updated = cross_attn_layer.forward_pair(
+                        h_prot_fused, h_lig_fused,
+                        protein_mask, ligand_mask_with_global,
+                        position_ids=position_ids,
+                    )
+            elif self.config['use_gradient_checkpointing'] and self.training:
                 if hasattr(cross_attn_layer, 'forward_pair'):
                     # Co-attention produces both streams together. Replaying
                     # its cache-consuming half separately is not safe.

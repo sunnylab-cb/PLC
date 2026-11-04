@@ -328,6 +328,7 @@ def build_protein_graph(
     num_rbf: int = 16,
     rbf_dmax: float = 20.0,
     chain_ids: Optional[torch.Tensor] = None,   # [N] integer chain indices
+    respect_chain_boundaries: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Build protein residue graph with chemically-informed edge features.
@@ -360,6 +361,8 @@ def build_protein_graph(
         num_rbf:    number of RBF bins
         rbf_dmax:   max distance for RBF range (Å)
         chain_ids:  [N] integer chain indices (optional)
+        respect_chain_boundaries: restrict backbone/sequence features to a chain;
+            retains spatial cross-chain edges. False preserves historical models.
 
     Returns:
         edge_index: [2, E]
@@ -369,6 +372,9 @@ def build_protein_graph(
     N      = coords_ca.size(0)
     device = coords_ca.device
     dtype  = coords_ca.dtype
+
+    if respect_chain_boundaries and (chain_ids is None or chain_ids.shape != (N,)):
+        raise ValueError("Chain-aware backbone edges require chain_ids [N]")
 
     edge_s_dim = num_rbf + 4 + (1 if chain_ids is not None else 0)
 
@@ -397,6 +403,8 @@ def build_protein_graph(
         bb_src = torch.cat([seq[:-1], seq[1:]])   # forward + backward
         bb_dst = torch.cat([seq[1:],  seq[:-1]])
         bb_ei  = torch.stack([bb_src, bb_dst], dim=0)
+        if respect_chain_boundaries:
+            bb_ei = bb_ei[:, chain_ids[bb_src] == chain_ids[bb_dst]]
     else:
         bb_ei = torch.zeros((2, 0), dtype=torch.long, device=device)
 
@@ -411,7 +419,10 @@ def build_protein_graph(
     edge_vec_raw = coords_ca[dst] - coords_ca[src]         # [E, 3]
     dist_raw     = torch.norm(edge_vec_raw, dim=-1)        # [E]
     seq_offset   = (dst - src).abs()                       # [E]
-    keep         = (dist_raw <= radius) | (seq_offset == 1)
+    backbone = seq_offset == 1
+    if respect_chain_boundaries:
+        backbone = backbone & (chain_ids[src] == chain_ids[dst])
+    keep         = (dist_raw <= radius) | backbone
     src, dst     = src[keep], dst[keep]
     edge_vec_raw = edge_vec_raw[keep]
     dist_raw     = dist_raw[keep]
@@ -423,6 +434,13 @@ def build_protein_graph(
     is_short     = ((seq_offset >= 2) & (seq_offset <= 5)).float().unsqueeze(-1)
     is_medium    = ((seq_offset >= 6) & (seq_offset <= 12)).float().unsqueeze(-1)
     is_long      = (seq_offset > 12).float().unsqueeze(-1)
+    if respect_chain_boundaries:
+        # Array offsets across chains have no sequence-distance meaning.
+        same_sequence = (chain_ids[src] == chain_ids[dst]).float().unsqueeze(-1)
+        is_backbone = is_backbone * same_sequence
+        is_short = is_short * same_sequence
+        is_medium = is_medium * same_sequence
+        is_long = is_long * same_sequence
     edge_s_parts = [rbf, is_backbone, is_short, is_medium, is_long]
 
     # is_same_chain: 1.0 if src and dst belong to the same chain, else 0.0

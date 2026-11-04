@@ -186,6 +186,7 @@ class _V12CoAttentionAsV11CrossBlock(nn.Module):
         h_lig: torch.Tensor,
         prot_mask: Optional[torch.Tensor] = None,
         lig_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ):
         """Stateless joint update for activation-checkpoint replay."""
         h_prot, h_lig = self.block(
@@ -196,7 +197,7 @@ class _V12CoAttentionAsV11CrossBlock(nn.Module):
             lig_mask=lig_mask,
             prot_coords=None,
             lig_coords=None,
-            position_ids=None,
+            position_ids=position_ids,
         )
         if lig_mask is not None:
             h_lig = h_lig.masked_fill(~lig_mask.unsqueeze(-1), 0.0)
@@ -208,6 +209,7 @@ class _V12CoAttentionAsV11CrossBlock(nn.Module):
         kv: torch.Tensor,
         q_mask: Optional[torch.Tensor] = None,
         kv_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         self._pending_lig = None
         h_prot, h_lig = self.block(
@@ -218,7 +220,7 @@ class _V12CoAttentionAsV11CrossBlock(nn.Module):
             lig_mask=kv_mask,
             prot_coords=None,
             lig_coords=None,
-            position_ids=None,
+            position_ids=position_ids,
         )
         self._pending_lig = h_lig
         return h_prot
