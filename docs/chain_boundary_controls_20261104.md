@@ -1,5 +1,9 @@
 # G0 chain-boundary controls, 2026-11-04
 
+Execution-policy update, 2026-11-06: the three already-running controls may
+finish, but no new/restarted HPC jobs are permitted. All future compute moves
+to Star. See [acceptance and cutover](hpc_acceptance_star_cutover_20261106.md).
+
 ## Purpose and locked protocol
 
 The user approved repairing two chain-boundary defects and retraining controls
