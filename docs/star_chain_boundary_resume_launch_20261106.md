@@ -1,5 +1,16 @@
 # Star chain-boundary continuation launch, 2026-11-06
 
+## Final status: project paused before execution
+
+The user subsequently requested cancelling this batch and pausing PLC.
+Star jobs2862 and2863_[0-2] were explicitly cancelled; Slurm confirmed
+`CANCELLED by 1001` with elapsed00:00:00 for both the smoke and the array.
+Neither GPU smoke nor continuation ran. The dependency chain is no longer
+pending. Other project jobs were not cancelled, and no files were deleted.
+All checkpoints/data/configs/logs remain available for an explicitly authorized
+future resumption. Do not automatically resubmit these jobs. The launch details
+below are historical, not an active queue report.
+
 ## Scope and checkpoint selection
 
 The user authorized starting continuation on Star after explicitly cancelling

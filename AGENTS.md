@@ -1,5 +1,14 @@
 # Project Instructions
 
+## Project Status
+
+- User paused PLC on 2026-11-06. Do not submit, resume, restart, or expand
+  PLC experiments until the user explicitly resumes the project.
+- Star smoke `2862` and continuation array `2863_[0-2]` were cancelled before
+  starting (Slurm elapsed time zero). Their dependency chain is cancelled too.
+- Preserve all checkpoints, data, configurations, source snapshots and logs.
+  The earlier Star baseline and all three HPC controls remain stopped.
+
 ## Compute Location
 
 - User rule (2026-11-06): all future experiments must run on Star, not HPC/hpc2.
