@@ -1,0 +1,114 @@
+{
+  "torch": "2.9.1+cu126",
+  "model_code": "/data1/PLC/archive/hpc_acceptance_20261106/experiments/chain_boundary_controls_20261104/model_code",
+  "cpu_preflight_only": true,
+  "gpu_forward_tested": false,
+  "jobs_submitted": false,
+  "hpc_jobs_cancelled": false,
+  "checkpoints": [
+    {
+      "variant": "both",
+      "checkpoint": "/data1/PLC/archive/hpc_resume_preflight_20261106/experiments/chain_boundary_controls_20261104/outputs/both/G0_chainesm_both_seed44_chainfix_20261105_084731/best_f1_c0_model.pt",
+      "sha256": "0c57acd56e49522f646cdfa34580f0c32242e8882c67935e93d683a6a5f4b48a",
+      "completed_epoch": 15,
+      "resume_epoch": 16,
+      "best_f1_c0": 0.5869513103016286,
+      "model_strict_load_pass": true,
+      "optimizer_load_and_shape_pass": true,
+      "scheduler_load_and_lr_match_pass": true,
+      "lr": [
+        9.816440572371606e-05,
+        9.816440572371606e-05
+      ],
+      "early_stopping": {
+        "metric": "f1_c0",
+        "best": 0.5869513103016286,
+        "bad_epochs": 0
+      },
+      "scaler_state_present": true,
+      "rng_state_present": false,
+      "parameter_count": 23650742,
+      "training_recipe_matches_star": true,
+      "model_config_diff_vs_star_base": {
+        "coattn_chain_position_fix": {
+          "checkpoint": true,
+          "star_base": null
+        },
+        "gvp_chain_boundary_fix": {
+          "checkpoint": true,
+          "star_base": null
+        }
+      }
+    },
+    {
+      "variant": "coattn_position",
+      "checkpoint": "/data1/PLC/archive/hpc_resume_preflight_20261106/experiments/chain_boundary_controls_20261104/outputs/coattn_position/G0_chainesm_coattn_position_seed44_chainfix_20261105_085340/best_f1_c0_model.pt",
+      "sha256": "9d5d218f7a0300381ca82b235cd4d741c7492c2cc6a757f1805dd1b82b7a4ce9",
+      "completed_epoch": 16,
+      "resume_epoch": 17,
+      "best_f1_c0": 0.5868087685620735,
+      "model_strict_load_pass": true,
+      "optimizer_load_and_shape_pass": true,
+      "scheduler_load_and_lr_match_pass": true,
+      "lr": [
+        9.778183373087257e-05,
+        9.778183373087257e-05
+      ],
+      "early_stopping": {
+        "metric": "f1_c0",
+        "best": 0.5868087685620735,
+        "bad_epochs": 0
+      },
+      "scaler_state_present": true,
+      "rng_state_present": false,
+      "parameter_count": 23650742,
+      "training_recipe_matches_star": true,
+      "model_config_diff_vs_star_base": {
+        "coattn_chain_position_fix": {
+          "checkpoint": true,
+          "star_base": null
+        },
+        "gvp_chain_boundary_fix": {
+          "checkpoint": false,
+          "star_base": null
+        }
+      }
+    },
+    {
+      "variant": "gvp_boundary",
+      "checkpoint": "/data1/PLC/archive/hpc_resume_preflight_20261106/experiments/chain_boundary_controls_20261104/outputs/gvp_boundary/G0_chainesm_gvp_boundary_seed44_chainfix_20261105_083922/best_f1_c0_model.pt",
+      "sha256": "96712af5a1fbb7dd8fd8412cbccb5a2cca77d858affdb8635397ad314def9554",
+      "completed_epoch": 14,
+      "resume_epoch": 15,
+      "best_f1_c0": 0.5877729540437153,
+      "model_strict_load_pass": true,
+      "optimizer_load_and_shape_pass": true,
+      "scheduler_load_and_lr_match_pass": true,
+      "lr": [
+        9.851140875072872e-05,
+        9.851140875072872e-05
+      ],
+      "early_stopping": {
+        "metric": "f1_c0",
+        "best": 0.5877729540437153,
+        "bad_epochs": 0
+      },
+      "scaler_state_present": true,
+      "rng_state_present": false,
+      "parameter_count": 23650742,
+      "training_recipe_matches_star": true,
+      "model_config_diff_vs_star_base": {
+        "coattn_chain_position_fix": {
+          "checkpoint": false,
+          "star_base": null
+        },
+        "gvp_chain_boundary_fix": {
+          "checkpoint": true,
+          "star_base": null
+        }
+      }
+    }
+  ],
+  "date": "2026-11-06",
+  "scope": "CPU compatibility acceptance only, not a GPU resume test or launch approval."
+}
