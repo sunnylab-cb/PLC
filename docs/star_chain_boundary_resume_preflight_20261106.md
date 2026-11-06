@@ -1,5 +1,10 @@
 # Chain-boundary controls: Star resume feasibility, 2026-11-06
 
+Subsequent user-authorized implementation and queued Star continuation are
+recorded in [the launch report](star_chain_boundary_resume_launch_20261106.md).
+That report uses the final post-cancellation checkpoint snapshot; the table
+below remains the earlier compatibility preflight.
+
 ## Later update: HPC jobs cancelled
 
 The user subsequently explicitly requested cancellation. Only jobs13573439_0,

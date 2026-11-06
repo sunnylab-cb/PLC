@@ -20,7 +20,9 @@ def load_smoke():
     return smoke
 
 
-def install(experiment, training_code=None):
+def install(experiment, training_code=None, start_epoch=0):
+    if not isinstance(start_epoch, int) or start_epoch < 0:
+        raise ValueError("start_epoch must be a nonnegative completed-epoch count")
     if training_code is None:
         manifest = json.loads((experiment / "prepared/manifest.json").read_text())
         training_code = Path(manifest["training"]) / "code_v1"
@@ -30,7 +32,7 @@ def install(experiment, training_code=None):
     original = trainer.source_metrics
     writers = []
     writer_class = trainer.base.SummaryWriter
-    val_pass = 0
+    val_pass = start_epoch
 
     def observed_writer(*args, **kwargs):
         writer = writer_class(*args, **kwargs)

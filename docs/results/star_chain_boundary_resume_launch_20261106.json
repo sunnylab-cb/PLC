@@ -1,0 +1,178 @@
+{
+  "date": "2026-11-06",
+  "star_root": "/data1/PLC/experiments/chain_boundary_resume_20261106",
+  "provenance_sha256": "5673c6230e51168c50b3d0315634529763263960148091728081669b6b2198ac",
+  "selected": {
+    "gvp_boundary": {
+      "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/gvp_boundary/G0_chainesm_gvp_boundary_seed44_chainfix_20261105_083922/best_f1_c0_model.pt",
+      "sha256": "96712af5a1fbb7dd8fd8412cbccb5a2cca77d858affdb8635397ad314def9554",
+      "saved_epoch": 14,
+      "resume_epoch": 15,
+      "f1_c0": 0.5877729540437153,
+      "lr": [
+        9.851140875072872e-05,
+        9.851140875072872e-05
+      ],
+      "early_stopping": {
+        "metric": "f1_c0",
+        "best": 0.5877729540437153,
+        "bad_epochs": 0
+      },
+      "rng_state_present": false
+    },
+    "coattn_position": {
+      "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/coattn_position/G0_chainesm_coattn_position_seed44_chainfix_20261105_085340/best_f1_c0_model.pt",
+      "sha256": "f4430ae319bcbca4679e02b232195163d403aeef296c18f4065869448705e74a",
+      "saved_epoch": 19,
+      "resume_epoch": 20,
+      "f1_c0": 0.589222858482469,
+      "lr": [
+        9.642369026951121e-05,
+        9.642369026951121e-05
+      ],
+      "early_stopping": {
+        "metric": "f1_c0",
+        "best": 0.589222858482469,
+        "bad_epochs": 0
+      },
+      "rng_state_present": false
+    },
+    "both": {
+      "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/both/G0_chainesm_both_seed44_chainfix_20261105_084731/best_f1_c0_model.pt",
+      "sha256": "0c57acd56e49522f646cdfa34580f0c32242e8882c67935e93d683a6a5f4b48a",
+      "saved_epoch": 15,
+      "resume_epoch": 16,
+      "f1_c0": 0.5869513103016286,
+      "lr": [
+        9.816440572371606e-05,
+        9.816440572371606e-05
+      ],
+      "early_stopping": {
+        "metric": "f1_c0",
+        "best": 0.5869513103016286,
+        "bad_epochs": 0
+      },
+      "rng_state_present": false
+    }
+  },
+  "candidates": {
+    "gvp_boundary": [
+      {
+        "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/gvp_boundary/G0_chainesm_gvp_boundary_seed44_chainfix_20261105_083922/best_f1_c0_model.pt",
+        "sha256": "96712af5a1fbb7dd8fd8412cbccb5a2cca77d858affdb8635397ad314def9554",
+        "saved_epoch": 14,
+        "resume_epoch": 15,
+        "f1_c0": 0.5877729540437153,
+        "lr": [
+          9.851140875072872e-05,
+          9.851140875072872e-05
+        ],
+        "early_stopping": {
+          "metric": "f1_c0",
+          "best": 0.5877729540437153,
+          "bad_epochs": 0
+        },
+        "rng_state_present": false
+      }
+    ],
+    "coattn_position": [
+      {
+        "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/coattn_position/G0_chainesm_coattn_position_seed44_chainfix_20261105_085340/best_f1_c0_model.pt",
+        "sha256": "f4430ae319bcbca4679e02b232195163d403aeef296c18f4065869448705e74a",
+        "saved_epoch": 19,
+        "resume_epoch": 20,
+        "f1_c0": 0.589222858482469,
+        "lr": [
+          9.642369026951121e-05,
+          9.642369026951121e-05
+        ],
+        "early_stopping": {
+          "metric": "f1_c0",
+          "best": 0.589222858482469,
+          "bad_epochs": 0
+        },
+        "rng_state_present": false
+      }
+    ],
+    "both": [
+      {
+        "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/both/G0_chainesm_both_seed44_chainfix_20261105_084731/best_f1_c0_model.pt",
+        "sha256": "0c57acd56e49522f646cdfa34580f0c32242e8882c67935e93d683a6a5f4b48a",
+        "saved_epoch": 15,
+        "resume_epoch": 16,
+        "f1_c0": 0.5869513103016286,
+        "lr": [
+          9.816440572371606e-05,
+          9.816440572371606e-05
+        ],
+        "early_stopping": {
+          "metric": "f1_c0",
+          "best": 0.5869513103016286,
+          "bad_epochs": 0
+        },
+        "rng_state_present": false
+      },
+      {
+        "path": "/data1/PLC/archive/hpc_chain_boundary_final_20261106/experiments/chain_boundary_controls_20261104/outputs/both/G0_chainesm_both_seed44_chainfix_20261106_092237/best_f1_c0_model.pt",
+        "sha256": "bcbba691bd0a9c0155b5089ea5a2f161406e31dfab3af747d14200f1ae46d0bd",
+        "saved_epoch": 3,
+        "resume_epoch": 4,
+        "f1_c0": 0.5230893354692661,
+        "lr": [
+          6.4e-05,
+          6.4e-05
+        ],
+        "early_stopping": {
+          "metric": "f1_c0",
+          "best": 0.5230893354692661,
+          "bad_epochs": 0
+        },
+        "rng_state_present": false
+      }
+    ]
+  },
+  "jobs": {
+    "smoke": 2862,
+    "training_array": 2863,
+    "array": "0-2%1",
+    "dependency": "afterok:2862",
+    "requeue": false,
+    "partition": "gpu",
+    "account": "lab",
+    "qos": "background",
+    "gpus_per_task": 1,
+    "cpus_per_task": 8,
+    "mem": "64G"
+  },
+  "status_at_submission": {
+    "smoke": "PENDING: AssocGrpGRES",
+    "training": "PENDING: Dependency"
+  },
+  "checks": {
+    "local_cpu_tests_passed": 30,
+    "shell_syntax": true,
+    "star_core_inventory": true,
+    "star_resume_runtime_import": true,
+    "gpu_smoke_completed": false
+  },
+  "transfer": {
+    "bytes": 2566410418,
+    "checksum_dry_run_exit": 0,
+    "checksum_dry_run_output": "Please ask your administrator.\n\nsent 2,222 bytes  received 30 bytes  136.48 bytes/sec\ntotal size is 2,566,410,418  speedup is 1,139,613.86 (DRY RUN)\n"
+  },
+  "unchanged": [
+    "model architecture",
+    "batch size 16",
+    "training loss",
+    "strict split",
+    "train statistics",
+    "LR schedule",
+    "F1 selection"
+  ],
+  "limitations": [
+    "Resume from best epoch, not last interrupted batch",
+    "RNG state absent: not bitwise continuation",
+    "GPU smoke/training not started at submission",
+    "Stopped Star baseline2843 is not restarted"
+  ]
+}
