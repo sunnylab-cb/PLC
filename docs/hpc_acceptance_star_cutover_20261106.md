@@ -1,5 +1,32 @@
 # HPC acceptance and Star-only cutover, 2026-11-06
 
+## Update: Star training stopped by user
+
+Later on November 6 the user requested stopping the Star training after the
+observed plateau. Only PLC job2843 was cancelled with `scancel 2843`; no host
+shutdown, other-job cancellation, HPC operation, or replacement run occurred.
+Slurm confirmed `CANCELLED by 1001` after69h38m41s and an empty queue entry.
+The last logged progress was epoch30 batch4300/8698. Epoch29 is the last
+completed validation, so epoch30 is not reported as a completed result.
+
+| Selection/observation | Epoch | F1_c0 | Pooled AUPRC | Pooled MCC at0.5 |
+| --- | ---: | ---: | ---: | ---: |
+| Best-F1 checkpoint retained | 14 | 0.591924 | 0.6222 | 0.5946 |
+| Highest observed AUPRC, not a separately selected checkpoint | 24 | 0.590321 | 0.6375 | 0.5955 |
+| Last complete validation | 29 | 0.588521 | 0.6271 | 0.5935 |
+
+F1 had not improved for15 validations; the last5 F1 mean was0.584521 versus
+0.588318 for the preceding5. This is a user-directed plateau stop, not automatic
+patience30 early stopping, wall-time termination, or proof of full convergence.
+Do not resume/relaunch automatically. The following sections retain the earlier
+acceptance snapshot and are not a live queue view.
+
+The original checkpoint/config/logs/TB were retained without deletion. Best
+checkpoint on Star:
+`/data1/PLC/experiments/chainwise_esm_core_20261102/outputs/joint_si30_G0_chainwise_esm_fullcomplex_seed44_chainesm_20261103_035403/best_f1_c0_model.pt`.
+Post-stop SHA256:
+`a96fcf2bcf3e3ac232119ba2fc9cb0d2a339487824626a0a79e98e426b70a2af`.
+
 ## Execution policy
 
 All future experiments run on Star. Do not submit/requeue/restart training,
