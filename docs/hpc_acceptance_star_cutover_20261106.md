@@ -1,5 +1,10 @@
 # HPC acceptance and Star-only cutover, 2026-11-06
 
+Latest policy update: the user subsequently requested cancellation of all three
+HPC controls. Jobs13573439_0/_1/_2 are confirmed `CANCELLED` and absent from the
+queue. This supersedes all allow-finish statements in the historical snapshot
+below. No HPC compute exceptions remain; artifacts are retained for Star.
+
 ## Update: Star training stopped by user
 
 Later on November 6 the user requested stopping the Star training after the

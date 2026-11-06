@@ -1,5 +1,18 @@
 # Chain-boundary controls: Star resume feasibility, 2026-11-06
 
+## Later update: HPC jobs cancelled
+
+The user subsequently explicitly requested cancellation. Only jobs13573439_0,
+13573439_1, and13573439_2 were cancelled. Slurm confirmed all three as
+`CANCELLED by 204805`, with end time2026-11-06T13:28:02 as reported by HPC,
+and no remaining entries for this array in `squeue`. The old allow-finish
+exception is revoked. No files were deleted and no Star job was submitted
+during cancellation. The checkpoint table below describes the earlier copied
+snapshot, not necessarily the last checkpoint written before cancellation;
+reconcile final source artifacts before any future resume.
+
+## Earlier preflight
+
 The user requested checking migration/resume of the existing HPC controls.
 This pass copied artifacts and ran CPU compatibility checks on Star only.
 No HPC job was stopped/requeued/restarted, and no Star GPU job was submitted.

@@ -11,9 +11,10 @@
   user explicitly changes that limit. Respect the shared Slurm allocation.
 - If existing HPC jobs are still running at cutover, report their state and
   clarify their disposition; do not silently cancel or restart them.
-- Explicit exception approved on 2026-11-06: existing jobs `13573439_0`,
-  `13573439_1`, and `13573439_2` may finish naturally. Read/collect their
-  results afterward, but do not restart them or submit follow-up HPC jobs.
+- The earlier allow-finish exception was revoked by the user on 2026-11-06.
+  Jobs `13573439_0`, `13573439_1`, and `13573439_2` were explicitly cancelled
+  and verified absent from the queue. No HPC compute exception remains.
+  Preserve their artifacts; any authorized continuation must run on Star.
 
 ## File Transfers
 
